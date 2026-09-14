@@ -1,0 +1,87 @@
+{
+  "expo": {
+    "name": "KatBox",
+    "slug": "katbox",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "katbox",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#073B1E"
+    },
+
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.katbox",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Allow access to your photos to upload restaurant image",
+        "NSCameraUsageDescription": "Allow access to camera to upload restaurant image",
+        "NSPhotoLibraryAddUsageDescription": "Allow KatBox to save the payment QR scanner to your gallery.",
+        "LSApplicationQueriesSchemes": [
+          "phonepe",
+          "gpay",
+          "paytm",
+          "bhim",
+          "upi",
+          "tel",
+          "telprompt",
+          "mailto"
+        ]
+      }
+    },
+
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#166348"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.katbox"
+    },
+
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-image-picker",
+      "@react-native-community/datetimepicker",
+      "expo-web-browser",
+
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow KatBox to access your photos.",
+          "savePhotosPermission": "Allow KatBox to save the payment QR scanner to your gallery.",
+          "granularPermissions": [
+            "photo"
+          ]
+        }
+      ],
+
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#073B1E",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain"
+        }
+      ]
+    ],
+
+    "experiments": {
+      "typedRoutes": true,
+      "tsconfigPaths": true
+    }
+  }
+}
