@@ -244,7 +244,7 @@ router.post("/clerk-login", async (req, res) => {
       /*
        * If Clerk ID is missing, attach the current Clerk ID.
        */
-      if (!user.clerkId) {
+      if (!user.clerkId || user.clerkId !== clerkId) {
         user.clerkId = clerkId;
         updated = true;
       }
@@ -349,7 +349,7 @@ router.post("/clerk-login", async (req, res) => {
           updated = true;
         }
 
-        if (!user.clerkId) {
+        if (!user.clerkId || user.clerkId !== clerkId) {
           user.clerkId = clerkId;
           updated = true;
         }

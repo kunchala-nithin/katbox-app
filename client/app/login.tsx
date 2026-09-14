@@ -227,23 +227,13 @@ const Login = () => {
        * NATIVE CLERK OAUTH REDIRECT
        * --------------------------------------------------------
        *
-       * The old implementation called:
-       *
-       *     startOAuthFlow()
-       *
-       * without a redirect URL.
-       *
-       * That can result in Clerk returning to:
-       *
-       *     /oauth-native-callback
-       *
-       * which Expo Router may treat as an unmatched route.
-       *
-       * We explicitly give Clerk an Expo-generated redirect URL.
+       * We use a dedicated oauth callback redirect path.
+       * Pointing redirectUrl directly to root '/' causes Expo Router
+       * to reset to /login on callback before session setup completes.
        */
 
       const redirectUrl =
-        Linking.createURL('/')
+        Linking.createURL('/oauth-callback')
 
       console.log(
         '🔗 Google OAuth redirect URL:',
@@ -322,19 +312,19 @@ const Login = () => {
 
       for (
         let attempt = 0;
-        attempt < 15 &&
+        attempt < 20 &&
         !currentClerkUser;
         attempt++
       ) {
         console.log(
-          `⏳ Waiting for Clerk user... attempt ${attempt + 1}/15`
+          `⏳ Waiting for Clerk user... attempt ${attempt + 1}/20`
         )
 
         await new Promise(
           (resolve) =>
             setTimeout(
               resolve,
-              200
+              150
             )
         )
 
@@ -621,24 +611,11 @@ const Login = () => {
 
         /*
          * ------------------------------------------------------
-         * NOTIFY ROOT LAYOUT
+         * NOTIFY ROOT LAYOUT FIRST
          * ------------------------------------------------------
          *
-         * This is important.
-         *
-         * _layout.tsx subscribes to authEvents.
-         *
-         * Without this notification:
-         *
-         *     login saves token
-         *            ↓
-         *     login navigates
-         *            ↓
-         *     _layout still thinks unauthenticated
-         *            ↓
-         *     _layout can redirect back to /login
-         *
-         * notifyAuthChanged() prevents that race.
+         * We immediately notify the root layout of auth state
+         * change so isAuthenticated resolves synchronously.
          */
 
         notifyAuthChanged()
@@ -667,7 +644,7 @@ const Login = () => {
 
         /*
          * ------------------------------------------------------
-         * ADMIN NAVIGATION
+         * DIRECT ROLE NAVIGATION
          * ------------------------------------------------------
          */
 
@@ -689,12 +666,6 @@ const Login = () => {
           return
         }
 
-        /*
-         * ------------------------------------------------------
-         * CHEF NAVIGATION
-         * ------------------------------------------------------
-         */
-
         if (
           res.data.user.isChef
         ) {
@@ -712,12 +683,6 @@ const Login = () => {
 
           return
         }
-
-        /*
-         * ------------------------------------------------------
-         * NORMAL CUSTOMER NAVIGATION
-         * ------------------------------------------------------
-         */
 
         console.log(
           '👤 Normal customer login detected.'
