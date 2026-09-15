@@ -1,4 +1,4 @@
-add-chefcategory.controller.ts : import { Request, Response } from "express";
+import { Request, Response } from "express";
 import ChefCategory, { ChefMenu, ChefPlan } from "../models/chefCategory";
 import Chef from "../models/Chef";
 import cloudinary from "../config/cloudinary";
@@ -24,10 +24,10 @@ export const addChefCategory = async (req: any, res: Response) => {
 
     const upload: any = await new Promise((resolve, reject) => {
       cloudinary.uploader
-        .upload_stream({ 
-          folder: "chef-categories", 
-          quality: "auto:good", 
-          fetch_format: "auto" 
+        .upload_stream({
+          folder: "chef-categories",
+          quality: "auto:good",
+          fetch_format: "auto"
         }, (error, result) => {
           if (error) reject(error);
           else resolve(result);
@@ -78,15 +78,15 @@ export const updateChefCategory = async (req: any, res: Response) => {
 
     if (heroFile) {
       if (heroCloudinaryId) {
-        try { await cloudinary.uploader.destroy(heroCloudinaryId); } catch (e) {}
+        try { await cloudinary.uploader.destroy(heroCloudinaryId); } catch (e) { }
       }
 
       const upload: any = await new Promise((resolve, reject) => {
         cloudinary.uploader
-          .upload_stream({ 
-            folder: "chef-categories", 
-            quality: "auto:good", 
-            fetch_format: "auto" 
+          .upload_stream({
+            folder: "chef-categories",
+            quality: "auto:good",
+            fetch_format: "auto"
           }, (error, result) => {
             if (error) reject(error);
             else resolve(result);
@@ -140,7 +140,7 @@ export const deleteChefCategory = async (req: any, res: Response) => {
     if (category.heroCloudinaryId) {
       try {
         await cloudinary.uploader.destroy(category.heroCloudinaryId);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (category.subCategories && category.subCategories.length > 0) {
@@ -150,7 +150,7 @@ export const deleteChefCategory = async (req: any, res: Response) => {
             if (item.cloudinaryId) {
               try {
                 await cloudinary.uploader.destroy(item.cloudinaryId);
-              } catch (e) {}
+              } catch (e) { }
             }
           }
         }
@@ -228,7 +228,7 @@ export const saveCategoryItems = async (req: any, res: Response) => {
     for (const orphanId of orphanedIds) {
       try {
         await cloudinary.uploader.destroy(orphanId);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     const finalSubCategories: any[] = [];
@@ -245,7 +245,7 @@ export const saveCategoryItems = async (req: any, res: Response) => {
         if (cloudinaryId && isNewFile) {
           try {
             await cloudinary.uploader.destroy(cloudinaryId);
-          } catch (e) {}
+          } catch (e) { }
         }
 
         if (isNewFile) {
@@ -253,10 +253,10 @@ export const saveCategoryItems = async (req: any, res: Response) => {
           if (file) {
             const upload: any = await new Promise((resolve, reject) => {
               cloudinary.uploader
-                .upload_stream({ 
-                  folder: "chef-categories/items", 
-                  quality: "auto:good", 
-                  fetch_format: "auto" 
+                .upload_stream({
+                  folder: "chef-categories/items",
+                  quality: "auto:good",
+                  fetch_format: "auto"
                 }, (error, result) => {
                   if (error) reject(error);
                   else resolve(result);
@@ -324,7 +324,7 @@ export const deleteSubCategory = async (req: any, res: Response) => {
         if (item.cloudinaryId) {
           try {
             await cloudinary.uploader.destroy(item.cloudinaryId);
-          } catch (e) {}
+          } catch (e) { }
         }
       }
     }
@@ -371,9 +371,9 @@ export const deleteSingleItem = async (req: any, res: Response) => {
     if (!foundItem) return res.status(404).json({ message: "Item not found" });
 
     if (foundItem.cloudinaryId) {
-      try { 
-        await cloudinary.uploader.destroy(foundItem.cloudinaryId); 
-      } catch (e) {}
+      try {
+        await cloudinary.uploader.destroy(foundItem.cloudinaryId);
+      } catch (e) { }
     }
 
     await ChefCategory.updateOne(
@@ -521,7 +521,7 @@ export const updateChefMenu = async (req: any, res: Response) => {
     const heroFile = req.files?.heroImage?.[0];
     if (heroFile) {
       if (heroCloudinaryId) {
-        try { await cloudinary.uploader.destroy(heroCloudinaryId); } catch (e) {}
+        try { await cloudinary.uploader.destroy(heroCloudinaryId); } catch (e) { }
       }
       const heroUpload: any = await new Promise((resolve, reject) => {
         cloudinary.uploader
@@ -552,7 +552,7 @@ export const updateChefMenu = async (req: any, res: Response) => {
 
     for (const existing of existingPlateItems) {
       if (existing.cloudinaryId && !incomingCloudinaryIds.has(existing.cloudinaryId)) {
-        try { await cloudinary.uploader.destroy(existing.cloudinaryId); } catch (e) {}
+        try { await cloudinary.uploader.destroy(existing.cloudinaryId); } catch (e) { }
       }
     }
 
@@ -649,24 +649,24 @@ export const deleteChefMenu = async (req: any, res: Response) => {
     }
 
     if (menu.heroCloudinaryId) {
-      try { await cloudinary.uploader.destroy(menu.heroCloudinaryId); } catch (e) {}
+      try { await cloudinary.uploader.destroy(menu.heroCloudinaryId); } catch (e) { }
     }
 
     for (const item of menu.plateItems) {
       if (item.cloudinaryId) {
-        try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) {}
+        try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) { }
       }
     }
 
     if (menu.daawathCategories && menu.daawathCategories.length > 0) {
       for (const cat of menu.daawathCategories) {
         if (cat.cloudinaryId) {
-          try { await cloudinary.uploader.destroy(cat.cloudinaryId); } catch (e) {}
+          try { await cloudinary.uploader.destroy(cat.cloudinaryId); } catch (e) { }
         }
         if (cat.items && cat.items.length > 0) {
           for (const item of cat.items) {
             if (item.cloudinaryId) {
-              try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) {}
+              try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) { }
             }
           }
         }
@@ -676,7 +676,7 @@ export const deleteChefMenu = async (req: any, res: Response) => {
     if (menu.daawathAddons && menu.daawathAddons.length > 0) {
       for (const addon of menu.daawathAddons) {
         if (addon.cloudinaryId) {
-          try { await cloudinary.uploader.destroy(addon.cloudinaryId); } catch (e) {}
+          try { await cloudinary.uploader.destroy(addon.cloudinaryId); } catch (e) { }
         }
       }
     }
@@ -734,7 +734,7 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
 
       const isNewFile = categoryImageUrl?.startsWith("file");
       if (categoryCloudinaryId && (!categoryImageUrl || isNewFile)) {
-        try { await cloudinary.uploader.destroy(categoryCloudinaryId); } catch (e) {}
+        try { await cloudinary.uploader.destroy(categoryCloudinaryId); } catch (e) { }
       }
 
       if (isNewFile) {
@@ -764,7 +764,7 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
         const itemIsNewFile = itemImageUrl?.startsWith("file");
 
         if (itemCloudinaryId && (!itemImageUrl || itemIsNewFile)) {
-          try { await cloudinary.uploader.destroy(itemCloudinaryId); } catch (e) {}
+          try { await cloudinary.uploader.destroy(itemCloudinaryId); } catch (e) { }
         }
 
         if (itemIsNewFile) {
@@ -811,7 +811,7 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
       const addonIsNewFile = addonImageUrl?.startsWith("file");
 
       if (addonCloudinaryId && (!addonImageUrl || addonIsNewFile)) {
-        try { await cloudinary.uploader.destroy(addonCloudinaryId); } catch (e) {}
+        try { await cloudinary.uploader.destroy(addonCloudinaryId); } catch (e) { }
       }
 
       if (addonIsNewFile) {
@@ -840,7 +840,7 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
 
     const updatedMenu = await ChefMenu.findByIdAndUpdate(
       id,
-      { 
+      {
         daawathCategories: finalCategories,
         daawathAddons: finalAddons
       },
@@ -875,10 +875,10 @@ export const addChefPlan = async (req: any, res: Response) => {
 
     const upload: any = await new Promise((resolve, reject) => {
       cloudinary.uploader
-        .upload_stream({ 
-          folder: "chef-plans", 
-          quality: "auto:good", 
-          fetch_format: "auto" 
+        .upload_stream({
+          folder: "chef-plans",
+          quality: "auto:good",
+          fetch_format: "auto"
         }, (error, result) => {
           if (error) reject(error);
           else resolve(result);
@@ -916,9 +916,9 @@ export const addChefPlan = async (req: any, res: Response) => {
       reason: err?.message || "Unknown error",
       validationErrors: err?.errors
         ? Object.keys(err.errors).map((k) => ({
-            field: k,
-            message: err.errors[k]?.message,
-          }))
+          field: k,
+          message: err.errors[k]?.message,
+        }))
         : undefined,
     });
   }
@@ -946,15 +946,15 @@ export const updateChefPlan = async (req: any, res: Response) => {
 
     if (heroFile) {
       if (cloudinaryId) {
-        try { await cloudinary.uploader.destroy(cloudinaryId); } catch (e) {}
+        try { await cloudinary.uploader.destroy(cloudinaryId); } catch (e) { }
       }
 
       const upload: any = await new Promise((resolve, reject) => {
         cloudinary.uploader
-          .upload_stream({ 
-            folder: "chef-plans", 
-            quality: "auto:good", 
-            fetch_format: "auto" 
+          .upload_stream({
+            folder: "chef-plans",
+            quality: "auto:good",
+            fetch_format: "auto"
           }, (error, result) => {
             if (error) reject(error);
             else resolve(result);
@@ -971,16 +971,16 @@ export const updateChefPlan = async (req: any, res: Response) => {
 
     const updated = await ChefPlan.findByIdAndUpdate(
       id,
-      { 
-        name, 
-        description, 
-        mealsPerDay: Number(mealsPerDay), 
-        mealsPerWeek: Number(mealsPerWeek), 
-        price: Number(price), 
-        category, 
+      {
+        name,
+        description,
+        mealsPerDay: Number(mealsPerDay),
+        mealsPerWeek: Number(mealsPerWeek),
+        price: Number(price),
+        category,
         ...(categoryId && { categoryId }),
         heroImageUrl,
-        cloudinaryId 
+        cloudinaryId
       },
       { new: true }
     );
@@ -1022,7 +1022,7 @@ export const deleteChefPlan = async (req: any, res: Response) => {
     if (plan.cloudinaryId) {
       try {
         await cloudinary.uploader.destroy(plan.cloudinaryId);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     // Clean up associated mealbox item images if any exist.
@@ -1036,7 +1036,7 @@ export const deleteChefPlan = async (req: any, res: Response) => {
               const itemsList = sectionWrapper?.items || [];
               for (const item of itemsList) {
                 if (item.cloudinaryId) {
-                  try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) {}
+                  try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) { }
                 }
               }
             }
@@ -1115,7 +1115,7 @@ export const savePlanMealBoxItems = async (req: any, res: Response) => {
               const itemsList = sectionWrapper?.items || [];
               for (const item of itemsList) {
                 if (item.cloudinaryId && !incomingCloudinaryIds.has(item.cloudinaryId)) {
-                  try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) {}
+                  try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) { }
                 }
               }
             }
@@ -1136,11 +1136,11 @@ export const savePlanMealBoxItems = async (req: any, res: Response) => {
         const sections = currentDay[mealType] || {};
         for (const [sectionKey, sectionWrapper] of Object.entries(sections)) {
           const processedItems: any[] = [];
-          
-          const rawItems = (sectionWrapper && Array.isArray((sectionWrapper as any).items)) 
-            ? (sectionWrapper as any).items 
+
+          const rawItems = (sectionWrapper && Array.isArray((sectionWrapper as any).items))
+            ? (sectionWrapper as any).items
             : (Array.isArray(sectionWrapper) ? sectionWrapper : []);
-            
+
           const maxSelectable = (sectionWrapper && typeof (sectionWrapper as any).maxItems === "number")
             ? (sectionWrapper as any).maxItems
             : 1;
