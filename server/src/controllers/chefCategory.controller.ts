@@ -1,4 +1,4 @@
-import { Request, Response } from "express";
+add-chefcategory.controller.ts : import { Request, Response } from "express";
 import ChefCategory, { ChefMenu, ChefPlan } from "../models/chefCategory";
 import Chef from "../models/Chef";
 import cloudinary from "../config/cloudinary";
@@ -869,18 +869,6 @@ export const addChefPlan = async (req: any, res: Response) => {
     const { name, description, mealsPerDay, mealsPerWeek, price, category, categoryId } = req.body;
     const heroFile = req.files?.heroImage?.[0];
 
-    // Verbose debug so you can see exactly what the client sent
-    console.log("addChefPlan payload:", {
-      name,
-      description,
-      mealsPerDay,
-      mealsPerWeek,
-      price,
-      category,
-      categoryId,
-      hasHeroFile: !!heroFile,
-    });
-
     if (!name || !description || !mealsPerDay || !mealsPerWeek || !price || !category || !heroFile) {
       return res.status(400).json({ message: "All fields and hero image are required" });
     }
@@ -919,12 +907,10 @@ export const addChefPlan = async (req: any, res: Response) => {
 
     res.status(201).json(plan);
   } catch (err: any) {
-    // Log the full stack so the actual reason shows up in the backend console.
     console.error("Add chef plan error:", err);
     console.error("Add chef plan error message:", err?.message);
     console.error("Add chef plan validation errors:", err?.errors);
 
-    // Surface the real reason to the client as well (helpful during development).
     res.status(500).json({
       message: "Error creating plan",
       reason: err?.message || "Unknown error",
@@ -1039,10 +1025,11 @@ export const deleteChefPlan = async (req: any, res: Response) => {
       } catch (e) {}
     }
 
-    // Clean up associated mealbox item images if any exist
+    // Clean up associated mealbox item images if any exist.
+    // Iterate all 4 meal-type keys so Breakfast/Snacks assets are also purged.
     if (plan.mealBoxData) {
       for (const [dayKey, dayData] of plan.mealBoxData.entries()) {
-        const meals = [dayData.Lunch, dayData.Dinner];
+        const meals = [dayData.Breakfast, dayData.Lunch, dayData.Snacks, dayData.Dinner];
         for (const meal of meals) {
           if (meal) {
             for (const [sectionKey, sectionWrapper] of meal.entries()) {
@@ -1100,11 +1087,12 @@ export const savePlanMealBoxItems = async (req: any, res: Response) => {
       return files[fileIndex++];
     };
 
-    // Clean up any missing images if they are explicitly modified/orphaned
+    // Clean up any missing images if they are explicitly modified/orphaned.
+    // Iterate all 4 meal-type keys so Breakfast/Snacks assets are tracked too.
     const incomingCloudinaryIds = new Set<string>();
     Object.values(mealBoxDataInput).forEach((dayData: any) => {
       if (dayData) {
-        ["Lunch", "Dinner"].forEach((mealType) => {
+        ["Breakfast", "Lunch", "Snacks", "Dinner"].forEach((mealType) => {
           const sections = dayData[mealType] || {};
           Object.values(sections).forEach((sectionWrapper: any) => {
             const itemsList = sectionWrapper?.items || (Array.isArray(sectionWrapper) ? sectionWrapper : []);
@@ -1120,7 +1108,7 @@ export const savePlanMealBoxItems = async (req: any, res: Response) => {
 
     if (plan.mealBoxData) {
       for (const [dayKey, dayData] of plan.mealBoxData.entries()) {
-        const meals = [dayData.Lunch, dayData.Dinner];
+        const meals = [dayData.Breakfast, dayData.Lunch, dayData.Snacks, dayData.Dinner];
         for (const meal of meals) {
           if (meal) {
             for (const [sectionKey, sectionWrapper] of meal.entries()) {
@@ -1136,14 +1124,15 @@ export const savePlanMealBoxItems = async (req: any, res: Response) => {
       }
     }
 
-    // Process fresh files
+    // Process fresh files and rebuild the meal-box structure.
+    // Iterate all 4 meal-type keys so Breakfast/Snacks items persist to MongoDB.
     const updatedMealBoxData: any = {};
 
     for (const [dayKey, dayData] of Object.entries(mealBoxDataInput)) {
-      updatedMealBoxData[dayKey] = { Lunch: {}, Dinner: {} };
+      updatedMealBoxData[dayKey] = { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} };
       const currentDay: any = dayData;
 
-      for (const mealType of ["Lunch", "Dinner"]) {
+      for (const mealType of ["Breakfast", "Lunch", "Snacks", "Dinner"]) {
         const sections = currentDay[mealType] || {};
         for (const [sectionKey, sectionWrapper] of Object.entries(sections)) {
           const processedItems: any[] = [];

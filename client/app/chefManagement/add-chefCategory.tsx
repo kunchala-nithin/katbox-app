@@ -22,7 +22,8 @@ import MenuCard from "@/src/components/MenuCard";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const cateringCategories = ["Breakfast", "Lunch", "Dinner", "Snacks"];
-const mealboxCategories = ["All Plans", "Breakfast", "Lunch", "Snacks", "Dinner"];
+const mealboxCategories = ["Breakfast", "Lunch", "Snacks", "Dinner"];
+const mealboxFilterCategories = ["All Plans", "Breakfast", "Lunch", "Snacks", "Dinner"];
 const mealTypes = ["Breakfast", "Lunch", "Dinner", "Snacks"];
 
 export default function AddChefCategory() {
@@ -138,16 +139,18 @@ export default function AddChefCategory() {
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
   const initialMealBoxForDay = {
+    Breakfast: {},
     Lunch: {},
+    Snacks: {},
     Dinner: {},
   };
 
   const [mealBoxData, setMealBoxData] = useState<any>({
-    Mon: { ...initialMealBoxForDay },
-    Tue: { ...initialMealBoxForDay },
-    Wed: { ...initialMealBoxForDay },
-    Thu: { ...initialMealBoxForDay },
-    Fri: { ...initialMealBoxForDay },
+    Mon: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+    Tue: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+    Wed: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+    Thu: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+    Fri: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
   });
 
   // ==========================================
@@ -1031,14 +1034,26 @@ export default function AddChefCategory() {
     setSelectedPlanForItems(plan);
     if (plan.mealBoxData) {
       const parsedData = typeof plan.mealBoxData === 'string' ? JSON.parse(plan.mealBoxData) : plan.mealBoxData;
-      setMealBoxData(parsedData);
+      // Normalize — ensure every day has all four meal-type keys so the modal can
+      // render Breakfast/Lunch/Snacks/Dinner sections consistently.
+      const normalizedData: any = {};
+      Object.keys(parsedData).forEach((dayKey) => {
+        const dayObj = parsedData[dayKey] || {};
+        normalizedData[dayKey] = {
+          Breakfast: dayObj.Breakfast || {},
+          Lunch: dayObj.Lunch || {},
+          Snacks: dayObj.Snacks || {},
+          Dinner: dayObj.Dinner || {},
+        };
+      });
+      setMealBoxData(normalizedData);
     } else {
       setMealBoxData({
-        Mon: { Lunch: {}, Dinner: {} },
-        Tue: { Lunch: {}, Dinner: {} },
-        Wed: { Lunch: {}, Dinner: {} },
-        Thu: { Lunch: {}, Dinner: {} },
-        Fri: { Lunch: {}, Dinner: {} },
+        Mon: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+        Tue: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+        Wed: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+        Thu: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+        Fri: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
       });
     }
     setSelectedDay("Mon");
@@ -1057,7 +1072,7 @@ export default function AddChefCategory() {
 
       Object.keys(mealBoxData).forEach((dayKey) => {
         const dayData = mealBoxData[dayKey];
-        ["Lunch", "Dinner"].forEach((mealType) => {
+        ["Breakfast", "Lunch", "Snacks", "Dinner"].forEach((mealType) => {
           const sections = dayData[mealType] || {};
           Object.keys(sections).forEach((sectionKey) => {
             const sectionWrapper = sections[sectionKey];
@@ -1225,6 +1240,7 @@ export default function AddChefCategory() {
 
       setShowPlanForm(false);
       resetPlanForm();
+      setSelectedPlanCategory("All Plans");
       fetchAllData();
     } catch (err: any) {
       Alert.alert("Error", err.response?.data?.message || "Failed to save plan");
@@ -1242,7 +1258,7 @@ export default function AddChefCategory() {
     setPlanHeroImage("");
     setPlanCloudinaryId("");
     setEditingPlanId(null);
-    setSelectedPlanCategory("All Plans");
+    setSelectedPlanCategory("Breakfast");
     setShowPlanDropdown(false);
   };
 
@@ -1255,7 +1271,10 @@ export default function AddChefCategory() {
     setPlanPrice(String(plan.price || ""));
     setPlanHeroImage(plan.heroImageUrl || "");
     setPlanCloudinaryId(plan.cloudinaryId || "");
-    setSelectedPlanCategory(plan.category || "All Plans");
+    const editCat = (plan.category && mealboxCategories.includes(plan.category))
+      ? plan.category
+      : "Breakfast";
+    setSelectedPlanCategory(editCat);
     setShowPlanDropdown(false);
     setShowPlanForm(true);
   };
@@ -1309,6 +1328,19 @@ export default function AddChefCategory() {
     }
     return matchesMealType;
   });
+
+  // Derive which meal-type section(s) to render in the "Manage Items for: <Plan>" modal
+  // based on the selected plan's category. This is what makes Snacks show only a
+  // Snacks section, Breakfast show only Breakfast, Dinner show only Dinner, etc.
+  const planMealTimes = (() => {
+    const cat = selectedPlanForItems?.category || "";
+    if (cat === "Breakfast") return ["Breakfast"];
+    if (cat === "Lunch") return ["Lunch"];
+    if (cat === "Dinner") return ["Dinner"];
+    if (cat === "Snacks") return ["Snacks"];
+    if (cat === "Lunch + Dinner") return ["Lunch", "Dinner"];
+    return ["Breakfast", "Lunch", "Snacks", "Dinner"];
+  })();
 
   // ==========================================
   // MEAL BOX HELPERS
@@ -1560,7 +1592,7 @@ export default function AddChefCategory() {
     
     Object.values(rootObj).forEach((day: any) => {
       if (day) {
-        ["Lunch", "Dinner"].forEach((mealType) => {
+        ["Breakfast", "Lunch", "Snacks", "Dinner"].forEach((mealType) => {
           const meal = day[mealType];
           if (meal) {
             Object.values(meal).forEach((section: any) => {
@@ -1744,7 +1776,7 @@ export default function AddChefCategory() {
               )}
               <View style={styles.topRow}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {(layoutFormSelection === "catering" ? cateringCategories : mealboxCategories).map((cat) => (
+                  {(layoutFormSelection === "catering" ? cateringCategories : mealboxFilterCategories).map((cat) => (
                     <TouchableOpacity
                       key={cat}
                       style={[styles.pill, (layoutFormSelection === "catering" ? selectedMenuCategory : selectedPlanCategory) === cat && styles.activePill]}
@@ -2283,7 +2315,7 @@ export default function AddChefCategory() {
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{editingPlanId ? "Edit Plan" : "Add Chef Plan"}</Text>
-              <TouchableOpacity onPress={() => { setShowPlanForm(false); resetPlanForm(); }} style={styles.closeRoundBtn}>
+              <TouchableOpacity onPress={() => { setShowPlanForm(false); resetPlanForm(); setSelectedPlanCategory("All Plans"); }} style={styles.closeRoundBtn}>
                 <Ionicons name="close" size={18} color="#E2E8F0" />
               </TouchableOpacity>
             </View>
@@ -2701,11 +2733,13 @@ export default function AddChefCategory() {
               </View>
 
               <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
-                {(selectedPlanForItems?.category === "Lunch" ? ["Lunch"] : selectedPlanForItems?.category === "Dinner" ? ["Dinner"] : ["Lunch", "Dinner"]).map((mealTime) => (
+                {planMealTimes.map((mealTime) => (
                   <View key={mealTime} style={styles.mealSectionCard}>
                     <View style={styles.mealSectionHeader}>
                       <View style={styles.mealSectionTitle}>
-                        <Text style={styles.mealIcon}>{mealTime === "Lunch" ? "☀️" : "🌙"}</Text>
+                        <Text style={styles.mealIcon}>
+                          {mealTime === "Breakfast" ? "🌅" : mealTime === "Lunch" ? "☀️" : mealTime === "Snacks" ? "🍿" : "🌙"}
+                        </Text>
                         <Text style={styles.mealLabel}>{mealTime}</Text>
                       </View>
                       <TouchableOpacity 

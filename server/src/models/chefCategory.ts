@@ -172,7 +172,9 @@ const MealBoxSectionWrapperSchema = new Schema({
 }, { _id: false });
 
 const DayMealBoxSchema = new Schema({
+  Breakfast: { type: Map, of: MealBoxSectionWrapperSchema, default: {} },
   Lunch: { type: Map, of: MealBoxSectionWrapperSchema, default: {} },
+  Snacks: { type: Map, of: MealBoxSectionWrapperSchema, default: {} },
   Dinner: { type: Map, of: MealBoxSectionWrapperSchema, default: {} }
 }, { _id: false });
 
@@ -207,11 +209,11 @@ const ChefPlanSchema = new Schema<IChefPlan>({
     type: Map,
     of: DayMealBoxSchema,
     default: {
-      Mon: { Lunch: {}, Dinner: {} },
-      Tue: { Lunch: {}, Dinner: {} },
-      Wed: { Lunch: {}, Dinner: {} },
-      Thu: { Lunch: {}, Dinner: {} },
-      Fri: { Lunch: {}, Dinner: {} }
+      Mon: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+      Tue: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+      Wed: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+      Thu: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
+      Fri: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} }
     }
   }
 }, { timestamps: true });
@@ -219,6 +221,12 @@ const ChefPlanSchema = new Schema<IChefPlan>({
 // ==========================================
 // 4. EXPORTS
 // ==========================================
+// Force fresh model registration so schema/enum changes are always picked up
+// on process restart (Node caches models in mongoose.models per-process).
+if (mongoose.models.ChefCategory) mongoose.deleteModel("ChefCategory");
+if (mongoose.models.ChefMenu) mongoose.deleteModel("ChefMenu");
+if (mongoose.models.ChefPlan) mongoose.deleteModel("ChefPlan");
+
 const ChefCategory = mongoose.model<IChefCategory>("ChefCategory", ChefCategorySchema);
 const ChefMenu = mongoose.model<IChefMenu>("ChefMenu", ChefMenuSchema);
 const ChefPlan = mongoose.model<IChefPlan>("ChefPlan", ChefPlanSchema);
