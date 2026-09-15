@@ -869,6 +869,18 @@ export const addChefPlan = async (req: any, res: Response) => {
     const { name, description, mealsPerDay, mealsPerWeek, price, category, categoryId } = req.body;
     const heroFile = req.files?.heroImage?.[0];
 
+    // Verbose debug so you can see exactly what the client sent
+    console.log("addChefPlan payload:", {
+      name,
+      description,
+      mealsPerDay,
+      mealsPerWeek,
+      price,
+      category,
+      categoryId,
+      hasHeroFile: !!heroFile,
+    });
+
     if (!name || !description || !mealsPerDay || !mealsPerWeek || !price || !category || !heroFile) {
       return res.status(400).json({ message: "All fields and hero image are required" });
     }
@@ -907,8 +919,22 @@ export const addChefPlan = async (req: any, res: Response) => {
 
     res.status(201).json(plan);
   } catch (err: any) {
+    // Log the full stack so the actual reason shows up in the backend console.
     console.error("Add chef plan error:", err);
-    res.status(500).json({ message: "Error creating plan" });
+    console.error("Add chef plan error message:", err?.message);
+    console.error("Add chef plan validation errors:", err?.errors);
+
+    // Surface the real reason to the client as well (helpful during development).
+    res.status(500).json({
+      message: "Error creating plan",
+      reason: err?.message || "Unknown error",
+      validationErrors: err?.errors
+        ? Object.keys(err.errors).map((k) => ({
+            field: k,
+            message: err.errors[k]?.message,
+          }))
+        : undefined,
+    });
   }
 };
 
@@ -974,9 +1000,13 @@ export const updateChefPlan = async (req: any, res: Response) => {
     );
 
     res.json(updated);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Error updating plan" });
+  } catch (err: any) {
+    console.error("Update chef plan error:", err);
+    console.error("Update chef plan error message:", err?.message);
+    res.status(500).json({
+      message: "Error updating plan",
+      reason: err?.message || "Unknown error",
+    });
   }
 };
 

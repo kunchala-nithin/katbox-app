@@ -200,7 +200,7 @@ const ChefPlanSchema = new Schema<IChefPlan>({
   mealsPerDay: { type: Number, required: true },
   mealsPerWeek: { type: Number, required: true },
   price: { type: Number, required: true },
-  category: { type: String, enum: ["Breakfast", "Lunch", "Dinner", "Lunch + Dinner", "All Plans"], required: true },
+  category: { type: String, enum: ["Breakfast", "Lunch", "Dinner", "Snacks", "Lunch + Dinner", "All Plans"], required: true },
   heroImageUrl: { type: String, required: true },
   cloudinaryId: { type: String, required: true },
   mealBoxData: {

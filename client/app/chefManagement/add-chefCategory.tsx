@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+ import React, { useState, useEffect } from "react";
 import api from "@/src/lib/api";
 import {
   View,
@@ -22,7 +22,7 @@ import MenuCard from "@/src/components/MenuCard";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const cateringCategories = ["Breakfast", "Lunch", "Dinner", "Snacks"];
-const mealboxCategories = ["All Plans", "Lunch", "Dinner"];
+const mealboxCategories = ["All Plans", "Breakfast", "Lunch", "Snacks", "Dinner"];
 const mealTypes = ["Breakfast", "Lunch", "Dinner", "Snacks"];
 
 export default function AddChefCategory() {
@@ -247,7 +247,7 @@ export default function AddChefCategory() {
         data: { publicId: cloudinaryId },
       });
     } catch (err) {
-      console.log("Failed to delete plan image from Cloudinary:", err);
+      console.log("Failed to delete image from Cloudinary:", err);
     }
   };
 

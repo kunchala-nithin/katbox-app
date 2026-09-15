@@ -719,7 +719,7 @@ const MealBoxPlans = () => {
               ]}>
                 {singleMealStartingPrice !== null && (
                   <View style={styles.premiumPriceBadgeAbsolute}>
-                    <Ionicons name="sparkles" size={10} color="#FAF8F5" style={styles.premiumPriceBadgeIcon} />
+                    <Ionicons name="sparkles" size={9} color="#FAF8F5" style={styles.premiumPriceBadgeIcon} />
                     <Text style={styles.premiumPriceBadgeText}>Starts @ ₹{singleMealStartingPrice}</Text>
                   </View>
                 )}
@@ -738,7 +738,7 @@ const MealBoxPlans = () => {
                     styles.modalIconWrapper,
                     isSingleMealExpanded ? styles.modalIconWrapperActive : styles.modalIconWrapperInactive
                   ]}>
-                    <Ionicons name="restaurant-outline" size={19} color={isSingleMealExpanded ? "#FAF8F5" : "#166534"} />
+                    <Ionicons name="restaurant-outline" size={16} color={isSingleMealExpanded ? "#FAF8F5" : "#166534"} />
                   </View>
                   <View style={styles.modalOptionTextContent}>
                     <View style={styles.modalOptionTitleRow}>
@@ -751,7 +751,7 @@ const MealBoxPlans = () => {
                   </View>
                   <Ionicons
                     name={isSingleMealExpanded ? "chevron-down-sharp" : "chevron-forward-sharp"}
-                    size={16}
+                    size={14}
                     color="#0B261D"
                     style={styles.luxuryArrowStyle}
                   />
@@ -844,7 +844,7 @@ const MealBoxPlans = () => {
                     styles.modalIconWrapper,
                     isFlexibleExpanded ? styles.modalIconWrapperActive : styles.modalIconWrapperInactive
                   ]}>
-                    <Ionicons name="sparkles-outline" size={19} color={isFlexibleExpanded ? "#FAF8F5" : "#166534"} />
+                    <Ionicons name="sparkles-outline" size={16} color={isFlexibleExpanded ? "#FAF8F5" : "#166534"} />
                   </View>
                   <View style={styles.modalOptionTextContent}>
                     <View style={styles.modalOptionTitleRow}>
@@ -860,7 +860,7 @@ const MealBoxPlans = () => {
                   </View>
                   <Ionicons
                     name={isFlexibleExpanded ? "chevron-down-sharp" : "chevron-forward-sharp"}
-                    size={16}
+                    size={14}
                     color="#0B261D"
                     style={styles.luxuryArrowStyle}
                   />
@@ -956,7 +956,7 @@ const MealBoxPlans = () => {
                     styles.modalIconWrapper,
                     isWeeklyExpanded ? styles.modalIconWrapperActive : styles.modalIconWrapperInactive
                   ]}>
-                    <Ionicons name="calendar-clear-outline" size={20} color={isWeeklyExpanded ? "#FAF8F5" : "#166534"} />
+                    <Ionicons name="calendar-clear-outline" size={17} color={isWeeklyExpanded ? "#FAF8F5" : "#166534"} />
                   </View>
                   <View style={styles.modalOptionTextContent}>
                     <View style={styles.modalOptionTitleRow}>
@@ -972,7 +972,7 @@ const MealBoxPlans = () => {
                   </View>
                   <Ionicons
                     name={isWeeklyExpanded ? "chevron-down-sharp" : "chevron-forward-sharp"}
-                    size={16}
+                    size={14}
                     color="#0B261D"
                     style={styles.luxuryArrowStyle}
                   />
@@ -1053,13 +1053,13 @@ const MealBoxPlans = () => {
               {/* HOW IT WORKS SECTION */}
               <View style={styles.stepperMainCardContainer}>
                 <View style={styles.stepperHeadingRow}>
-                  <Ionicons name="sparkles" size={14} color="#166534" />
+                  <Ionicons name="sparkles" size={12} color="#166534" />
                   <Text style={styles.stepperSectionHeading}>How it works</Text>
                 </View>
                 <View style={styles.stepperRowWrapper}>
                   <View style={styles.stepSingleBlock}>
                     <View style={styles.stepIconOuterBubble}>
-                      <Ionicons name="options" size={15} color="#166534" />
+                      <Ionicons name="options" size={13} color="#166534" />
                     </View>
                     <Text style={styles.stepTextLabelTitle}>1. Style</Text>
                     <Text style={styles.stepTextLabelDesc}>Choose a cycle</Text>
@@ -1069,7 +1069,7 @@ const MealBoxPlans = () => {
 
                   <View style={styles.stepSingleBlock}>
                     <View style={styles.stepIconOuterBubble}>
-                      <Ionicons name="calendar" size={15} color="#166534" />
+                      <Ionicons name="calendar" size={13} color="#166534" />
                     </View>
                     <Text style={styles.stepTextLabelTitle}>2. Date</Text>
                     <Text style={styles.stepTextLabelDesc}>4-hr notice rule</Text>
@@ -1079,7 +1079,7 @@ const MealBoxPlans = () => {
 
                   <View style={styles.stepSingleBlock}>
                     <View style={styles.stepIconOuterBubble}>
-                      <Ionicons name="checkmark-circle" size={15} color="#166534" />
+                      <Ionicons name="checkmark-circle" size={13} color="#166534" />
                     </View>
                     <Text style={styles.stepTextLabelTitle}>3. Menu</Text>
                     <Text style={styles.stepTextLabelDesc}>Pick fresh meals</Text>
@@ -1272,8 +1272,6 @@ const styles = StyleSheet.create({
     marginLeft: 3,
     letterSpacing: 0.2,
   },
-
-  // ─── PILLS (smaller + guaranteed horizontal scroll) ────────────────
   pillsOuterWrapper: {
     width: "100%",
     height: 46,
@@ -1346,14 +1344,10 @@ const styles = StyleSheet.create({
   pillTextInactive: {
     color: "#4F6B61",
   },
-
-  // ─── Scroll content ────────────────────────────────────────────────
   scrollContent: {
     paddingHorizontal: 20,
     paddingBottom: 40,
   },
-
-  // ─── CARD (smaller body, image untouched) ──────────────────────────
   cardShadowWrapper: {
     marginBottom: 14,
     borderRadius: 18,
@@ -1573,80 +1567,80 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalContentSheet: {
-    height: SCREEN_HEIGHT * 0.48,
+    height: SCREEN_HEIGHT * 0.44,
     backgroundColor: "#FAF8F5",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 16,
     shadowColor: "#166534",
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.14,
-    shadowRadius: 24,
-    elevation: 25,
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 22,
     borderWidth: 1,
     borderColor: "rgba(22, 101, 52, 0.08)",
   },
   modalContentSheetExpanded: {
-    height: SCREEN_HEIGHT * 0.68,
+    height: SCREEN_HEIGHT * 0.62,
   },
   modalHeaderIndicatorRow: {
     alignItems: "center",
-    paddingVertical: 12,
+    paddingVertical: 10,
   },
   modalPillHandle: {
-    width: 40,
-    height: 5,
-    borderRadius: 2.5,
+    width: 36,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: "rgba(22, 101, 52, 0.15)",
   },
   modalMetaInfoSection: {
-    marginBottom: 16,
+    marginBottom: 12,
     alignItems: "center",
   },
   modalMainTitle: {
-    fontSize: 22,
+    fontSize: 19,
     fontWeight: "900",
     color: "#0B261D",
     letterSpacing: -0.4,
   },
   modalSubtitle: {
-    fontSize: 13,
+    fontSize: 12,
     color: "#5B756C",
-    marginTop: 4,
+    marginTop: 3,
     fontWeight: "500",
     textAlign: "center",
   },
   modalOptionsContainer: {
-    gap: 14,
-    paddingBottom: 32,
+    gap: 10,
+    paddingBottom: 24,
   },
   modalCategoryOptionContainer: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 20,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: "rgba(22, 101, 52, 0.08)",
     overflow: "hidden",
     shadowColor: "#166534",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.03,
+    shadowRadius: 8,
     elevation: 2,
     position: "relative",
   },
   modalCategoryOptionContainerActive: {
     borderColor: "#166534",
     borderWidth: 1.5,
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.06,
   },
   modalCategoryOptionHeader: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
+    padding: 12,
   },
   modalIconWrapper: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
@@ -1661,15 +1655,15 @@ const styles = StyleSheet.create({
   },
   modalOptionTextContent: {
     flex: 1,
-    marginLeft: 14,
+    marginLeft: 11,
   },
   modalOptionTitleRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
   },
   modalOptionTitle: {
-    fontSize: 16,
+    fontSize: 14.5,
     fontWeight: "800",
     color: "#0B261D",
     letterSpacing: -0.2,
@@ -1679,17 +1673,17 @@ const styles = StyleSheet.create({
   },
   luxuryMiniBadge: {
     backgroundColor: "rgba(22, 101, 52, 0.08)",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
     borderWidth: 1,
     borderColor: "rgba(22, 101, 52, 0.15)",
   },
   luxuryMiniBadgeText: {
     color: "#166534",
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: "800",
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
     textTransform: "uppercase",
   },
   premiumPriceBadgeAbsolute: {
@@ -1699,35 +1693,35 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#166534",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderBottomLeftRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderBottomLeftRadius: 12,
     zIndex: 10,
   },
   premiumPriceBadgeIcon: {
-    marginRight: 4,
+    marginRight: 3,
   },
   premiumPriceBadgeText: {
     color: "#FAF8F5",
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "800",
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
     textTransform: "uppercase",
   },
   modalOptionDescription: {
-    fontSize: 12,
+    fontSize: 11,
     color: "#5B756C",
-    marginTop: 4,
+    marginTop: 3,
     fontWeight: "500",
-    lineHeight: 16,
+    lineHeight: 14,
   },
   luxuryArrowStyle: {
     opacity: 0.75,
   },
   expandedCalendarWrapper: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    paddingTop: 10,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: "rgba(22, 101, 52, 0.06)",
     backgroundColor: "#FFFFFF",
@@ -1736,27 +1730,27 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 9,
   },
   calendarSectionLabel: {
-    fontSize: 13,
+    fontSize: 11.5,
     fontWeight: "800",
     color: "#0B261D",
   },
   selectedCountText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
     color: "#166534",
   },
   calendarStripScroll: {
-    gap: 10,
-    paddingRight: 16,
-    paddingBottom: 4,
+    gap: 8,
+    paddingRight: 12,
+    paddingBottom: 3,
   },
   dateBoxCard: {
-    width: 68,
-    height: 78,
-    borderRadius: 16,
+    width: 60,
+    height: 68,
+    borderRadius: 13,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -1775,19 +1769,19 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   dateBoxDayName: {
-    fontSize: 11.5,
+    fontSize: 10,
     fontWeight: "600",
-    marginBottom: 2,
+    marginBottom: 1,
   },
   dateBoxDayNumber: {
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: "800",
-    letterSpacing: -0.4,
+    letterSpacing: -0.3,
   },
   dateBoxMonthName: {
-    fontSize: 10.5,
+    fontSize: 9.5,
     fontWeight: "600",
-    marginTop: 2,
+    marginTop: 1,
   },
   dateBoxTextActive: {
     color: "#FAF8F5",
@@ -1800,15 +1794,15 @@ const styles = StyleSheet.create({
   },
   confirmFlexButton: {
     backgroundColor: "#166534",
-    borderRadius: 14,
-    height: 46,
+    borderRadius: 12,
+    height: 40,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 14,
+    marginTop: 10,
     shadowColor: "#166534",
-    shadowOffset: { width: 0, height: 3 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
-    shadowRadius: 6,
+    shadowRadius: 5,
     elevation: 3,
   },
   confirmFlexButtonDisabled: {
@@ -1818,32 +1812,32 @@ const styles = StyleSheet.create({
   },
   confirmFlexButtonText: {
     color: "#FAF8F5",
-    fontSize: 14.5,
+    fontSize: 13,
     fontWeight: "800",
   },
   stepperMainCardContainer: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 18,
+    borderRadius: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 14,
     borderWidth: 1,
     borderColor: "rgba(22, 101, 52, 0.08)",
-    marginTop: 8,
+    marginTop: 6,
     shadowColor: "#166534",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.03,
-    shadowRadius: 6,
+    shadowRadius: 5,
     elevation: 1,
   },
   stepperHeadingRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    marginBottom: 16,
+    gap: 5,
+    marginBottom: 12,
     justifyContent: "center",
   },
   stepperSectionHeading: {
-    fontSize: 12.5,
+    fontSize: 11,
     fontWeight: "800",
     color: "#0B261D",
     letterSpacing: 0.4,
@@ -1860,35 +1854,35 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   stepIconOuterBubble: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: "rgba(22, 101, 52, 0.06)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 6,
+    marginBottom: 5,
     borderWidth: 1,
     borderColor: "rgba(22, 101, 52, 0.1)",
   },
   stepTextLabelTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "800",
     color: "#0B261D",
     textAlign: "center",
   },
   stepTextLabelDesc: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "500",
     color: "#5B756C",
     textAlign: "center",
-    marginTop: 2,
-    lineHeight: 12,
+    marginTop: 1,
+    lineHeight: 11,
     paddingHorizontal: 2,
   },
   stepConnectingBarDivider: {
     height: 1,
     backgroundColor: "rgba(22, 101, 52, 0.08)",
     flex: 0.3,
-    marginTop: -26,
+    marginTop: -22,
   },
 });

@@ -108,12 +108,14 @@ function DeliverySlotCountdownWidget({
   deliveryDate,
   timeSlot,
   isDelivered,
+  isHomemade = false,
 }: {
   deliveryDate: string;
   timeSlot: string;
   isDelivered: boolean;
+  isHomemade?: boolean;
 }) {
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(0);
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(isHomemade ? 55 * 60 : 0);
   const [isExtended, setIsExtended] = useState<boolean>(false);
 
   const tickAnim = useRef(new Animated.Value(0)).current;
@@ -150,6 +152,9 @@ function DeliverySlotCountdownWidget({
   });
 
   const calculateRemainingSeconds = useCallback(() => {
+    if (isHomemade) {
+      return 55 * 60; // Exactly 55 minutes for homemade food type
+    }
     try {
       const now = new Date();
       let targetYear = now.getFullYear();
@@ -213,7 +218,7 @@ function DeliverySlotCountdownWidget({
     } catch {
       return 1800;
     }
-  }, [deliveryDate, timeSlot]);
+  }, [deliveryDate, timeSlot, isHomemade]);
 
   useEffect(() => {
     if (isDelivered) return;
@@ -1476,7 +1481,7 @@ export default function MyOrdersScreen() {
 
     const detailTimeSlot = matchedSchedule?.timeSlot
       || (isCatering ? (selectedOrderDetails.eventTime || selectedOrderDetails.deliveryTimeSlot || "08:30 PM")
-      : isHomemade ? (selectedOrderDetails.deliveryTimeSlot || "30–45 min")
+      : isHomemade ? (selectedOrderDetails.deliveryTimeSlot || "45-60 min")
       : (selectedOrderDetails.deliveryTimeSlot || "7:00 PM - 9:00 PM"));
 
     const detailAddress = matchedSchedule?.address
@@ -1567,6 +1572,7 @@ export default function MyOrdersScreen() {
             deliveryDate={detailStartDate}
             timeSlot={detailTimeSlot}
             isDelivered={isDeliveredCurrent}
+            isHomemade={isHomemade}
           />
 
           {!isHomemade && (
@@ -2035,7 +2041,7 @@ export default function MyOrdersScreen() {
                         </View>
 
                         <Text style={styles.nextDeliveryDateText}>
-                          Today • within 30–45 min
+                          Today • within 45-60 min
                         </Text>
                         <Text style={styles.nextDeliveryMenuTitle}>
                           Chef: <Text style={{ color: "#166538", fontWeight: "800" }}>{dynamicChefName}</Text>
@@ -2057,8 +2063,9 @@ export default function MyOrdersScreen() {
 
                     <DeliverySlotCountdownWidget
                       deliveryDate={order?.deliveryDate || "Today"}
-                      timeSlot={order?.deliveryTimeSlot || "30-45 min"}
+                      timeSlot={order?.deliveryTimeSlot || "45-60 min"}
                       isDelivered={isDeliveredState}
+                      isHomemade={true}
                     />
 
                     {/* FEEDBACK WIDGET FOR HOMEMADE CARD (STARS INITIALLY EMPTY) */}
