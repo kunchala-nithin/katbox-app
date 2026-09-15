@@ -40,11 +40,17 @@ const ChevronLeft = ({ size = 22, color = '#0B261D' }) => (
 const FALLBACK_HERO_IMAGE = {
   uri: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800',
 }
+const BREAKFAST_IMAGE = {
+  uri: 'https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=400',
+}
 const LUNCH_IMAGE = {
   uri: 'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400',
 }
 const DINNER_IMAGE = {
   uri: 'https://images.unsplash.com/photo-1574653853027-5382a3d23a15?w=400',
+}
+const SNACKS_IMAGE = {
+  uri: 'https://images.unsplash.com/photo-1599487488170-ded1ec2660f3?w=400',
 }
 
 const FOOD_THUMB = { uri: 'https://via.placeholder.com/80?text=Food' }
@@ -180,7 +186,7 @@ const MealBoxItems = () => {
     ? `${activeDaysToRender.length} Days Custom Plan` 
     : (selectedDurationType === "Single Meal" ? "1 Day Sample Box" : (mealsPerWeek as string) || "20 Meals / Week")
 
-  const displayCategory = (category as string) || "Lunch + Dinner"
+  const displayCategory = (category as string) || "Lunch"
   
   const displayHeroImage = planImage ? { uri: planImage as string } : FALLBACK_HERO_IMAGE
 
@@ -233,10 +239,6 @@ const MealBoxItems = () => {
     fetchPlanDetailsWithItems()
   }, [planId, effectiveChefId, returnSelectedSelections, returnAddonQuantities])
 
-  // ─── 200 ms skeleton delay threshold ──────────────────────────────────
-  // Only show the skeleton if the initial load exceeds 200 ms. This avoids
-  // a flash of skeleton on fast responses while still providing a graceful
-  // loading state on slow networks. Skeleton only applies to the first load.
   useEffect(() => {
     const isInitialLoad = loadingItems && !remoteMealBoxData;
     if (!isInitialLoad) {
@@ -247,14 +249,24 @@ const MealBoxItems = () => {
     return () => clearTimeout(t);
   }, [loadingItems, remoteMealBoxData]);
 
+  const getTargetMealsList = () => {
+    const cat = displayCategory.toLowerCase();
+    if (cat === "breakfast") return ["Breakfast"];
+    if (cat === "lunch") return ["Lunch"];
+    if (cat === "dinner") return ["Dinner"];
+    if (cat === "snacks") return ["Snacks"];
+    if (cat.includes("lunch") && cat.includes("dinner")) return ["Lunch", "Dinner"];
+    return [displayCategory];
+  };
+
+  const targetMeals = getTargetMealsList();
+
   const initializeDayDefaults = (data: any, day: string) => {
     const dataLookupKey = day === 'Today' ? 'Mon' : day
     if (!data || !data[dataLookupKey]) return
     const dayPayload = data[dataLookupKey]
     const defaultSelections: Record<string, string | boolean> = {}
     const defaultAddons: Record<string, number> = {}
-
-    const targetMeals = (displayCategory === "Lunch") ? ["Lunch"] : (displayCategory === "Dinner" ? ["Dinner"] : ["Lunch", "Dinner"])
 
     targetMeals.forEach((mealTime) => {
       const sections = dayPayload[mealTime] || {}
@@ -390,7 +402,6 @@ const MealBoxItems = () => {
       const dayData = remoteMealBoxData[structuralKey]
       if (!dayData) return
 
-      const targetMeals = (displayCategory === "Lunch") ? ["Lunch"] : (displayCategory === "Dinner" ? ["Dinner"] : ["Lunch", "Dinner"])
       targetMeals.forEach((mealTime) => {
         const sections = dayData[mealTime] || {}
         Object.keys(sections).forEach((sectionKey) => {
@@ -443,8 +454,6 @@ const MealBoxItems = () => {
       const structuralKey = day === 'Today' ? 'Mon' : day
       const dayData = remoteMealBoxData[structuralKey]
       if (!dayData) return
-
-      const targetMeals = (displayCategory === "Lunch") ? ["Lunch"] : (displayCategory === "Dinner" ? ["Dinner"] : ["Lunch", "Dinner"])
       
       targetMeals.forEach((mealTime) => {
         const sections = dayData[mealTime] || {}
@@ -544,7 +553,6 @@ const MealBoxItems = () => {
     })
   }
 
-  // ─── Skeleton early return (only when initial load exceeds 200 ms) ───
   if (showSkeleton) {
     return <MealBoxItemsSkeleton />;
   }
@@ -690,9 +698,15 @@ const MealBoxItems = () => {
           ) : !currentDayPayload ? (
             <Text style={styles.emptyText}>No selection data found for this setup configuration.</Text>
           ) : (
-            (displayCategory === "Lunch" ? ["Lunch"] : displayCategory === "Dinner" ? ["Dinner"] : ["Lunch", "Dinner"]).map((mealTime, mIdx) => {
+            targetMeals.map((mealTime, mIdx) => {
               const sections = currentDayPayload[mealTime] || {}
-              const mealBannerImage = mealTime === "Lunch" ? LUNCH_IMAGE : DINNER_IMAGE
+              const mealBannerImage = mealTime === "Lunch" 
+                ? LUNCH_IMAGE 
+                : mealTime === "Dinner" 
+                ? DINNER_IMAGE 
+                : mealTime === "Breakfast" 
+                ? BREAKFAST_IMAGE 
+                : SNACKS_IMAGE
 
               const activeDayDateStr = flexibleDaysMap[selectedDay]
               const headerFormattedDate = activeDayDateStr
@@ -704,7 +718,7 @@ const MealBoxItems = () => {
               return (
                 <View key={mealTime} style={{ marginBottom: 20 }}>
                   <View style={styles.unifiedDayAndMealCard}>
-                    {/* 1. Lunch / Dinner Collapsible Header */}
+                    {/* 1. Meal Collapsible Header */}
                     <TouchableOpacity 
                       style={styles.integratedMealSubRow}
                       activeOpacity={0.8}
