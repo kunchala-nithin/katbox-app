@@ -11,6 +11,7 @@ import Chef from "../models/Chef";
 import Cart from "../models/Cart";
 import cloudinary from "../config/cloudinary";
 import { io } from "..";
+import { recalculateChefRating } from "./chef.controller";
 
 interface AuthRequest extends Request {
   user?: {
@@ -1045,6 +1046,12 @@ export const rescheduleOrderDelivery = async (req: AuthRequest, res: Response) =
 
 /**
  * POST /api/orders/:orderId/feedback
+ *
+ * ✅ FIXED: Now ALSO mirrors the review into the corresponding Chef
+ * document's `reviews[]` array (creating the review, preventing
+ * duplicates by orderId), recalculates the chef's `averageRating`
+ * and `totalReviews`, and emits a live socket event to the chef's
+ * user room so their app can refresh in real-time.
  */
 export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
   try {
@@ -1065,15 +1072,111 @@ export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
       uploadedImages.push({ url: uploadRes.secure_url, cloudinaryId: uploadRes.public_id });
     }
 
+    const trimmedComment = String(comment || "").trim();
+
     order.feedback = {
       rating: parsedRating,
-      comment: String(comment || "").trim(),
+      comment: trimmedComment,
       images: uploadedImages,
       isSubmitted: true,
       submittedAt: new Date(),
     };
 
     const updatedOrder = await order.save();
+
+    // ────────────────────────────────────────────────────────────────
+    // ✅ MIRROR THE REVIEW INTO THE CHEF DOCUMENT'S `reviews[]` ARRAY
+    // ────────────────────────────────────────────────────────────────
+    try {
+      const chefIdentifier = order.chefId;
+      const chefNameStr = order.chefName;
+
+      let chefDoc: any = null;
+
+      if (chefIdentifier && mongoose.Types.ObjectId.isValid(chefIdentifier)) {
+        chefDoc = await Chef.findById(chefIdentifier);
+        if (!chefDoc) {
+          chefDoc = await Chef.findOne({ user: chefIdentifier });
+        }
+      }
+      if (!chefDoc && chefNameStr) {
+        chefDoc = await Chef.findOne({ name: chefNameStr });
+      }
+
+      if (chefDoc) {
+        const existingReviews: any[] = Array.isArray(chefDoc.reviews) ? chefDoc.reviews : [];
+        const alreadyExists = existingReviews.some((r: any) => r && r.orderId === order.orderId);
+
+        if (!alreadyExists) {
+          // Resolve customer name / avatar from User doc when available
+          let userNameForReview = order.userName || "Customer";
+          let userAvatarForReview = "";
+
+          if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
+            try {
+              const customerDoc = await User.findById(order.userId);
+              if (customerDoc) {
+                if (customerDoc.name) userNameForReview = customerDoc.name;
+                if (customerDoc.avatar) userAvatarForReview = customerDoc.avatar;
+              }
+            } catch (userLookupErr) {
+              // Silently ignore — fallback values already set
+            }
+          }
+
+          const newReviewItem = {
+            orderId: order.orderId,
+            userId: String(order.userId || ""),
+            userName: userNameForReview,
+            userAvatar: userAvatarForReview,
+            rating: parsedRating,
+            comment: trimmedComment,
+            images: uploadedImages.map((img) => ({
+              url: img.url,
+              cloudinaryId: img.cloudinaryId || "",
+            })),
+            createdAt: new Date(),
+          };
+
+          if (!Array.isArray(chefDoc.reviews)) {
+            chefDoc.reviews = [];
+          }
+          chefDoc.reviews.push(newReviewItem);
+
+          await chefDoc.save();
+
+          // Recalculate averageRating & totalReviews based on the new reviews array
+          try {
+            await recalculateChefRating(chefDoc._id);
+          } catch (recalcErr) {
+            console.log("Recalculate chef rating warning:", recalcErr);
+          }
+
+          // Emit real-time notification to the chef's user room
+          try {
+            const chefUserId = chefDoc.user ? String(chefDoc.user) : null;
+            if (chefUserId) {
+              io.to(chefUserId).emit("new_chef_review", {
+                chefId: String(chefDoc._id),
+                orderId: order.orderId,
+                rating: parsedRating,
+                comment: trimmedComment,
+                userName: userNameForReview,
+                userAvatar: userAvatarForReview,
+                images: uploadedImages,
+                createdAt: newReviewItem.createdAt,
+              });
+            }
+          } catch (emitErr) {
+            console.log("Socket emit warning (new_chef_review):", emitErr);
+          }
+        }
+      }
+    } catch (chefReviewErr) {
+      // Never fail the customer response because of chef-mirror errors
+      console.log("Error mirroring feedback into Chef document:", chefReviewErr);
+    }
+
     return res.status(200).json({ success: true, message: "Feedback submitted", order: updatedOrder });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
