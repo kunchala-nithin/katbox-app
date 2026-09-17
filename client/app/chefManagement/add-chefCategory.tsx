@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
 import { getToken } from "@/src/lib/authStorage";
 import MenuCard from "@/src/components/MenuCard";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -24,6 +25,38 @@ import { SafeAreaView } from "react-native-safe-area-context";
 const cateringCategories = ["Breakfast", "Lunch", "Dinner", "Snacks"];
 const mealboxCategories = ["Breakfast", "Lunch", "Dinner", "Snacks"];
 const mealTypes = ["Breakfast", "Lunch", "Dinner", "Snacks"];
+
+// ============================================================
+//  🚀 FAST-IMAGE COMPRESSION HELPER
+//  Resizes picked photo to max `maxWidth` px and re-encodes
+//  as JPEG at given `quality`. Reduces 4–6MB phone photos to
+//  ~150–300KB before they ever leave the device.
+// ============================================================
+const compressImageForUpload = async (
+  uri: string,
+  maxWidth: number = 1080,
+  quality: number = 0.7
+): Promise<string> => {
+  try {
+    if (!uri) return uri;
+    // Skip already-compressed data URIs / non-file paths
+    if (!uri.startsWith("file") && !uri.startsWith("content") && !uri.startsWith("ph://")) {
+      return uri;
+    }
+    const result = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: maxWidth } }],
+      {
+        compress: quality,
+        format: ImageManipulator.SaveFormat.JPEG,
+      }
+    );
+    return result.uri;
+  } catch (err) {
+    console.log("Image compression failed, using original URI:", err);
+    return uri;
+  }
+};
 
 export default function AddChefCategory() {
   // =====
@@ -254,7 +287,7 @@ export default function AddChefCategory() {
   };
 
   // ===
-  // IMAGE PICKERS
+  // IMAGE PICKERS — every picker now compresses before saving URI
   // ======
   const pickHeroImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -268,7 +301,8 @@ export default function AddChefCategory() {
       if (heroCloudinaryId) {
         await deleteImageFromCloudinary(heroCloudinaryId);
       }
-      setHeroImage(result.assets[0].uri);
+      const compressed = await compressImageForUpload(result.assets[0].uri, 1080, 0.7);
+      setHeroImage(compressed);
       setHeroCloudinaryId("");
     }
   };
@@ -296,7 +330,8 @@ export default function AddChefCategory() {
         await deleteImageFromCloudinary(item.cloudinaryId);
       }
       item.cloudinaryId = "";
-      newSubCats[subIndex].items[itemIndex].image = result.assets[0].uri;
+      const compressed = await compressImageForUpload(result.assets[0].uri, 900, 0.7);
+      newSubCats[subIndex].items[itemIndex].image = compressed;
       setModalSubCategories(newSubCats);
     }
   };
@@ -319,7 +354,10 @@ export default function AddChefCategory() {
       quality: 0.45,
       allowsEditing: true
     });
-    if (!result.canceled) setMenuHeroImage(result.assets[0].uri);
+    if (!result.canceled) {
+      const compressed = await compressImageForUpload(result.assets[0].uri, 1080, 0.7);
+      setMenuHeroImage(compressed);
+    }
   };
 
   const pickMenuPlateItemImage = async (id: string) => {
@@ -330,18 +368,9 @@ export default function AddChefCategory() {
       allowsEditing: true
     });
     if (!result.canceled) {
-      updatePlateItem(id, "imageUrl", result.assets[0].uri);
+      const compressed = await compressImageForUpload(result.assets[0].uri, 800, 0.7);
+      updatePlateItem(id, "imageUrl", compressed);
     }
-  };
-
-  const pickDaawathCategoryImage = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return Alert.alert("Permission required");
-    const result = await ImagePicker.launchImageLibraryAsync({
-      quality: 0.45,
-      allowsEditing: true
-    });
-    if (!result.canceled) setDaawathCategoryImage(result.assets[0].uri);
   };
 
   const pickMenuItemImage = async () => {
@@ -351,7 +380,10 @@ export default function AddChefCategory() {
       quality: 0.45,
       allowsEditing: true
     });
-    if (!result.canceled) setItemImage(result.assets[0].uri);
+    if (!result.canceled) {
+      const compressed = await compressImageForUpload(result.assets[0].uri, 800, 0.7);
+      setItemImage(compressed);
+    }
   };
 
   const pickAddonImage = async () => {
@@ -361,7 +393,10 @@ export default function AddChefCategory() {
       quality: 0.45,
       allowsEditing: true
     });
-    if (!result.canceled) setAddonImage(result.assets[0].uri);
+    if (!result.canceled) {
+      const compressed = await compressImageForUpload(result.assets[0].uri, 800, 0.7);
+      setAddonImage(compressed);
+    }
   };
 
   const pickPlanHeroImage = async () => {
@@ -376,7 +411,8 @@ export default function AddChefCategory() {
         await deletePlanImageFromCloudinary(planCloudinaryId);
       }
       setPlanCloudinaryId("");
-      setPlanHeroImage(result.assets[0].uri);
+      const compressed = await compressImageForUpload(result.assets[0].uri, 1080, 0.7);
+      setPlanHeroImage(compressed);
     }
   };
 
@@ -399,7 +435,8 @@ export default function AddChefCategory() {
     });
 
     if (!result.canceled) {
-      setMealItemFormImage(result.assets[0].uri);
+      const compressed = await compressImageForUpload(result.assets[0].uri, 800, 0.7);
+      setMealItemFormImage(compressed);
     }
   };
 
@@ -877,12 +914,6 @@ export default function AddChefCategory() {
         }
       }
     ]);
-  };
-
-  const removeDaawathCategoryImageInForm = async () => {
-    if (daawathCategoryCloudinaryId) await deleteMenuImageFromCloudinary(daawathCategoryCloudinaryId);
-    setDaawathCategoryImage("");
-    setDaawathCategoryCloudinaryId("");
   };
 
   const removeDaawathItemImageInForm = async () => {
@@ -2413,10 +2444,9 @@ export default function AddChefCategory() {
                       }, 500);
                     }}
                   >
-                    <Image 
-                      source={{ uri: cat.imageUrl || "https://via.placeholder.com/60" }} 
-                      style={styles.plateTokenImage} 
-                    />
+                    <View style={styles.plateTokenNumberCircle}>
+                      <Text style={styles.plateTokenNumberText}>{idx + 1}</Text>
+                    </View>
                     <Text style={[styles.plateTokenText, selectedCategoryIndex === idx && { color: "#52B788" }]} numberOfLines={1}>{cat.name || "Category"}</Text>
                   </TouchableOpacity>
                 ))}
@@ -2937,17 +2967,6 @@ export default function AddChefCategory() {
               placeholder="e.g. 2" 
               keyboardType="numeric" 
             />
-            <Text style={styles.label}>Category Image</Text>
-            <TouchableOpacity style={styles.imagePicker} onPress={pickDaawathCategoryImage}>
-              <Ionicons name="image-outline" size={18} color="#52B788" style={{ marginBottom: 4 }} />
-              <Text style={{ color: "#94A3B8", fontWeight: "600", fontSize: 13 }}>Choose File</Text>
-            </TouchableOpacity>
-            {daawathCategoryImage && (
-              <View style={{ position: "relative", alignSelf: "center", marginTop: 10 }}>
-                <Image source={{ uri: daawathCategoryImage }} style={styles.roundImage} />
-                <TouchableOpacity style={styles.removelcon} onPress={removeDaawathCategoryImageInForm}><Ionicons name="close" size={13} color="#ffffff" /></TouchableOpacity>
-              </View>
-            )}
             <TouchableOpacity
               style={styles.submitBtn}
               onPress={() => {
@@ -2956,8 +2975,8 @@ export default function AddChefCategory() {
                 }
                 const newCategory = {
                   name: daawathCategoryName.trim(),
-                  imageUrl: daawathCategoryImage,
-                  cloudinaryId: daawathCategoryCloudinaryId,
+                  imageUrl: "",
+                  cloudinaryId: "",
                   maxItems: parseInt(daawathCategoryMaxItems) || 1,
                   items: editingDaawathCatIndex !== null ? categoriesList[editingDaawathCatIndex].items : [], 
                 };
@@ -3401,6 +3420,8 @@ const styles = StyleSheet.create({
   plateToken: { alignItems: "center", width: 75, marginRight: 8, paddingVertical: 6, borderRadius: 12 },
   plateTokenSelected: { backgroundColor: "#18261C", borderColor: "#52B788", borderWidth: 1.5 },
   plateTokenImage: { width: 46, height: 46, borderRadius: 23, borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.2)" },
+  plateTokenNumberCircle: { width: 46, height: 46, borderRadius: 23, borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.35)", backgroundColor: "#18261C", alignItems: "center", justifyContent: "center" },
+  plateTokenNumberText: { fontSize: 17, fontWeight: "800", color: "#52B788" },
   plateTokenText: { fontSize: 11, fontWeight: "700", color: "#94A3B8", marginTop: 5, textAlign: "center" },
   
   plateTokenAdd: { width: 75, justifyContent: 'center', alignItems: 'center' },

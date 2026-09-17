@@ -90,11 +90,12 @@ interface IDaawathCategory {
   items: IDaawathItem[];
 }
 
+// ✅ IMAGE FIELDS NO LONGER REQUIRED — category form now uses a numeric badge in the UI
 const DaawathCategorySchema = new Schema<IDaawathCategory>(
   {
     name: { type: String, required: true },
-    imageUrl: { type: String, required: true },
-    cloudinaryId: { type: String, required: true },
+    imageUrl: { type: String, default: "" },
+    cloudinaryId: { type: String, default: "" },
     maxItems: { type: Number, default: 1 },
     items: { type: [MenuPlateItemSchema], default: [] },
   },

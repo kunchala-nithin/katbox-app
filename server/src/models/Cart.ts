@@ -38,6 +38,10 @@ interface ICart extends Document {
   // ✅ Homemade Delivery Date & Slot Fields (Optional, Only Used By Homemade Flow)
   deliveryDate?: string;
   deliverySlot?: string;
+  // ✅ NEW: absolute timestamps for the delivery window (only meaningful for homemade / QuickBites)
+  estimatedDeliveryAt?: Date;
+  deliveryWindowMinutes?: number;
+  isQuickBites?: boolean;
 }
 
 const CartSchema = new Schema<ICart>(
@@ -80,7 +84,12 @@ const CartSchema = new Schema<ICart>(
     // ✅ Homemade Delivery Date & Slot Field Definitions
     // Only populated for the homemade flow. Left empty for mealbox & catering.
     deliveryDate: { type: String, default: '' },
-    deliverySlot: { type: String, default: '' }
+    deliverySlot: { type: String, default: '' },
+
+    // ✅ NEW: Absolute timestamps for the delivery window (only meaningful for homemade / QuickBites)
+    estimatedDeliveryAt: { type: Date },
+    deliveryWindowMinutes: { type: Number, default: 0 },
+    isQuickBites: { type: Boolean, default: false }
   },
   { timestamps: true }
 );

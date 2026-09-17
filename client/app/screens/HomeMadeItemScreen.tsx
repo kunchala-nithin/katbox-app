@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -49,6 +49,14 @@ const KATBOX = {
   dangerTintSoft: "#FEF2F2",
   shadow: "#111827",
 };
+
+// ─── Helper: normalize a category name for robust QuickBites detection ───
+// Handles any casing, leading/trailing whitespace, and internal spaces.
+// e.g. "Quick Bites", "quickbites", "QUICK BITES", "  Quick  Bites  " all match.
+const normalizeCategoryKey = (val: any): string =>
+  String(val || "").trim().toLowerCase().replace(/\s+/g, "");
+
+const QUICK_BITES_KEY = "quickbites";
 
 const HomeMadeItemScreen = () => {
   const params = useLocalSearchParams();
@@ -105,6 +113,17 @@ const HomeMadeItemScreen = () => {
 
   // Expanded Descriptions State
   const [expandedDescriptions, setExpandedDescriptions] = useState<{ [key: string]: boolean }>({});
+
+  // ─── QUICK BITES FLOW DETECTION ──────────────────────────────────────
+  // Detects if the current category is "Quick Bites" (case/space-insensitive).
+  // This flag is forwarded to HomeMadeOrderReview so it can lock the
+  // delivery date to today and slot to "within 75 minutes (cooking + delivery)".
+  const isQuickBitesCategory = useMemo(() => {
+    return (
+      normalizeCategoryKey(passedCategory) === QUICK_BITES_KEY ||
+      normalizeCategoryKey(pageTitle) === QUICK_BITES_KEY
+    );
+  }, [passedCategory, pageTitle]);
 
   const toggleDescription = (itemId: string) => {
     setExpandedDescriptions((prev) => ({
@@ -491,6 +510,9 @@ const HomeMadeItemScreen = () => {
 
       if (cartItemsPayload.length === 0) return;
 
+      // ✅ Forward QuickBites flag + category name to review screen.
+      // HomeMadeOrderReview will lock same-day + within-75-min delivery
+      // (cooking + delivery) whenever isQuickBites === "true".
       router.push({
         pathname: "/screens/HomeMadeOrderReview",
         params: {
@@ -501,6 +523,8 @@ const HomeMadeItemScreen = () => {
           chefRating: rating || "",
           chefLocation: location || "",
           pageTitle: pageTitle,
+          category: pageTitle,
+          isQuickBites: isQuickBitesCategory ? "true" : "false",
           items: JSON.stringify(cartItemsPayload),
           totalItems: String(totalCartCount),
           totalPrice: String(totalCartPrice),
@@ -593,6 +617,31 @@ const HomeMadeItemScreen = () => {
             <MaterialIcons name="verified-user" size={16} color={KATBOX.primary} />
             <Text style={styles.katboxPromiseText}>100% Homecooked • FSSAI Certified Kitchen</Text>
           </View>
+
+          {/* ─── QUICK BITES: KATBOX NOTE-STYLE INFO CARD ─── */}
+          {/* Renders only when the current category normalizes to "quickbites".
+              Communicates, in a warm note format styled with the KATBOX palette,
+              that every dish is freshly cooked to order and the entire promise
+              of cooking + delivery is fulfilled within 75 minutes. */}
+          {isQuickBitesCategory && (
+            <View style={styles.quickBitesNoteCard}>
+              <View style={styles.quickBitesNoteAccentBar} />
+              <View style={styles.quickBitesNoteContent}>
+                <View style={styles.quickBitesNoteHeaderRow}>
+                  <View style={styles.quickBitesNoteIconCircle}>
+                    <Ionicons name="information" size={12} color={KATBOX.primary} />
+                  </View>
+                  <Text style={styles.quickBitesNoteHeaderText}>Note</Text>
+                </View>
+                <Text style={styles.quickBitesNoteBodyText}>
+                  All Quick Bites are freshly cooked to order — your meal will be
+                  delivered within{" "}
+                  <Text style={styles.quickBitesNoteBodyEmphasis}>75 minutes</Text>
+                  {" "}including cooking & delivery time.
+                </Text>
+              </View>
+            </View>
+          )}
 
           {/* LOADING STATE */}
           {isLoading ? (
@@ -1027,6 +1076,66 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.2,
   },
+
+  /* ─── QUICK BITES — KATBOX NOTE-STYLE INFO CARD ───────────────────── */
+  quickBitesNoteCard: {
+    flexDirection: "row",
+    backgroundColor: KATBOX.primaryTintSoft,   // soft brand-tinted note bg
+    borderWidth: 1,
+    borderColor: "#A7F3D0",                    // matches katbox promise banner
+    borderRadius: 14,
+    marginTop: -14,
+    marginBottom: 22,
+    overflow: "hidden",
+    shadowColor: KATBOX.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  quickBitesNoteAccentBar: {
+    width: 4,
+    backgroundColor: KATBOX.primary,           // brand green accent stripe
+  },
+  quickBitesNoteContent: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  quickBitesNoteHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 5,
+  },
+  quickBitesNoteIconCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: KATBOX.primaryTint,       // subtle brand-tinted chip
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickBitesNoteHeaderText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: KATBOX.primary,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  quickBitesNoteBodyText: {
+    fontSize: 12.5,
+    color: KATBOX.textSecondary,
+    lineHeight: 18,
+    fontWeight: "500",
+  },
+  quickBitesNoteBodyEmphasis: {
+    color: KATBOX.primary,
+    fontWeight: "900",
+  },
+
   sectionHeader: {
     paddingVertical: 12,
     marginBottom: 12,

@@ -53,6 +53,32 @@ const parseDateParts = (dateStr: string) => {
   return { dayName: "DAY", dayNumber: "1", fullString: cleanedStr };
 };
 
+// ✅ NEW: Format an absolute Date into "4:30 PM"
+const formatTimeShortLocal = (d: Date | null): string => {
+  if (!d) return "";
+  try {
+    return d.toLocaleTimeString("en-IN", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return "";
+  }
+};
+
+// ✅ NEW: Format an absolute Date into "17 Sep"
+const formatDateShortLocal = (d: Date | null): string => {
+  if (!d) return "";
+  try {
+    const day = d.getDate();
+    const month = d.toLocaleDateString("en-US", { month: "short" });
+    return `${day} ${month}`;
+  } catch {
+    return "";
+  }
+};
+
 // Heavy Ribbon & Confetti Particle Definitions (Matching luxury palette accents)
 const PREMIUM_COLORS = [
   "#0F382A",
@@ -175,6 +201,37 @@ export default function OrderConfirmationScreen() {
       ""
     ).trim();
   }, [dbOrder, params.deliverySlot, params.deliveryTimeSlot, isHomemadeFlow]);
+
+  // ✅ NEW: Resolve the absolute estimated delivery time from the persisted order.
+  // This is the "source of truth" that was computed by the backend at the moment
+  // the order was placed. When present, we use it to render a live "arriving by X"
+  // message instead of the historical label.
+  const orderPlacedAtResolved: Date | null = useMemo(() => {
+    const raw = dbOrder?.orderPlacedAt;
+    if (!raw) return null;
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }, [dbOrder]);
+
+  const estimatedDeliveryAtResolved: Date | null = useMemo(() => {
+    const raw = dbOrder?.estimatedDeliveryAt;
+    if (!raw) return null;
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }, [dbOrder]);
+
+  const isQuickBitesOrder = Boolean(dbOrder?.isQuickBites);
+
+  // ✅ NEW: Compute a friendly label for the estimated delivery time
+  const estimatedDeliveryLabel = useMemo(() => {
+    if (!estimatedDeliveryAtResolved) return "";
+    const time = formatTimeShortLocal(estimatedDeliveryAtResolved);
+    const date = formatDateShortLocal(orderPlacedAtResolved || new Date());
+    if (isQuickBitesOrder) {
+      return `Today by ${time} (within ${dbOrder?.deliveryWindowMinutes || 75} min incl. cooking & delivery)`;
+    }
+    return `By ${time} • ${date}`;
+  }, [estimatedDeliveryAtResolved, orderPlacedAtResolved, isQuickBitesOrder, dbOrder]);
 
   const rawDeliveryDate = isCateringFlow
     ? eventDate
@@ -306,11 +363,13 @@ export default function OrderConfirmationScreen() {
   const confirmedFirstDeliveryDate = isCateringFlow
     ? `${eventDate} • ${eventTime}`
     : isHomemadeFlow
-    ? (homemadeDeliveryDateResolved && homemadeDeliverySlotResolved
-        ? `${homemadeDeliveryDateResolved} • ${homemadeDeliverySlotResolved}`
-        : (homemadeDeliveryDateResolved
-            ? homemadeDeliveryDateResolved
-            : "Today (within 30–45 min)"))
+    ? (estimatedDeliveryLabel
+        ? estimatedDeliveryLabel
+        : (homemadeDeliveryDateResolved && homemadeDeliverySlotResolved
+            ? `${homemadeDeliveryDateResolved} • ${homemadeDeliverySlotResolved}`
+            : (homemadeDeliveryDateResolved
+                ? homemadeDeliveryDateResolved
+                : "Today (within 30–45 min)")))
     : (scheduledDatesArray.length > 0 ? scheduledDatesArray[0] : rawDeliveryDate);
 
   // Animated Values
@@ -534,7 +593,7 @@ export default function OrderConfirmationScreen() {
               </View>
 
               {/* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP (only renders when at least one value exists) */}
-              {(homemadeDeliveryDateResolved || homemadeDeliverySlotResolved) ? (
+              {(estimatedDeliveryAtResolved || homemadeDeliveryDateResolved || homemadeDeliverySlotResolved) ? (
                 <View style={styles.homemadeConfirmedDeliveryStripContainer}>
                   {!!homemadeDeliveryDateResolved && (
                     <View style={styles.homemadeConfirmedDeliveryCell}>
@@ -550,19 +609,19 @@ export default function OrderConfirmationScreen() {
                     </View>
                   )}
 
-                  {!!homemadeDeliveryDateResolved && !!homemadeDeliverySlotResolved && (
+                  {!!homemadeDeliveryDateResolved && !!(homemadeDeliverySlotResolved || estimatedDeliveryLabel) && (
                     <View style={styles.homemadeConfirmedDeliveryDivider} />
                   )}
 
-                  {!!homemadeDeliverySlotResolved && (
+                  {!!(homemadeDeliverySlotResolved || estimatedDeliveryLabel) && (
                     <View style={styles.homemadeConfirmedDeliveryCell}>
                       <View style={styles.homemadeConfirmedDeliveryIconCircle}>
                         <Ionicons name="time-outline" size={13} color="#166348" />
                       </View>
                       <View style={{ flex: 1, marginLeft: 8 }}>
                         <Text style={styles.homemadeConfirmedDeliveryLabel}>DELIVERY SLOT</Text>
-                        <Text style={styles.homemadeConfirmedDeliveryValue} numberOfLines={1}>
-                          {homemadeDeliverySlotResolved}
+                        <Text style={styles.homemadeConfirmedDeliveryValue} numberOfLines={2}>
+                          {estimatedDeliveryLabel || homemadeDeliverySlotResolved}
                         </Text>
                       </View>
                     </View>

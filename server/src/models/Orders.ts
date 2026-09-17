@@ -6,6 +6,7 @@ export interface IDeliverySchedule {
   status: string;
   timeSlot: string;
   address: string;
+  // ✅ NEW: per-schedule coordinates for precise map pinning
   latitude?: number;
   longitude?: number;
   actualDeliveredAt?: Date;
@@ -49,8 +50,6 @@ export interface IBaseOrder extends Document {
   paymentMethod: string;
   paymentStatus: string;
   orderStatus: string;
-  latitude?: number;
-  longitude?: number;
   statusTimeline?: Array<{
     status: string;
     timestamp: Date;
@@ -65,6 +64,13 @@ export interface IBaseOrder extends Document {
   actualDeliveredAt?: Date;
   deliveredOnTime?: boolean;
   gracePeriodMinutes?: number;
+  // ✅ NEW: absolute timestamps computed at order placement time
+  orderPlacedAt?: Date;
+  estimatedDeliveryAt?: Date;
+  deliveryWindowMinutes?: number;
+  // ✅ NEW: Geo coordinates for accurate map pinning
+  latitude?: number;
+  longitude?: number;
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
   razorpaySignature?: string;
@@ -90,8 +96,11 @@ export interface IHomemadeOrder extends IBaseOrder {
   items: IHomemadeOrderItem[];
   deliveryAddress: string;
   deliveryTimeSlot?: string;
+  // ✅ New top-level delivery slot label for homemade orders (e.g. "9:00 AM - 11:00 AM")
   deliverySlot?: string;
   deliveryDate?: string;
+  // ✅ NEW: QuickBites flag (persisted for downstream screens to render "arriving by X")
+  isQuickBites?: boolean;
 }
 
 // 2. Separate Interface for MealBox & Catering Orders
@@ -126,8 +135,9 @@ const DeliveryScheduleSchema = new Schema(
     status: { type: String, required: true, default: "Scheduled" },
     timeSlot: { type: String, default: "7:00 PM - 9:00 PM" },
     address: { type: String, default: "" },
-    latitude: { type: Number, default: 0 },
-    longitude: { type: Number, default: 0 },
+    // ✅ NEW: coordinates per scheduled delivery slot
+    latitude: { type: Number },
+    longitude: { type: Number },
     actualDeliveredAt: { type: Date },
     statusTimeline: {
       type: [
@@ -191,8 +201,6 @@ const BaseOrderSchema: Schema = new Schema(
     paymentMethod: { type: String, required: true, default: "cod" },
     paymentStatus: { type: String, default: "Verification Pending" },
     orderStatus: { type: String, default: "Placed" },
-    latitude: { type: Number, default: 0 },
-    longitude: { type: Number, default: 0 },
     statusTimeline: {
       type: [
         {
@@ -212,15 +220,22 @@ const BaseOrderSchema: Schema = new Schema(
     actualDeliveredAt: { type: Date },
     deliveredOnTime: { type: Boolean, default: true },
     gracePeriodMinutes: { type: Number, default: 0 },
+    // ✅ NEW: absolute timestamps computed at order placement time
+    orderPlacedAt: { type: Date },
+    estimatedDeliveryAt: { type: Date },
+    deliveryWindowMinutes: { type: Number, default: 0 },
+    // ✅ NEW: Geo coordinates for accurate map pinning
+    latitude: { type: Number },
+    longitude: { type: Number },
     razorpayOrderId: { type: String, default: "" },
     razorpayPaymentId: { type: String, default: "" },
     razorpaySignature: { type: String, default: "" },
     paymentCaptured: { type: Boolean, default: false },
     paidAt: { type: Date },
   },
-  { 
-    discriminatorKey: "serviceType", 
-    timestamps: true 
+  {
+    discriminatorKey: "serviceType",
+    timestamps: true,
   }
 );
 
@@ -245,8 +260,11 @@ const HomemadeOrderSchema = new Schema({
   items: { type: [HomemadeItemSubSchema], required: true, default: [] },
   deliveryAddress: { type: String, required: true, default: "" },
   deliveryTimeSlot: { type: String, default: "30–45 min" },
+  // ✅ Human-readable delivery slot label selected by user on the review screen
   deliverySlot: { type: String, default: "" },
   deliveryDate: { type: String, default: "Today" },
+  // ✅ NEW: Persist the QuickBites flag so downstream UIs can render the live "arriving by X" banner
+  isQuickBites: { type: Boolean, default: false },
 });
 
 // 4. MEALBOX & CATERING SCHEMA

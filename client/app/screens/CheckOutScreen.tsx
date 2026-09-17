@@ -43,6 +43,20 @@ const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefi
   return addr.fullAddress || "";
 };
 
+// ✅ NEW: Format an absolute Date into a friendly "4:30 PM" string
+const formatTimeShortLocal = (d: Date | null): string => {
+  if (!d) return "";
+  try {
+    return d.toLocaleTimeString("en-IN", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return "";
+  }
+};
+
 export default function CheckOutScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
@@ -93,6 +107,46 @@ export default function CheckOutScreen() {
   // ✅ Homemade resolution — prefer the top-level slot; fall back to deliveryTimeSlot
   const homemadeResolvedDate = deliveryDate || "";
   const homemadeResolvedSlot = deliverySlotParam || deliveryTimeSlot || "";
+
+  // ✅ NEW: Detect QuickBites flow from route params (forwarded from HomeMadeOrderReview)
+  const isQuickBites = String((params.isQuickBites as string) || "").toLowerCase() === "true";
+
+  // ✅ NEW: Compute a fresh, live estimated delivery time for QuickBites.
+  // Anchored to "now" so the label stays accurate even if the user took
+  // several minutes on the review screen.
+  const liveEstimatedDeliveryAt = useMemo(() => {
+    if (isQuickBites) {
+      return new Date(Date.now() + 75 * 60 * 1000);
+    }
+    // Fall back to any client-provided absolute ms timestamp
+    const rawMs = (params.estimatedDeliveryAtMs as string) || "";
+    const parsedMs = Number(rawMs);
+    if (Number.isFinite(parsedMs) && parsedMs > 0) {
+      return new Date(parsedMs);
+    }
+    return null;
+  }, [isQuickBites, params.estimatedDeliveryAtMs]);
+
+  // ✅ NEW: Compute the dynamic delivery date/slot labels for display
+  const dynamicHomemadeDateLabel = useMemo(() => {
+    if (!isHomemadeFlow) return homemadeResolvedDate;
+    if (isQuickBites) {
+      const now = new Date();
+      const day = now.getDate();
+      const month = now.toLocaleDateString("en-US", { month: "short" });
+      return `Today, ${day} ${month}`;
+    }
+    return homemadeResolvedDate;
+  }, [isHomemadeFlow, isQuickBites, homemadeResolvedDate]);
+
+  const dynamicHomemadeSlotLabel = useMemo(() => {
+    if (!isHomemadeFlow) return homemadeResolvedSlot;
+    if (isQuickBites && liveEstimatedDeliveryAt) {
+      // ✅ Just the clock time, e.g. "4:30 PM"
+      return formatTimeShortLocal(liveEstimatedDeliveryAt);
+    }
+    return homemadeResolvedSlot;
+  }, [isHomemadeFlow, isQuickBites, liveEstimatedDeliveryAt, homemadeResolvedSlot]);
 
   const [addressDetails, setAddressDetails] = useState<string>(
     (params.addressDetails as string) || (params.deliveryAddress as string) || "2-91/32, Sai Enclave, Hyderabad"
@@ -439,10 +493,17 @@ export default function CheckOutScreen() {
       formData.append("chefName", chefName);
       formData.append("items", JSON.stringify(parsedItems));
       // ✅ Homemade now sends the real selected delivery date & slot instead of hardcoded "Today" / "30-45 min"
-      formData.append("deliveryDate", homemadeResolvedDate || "Today");
-      formData.append("deliveryTimeSlot", homemadeResolvedSlot || "30–45 min");
+      formData.append("deliveryDate", dynamicHomemadeDateLabel || "Today");
+      formData.append("deliveryTimeSlot", dynamicHomemadeSlotLabel || "30–45 min");
       // ✅ New top-level deliverySlot param for order controller to persist
-      formData.append("deliverySlot", homemadeResolvedSlot || "30–45 min");
+      formData.append("deliverySlot", dynamicHomemadeSlotLabel || "30–45 min");
+
+      // ✅ NEW: forward the QuickBites flag and the absolute delivery timestamp
+      formData.append("isQuickBites", isQuickBites ? "true" : "false");
+      formData.append("deliveryWindowMinutes", isQuickBites ? "75" : "0");
+      if (liveEstimatedDeliveryAt) {
+        formData.append("estimatedDeliveryAtMs", String(liveEstimatedDeliveryAt.getTime()));
+      }
     } else {
       formData.append("chefId", chefId);
       formData.append("chefName", chefName);
@@ -562,9 +623,9 @@ export default function CheckOutScreen() {
             </View>
 
             {/* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP (only renders when at least one value exists) */}
-            {(homemadeResolvedDate || homemadeResolvedSlot) ? (
+            {(dynamicHomemadeDateLabel || dynamicHomemadeSlotLabel) ? (
               <View style={styles.homemadeDeliveryStripContainer}>
-                {!!homemadeResolvedDate && (
+                {!!dynamicHomemadeDateLabel && (
                   <View style={styles.homemadeDeliveryCell}>
                     <View style={styles.homemadeDeliveryIconCircle}>
                       <Ionicons name="calendar-outline" size={13} color="#166348" />
@@ -572,17 +633,17 @@ export default function CheckOutScreen() {
                     <View style={{ flex: 1, marginLeft: 8 }}>
                       <Text style={styles.homemadeDeliveryLabel}>DELIVERY DATE</Text>
                       <Text style={styles.homemadeDeliveryValue} numberOfLines={1}>
-                        {homemadeResolvedDate}
+                        {dynamicHomemadeDateLabel}
                       </Text>
                     </View>
                   </View>
                 )}
 
-                {!!homemadeResolvedDate && !!homemadeResolvedSlot && (
+                {!!dynamicHomemadeDateLabel && !!dynamicHomemadeSlotLabel && (
                   <View style={styles.homemadeDeliveryDivider} />
                 )}
 
-                {!!homemadeResolvedSlot && (
+                {!!dynamicHomemadeSlotLabel && (
                   <View style={styles.homemadeDeliveryCell}>
                     <View style={styles.homemadeDeliveryIconCircle}>
                       <Ionicons name="time-outline" size={13} color="#166348" />
@@ -590,7 +651,7 @@ export default function CheckOutScreen() {
                     <View style={{ flex: 1, marginLeft: 8 }}>
                       <Text style={styles.homemadeDeliveryLabel}>DELIVERY SLOT</Text>
                       <Text style={styles.homemadeDeliveryValue} numberOfLines={1}>
-                        {homemadeResolvedSlot}
+                        {dynamicHomemadeSlotLabel}
                       </Text>
                     </View>
                   </View>

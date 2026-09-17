@@ -37,6 +37,11 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 const { width, height } = Dimensions.get('window');
 
+// ─── QuickBites delivery window (in minutes) ─────────────────────────
+// This window covers BOTH the chef cooking the dish AND the delivery
+// to the customer. The whole promise is "within 75 minutes of order".
+const QUICK_BITES_WINDOW_MINUTES = 75;
+
 const ArrowLeftIcon = () => (
   <Feather name="chevron-left" size={24} color="#0D2E22" />
 );
@@ -113,6 +118,31 @@ const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefi
   return addr.fullAddress || '';
 };
 
+// ─── Helper: format a Date to a short local time string (e.g. "4:30 PM") ───
+const formatTimeShort = (d: Date | null): string => {
+  if (!d) return '';
+  try {
+    return d.toLocaleTimeString('en-IN', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return '';
+  }
+};
+
+// ─── Helper: format today's date as "17 Sep" ───
+const formatTodayShort = (d: Date): string => {
+  try {
+    const day = d.getDate();
+    const month = d.toLocaleDateString('en-US', { month: 'short' });
+    return `${day} ${month}`;
+  } catch {
+    return '';
+  }
+};
+
 const HomeMadeOrderReview = () => {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -130,6 +160,33 @@ const HomeMadeOrderReview = () => {
   const totalPriceParam = params.totalPrice || '0';
   const userId = params.userId || '';
   const userName = params.userName || '';
+
+  // ─── QuickBites detection ────────────────────────────────────────────
+  // If the incoming flag is "true", OR the category/page title normalizes
+  // to "quickbites" (case- and space-insensitive), we switch into
+  // QuickBites flow: same-day delivery within 75 minutes of order,
+  // INCLUDING cooking time and delivery time.
+  // This does NOT affect homemade / mealbox / catering orders that don't
+  // match the QuickBites name.
+  const isQuickBites = useMemo(() => {
+    if (String(params.isQuickBites || '').toLowerCase() === 'true') return true;
+    const raw = String(params.category || pageTitle || '');
+    const normalized = raw.trim().toLowerCase().replace(/\s+/g, '');
+    return normalized === 'quickbites';
+  }, [params.isQuickBites, params.category, pageTitle]);
+
+  // Deadline display (now + 75 min, cooking + delivery included).
+  // Recomputed on mount / when flow toggles.
+  const [quickBitesDeadline, setQuickBitesDeadline] = useState<Date | null>(null);
+  useEffect(() => {
+    if (isQuickBites) {
+      setQuickBitesDeadline(
+        new Date(Date.now() + QUICK_BITES_WINDOW_MINUTES * 60 * 1000)
+      );
+    } else {
+      setQuickBitesDeadline(null);
+    }
+  }, [isQuickBites]);
 
   // Parse incoming cart items from HomeMadeItemScreen
   const cartItems: HomeMadeCartItem[] = useMemo(() => {
@@ -201,6 +258,29 @@ const HomeMadeOrderReview = () => {
     const match = STATIC_DELIVERY_SLOTS.find((s) => s.id === selectedDeliverySlotId);
     return match ? match.time : '';
   }, [selectedDeliverySlotId]);
+
+  // ─── QuickBites derived labels (same-day, within 75 minutes) ──────────
+  // ✅ NEW: The slot label is now just the clock time in "4:30 PM" format,
+  // e.g. "4:30 PM". No long text — this is what gets stored in MongoDB
+  // and displayed on the Cart, Checkout, and Order Confirmation screens.
+  const quickBitesDateLabel = useMemo(() => {
+    const now = new Date();
+    return `Today, ${formatTodayShort(now)}`;
+  }, [isQuickBites]);
+
+  const quickBitesSlotLabel = useMemo(() => {
+    if (!quickBitesDeadline) return '';
+    return formatTimeShort(quickBitesDeadline);
+  }, [quickBitesDeadline]);
+
+  // Effective labels used in payload + params — QuickBites overrides
+  const effectiveDeliveryDateLabel = isQuickBites
+    ? quickBitesDateLabel
+    : selectedDeliveryDateLabel;
+
+  const effectiveDeliverySlotLabel = isQuickBites
+    ? quickBitesSlotLabel
+    : selectedDeliverySlotLabel;
 
   // Submitting state
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -427,6 +507,25 @@ const HomeMadeOrderReview = () => {
     try {
       setIsSubmitting(true);
 
+      // For QuickBites, recompute the deadline at the exact moment of order
+      // placement so the "within 75 minutes (cooking + delivery)" window is
+      // anchored to now.
+      //
+      // ✅ NEW: The slot label stored in MongoDB is now just the time
+      // string ("4:30 PM"). No "ASAP", no long description.
+      let finalDeliveryDate = effectiveDeliveryDateLabel;
+      let finalDeliverySlot = effectiveDeliverySlotLabel;
+
+      if (isQuickBites) {
+        const orderTime = new Date();
+        const deadline = new Date(
+          orderTime.getTime() + QUICK_BITES_WINDOW_MINUTES * 60 * 1000
+        );
+        finalDeliveryDate = `Today, ${formatTodayShort(orderTime)}`;
+        // ✅ Just the clock time, e.g. "4:30 PM"
+        finalDeliverySlot = formatTimeShort(deadline);
+      }
+
       const payload = {
         serviceType: 'homemade',
         userId: userId || currentUser?.id || currentUser?._id,
@@ -446,9 +545,9 @@ const HomeMadeOrderReview = () => {
           isVeg: it.isVeg,
         })),
         // ✅ Homemade delivery date & slot sent at TOP-LEVEL so cart.ts can
-        // persist them directly. Human-readable strings, not just keys.
-        deliveryDate: selectedDeliveryDateLabel,
-        deliverySlot: selectedDeliverySlotLabel,
+        // persist them directly. The slot is just "4:30 PM" for QuickBites.
+        deliveryDate: finalDeliveryDate,
+        deliverySlot: finalDeliverySlot,
         orderDetails: {
           contactPhone: contactPhoneNumber,
           alternatePhone: alternatePhoneNumber,
@@ -461,15 +560,15 @@ const HomeMadeOrderReview = () => {
           pageTitle: pageTitle,
           chefRating: chefRating,
           chefLocation: chefLocation,
-          // ✅ Legacy keys preserved for backward compatibility with anything
-          // already reading orderDetails.deliveryDateKey / deliverySlotId
+          // ✅ Legacy keys preserved for backward compatibility
           deliveryDateKey: selectedDeliveryDateKey,
           deliverySlotId: selectedDeliverySlotId,
           // ✅ New human-readable mirrors too, so downstream screens that read
           // orderDetails.deliveryDate / orderDetails.deliverySlot work
-          deliveryDate: selectedDeliveryDateLabel,
-          deliverySlot: selectedDeliverySlotLabel,
-          deliveryTimeSlot: selectedDeliverySlotLabel,
+          deliveryDate: finalDeliveryDate,
+          deliverySlot: finalDeliverySlot,
+          deliveryTimeSlot: finalDeliverySlot,
+          isQuickBites: isQuickBites ? 'true' : 'false',
         },
       };
 
@@ -487,8 +586,8 @@ const HomeMadeOrderReview = () => {
             alternatePhone: alternatePhoneNumber,
             // ✅ Pass through so CartScreen can immediately render even before
             // the API response is re-fetched
-            deliveryDate: selectedDeliveryDateLabel,
-            deliverySlot: selectedDeliverySlotLabel,
+            deliveryDate: finalDeliveryDate,
+            deliverySlot: finalDeliverySlot,
           },
         });
       } else {
@@ -770,117 +869,155 @@ const HomeMadeOrderReview = () => {
             </TouchableOpacity>
           </View>
 
-          {/* ─── DELIVERY DATE SECTION (UI ONLY, TODAY DISABLED) ─── */}
-          <View style={styles.deliveryDateSlotOuterContainer}>
-            <View style={styles.sectionHeaderFlexContainer}>
-              <Text style={styles.cardSectionMainHeaderLabelTitle}>Choose Delivery Date</Text>
-            </View>
+          {/* ─── QUICKBITES: SAME-DAY / WITHIN 75 MIN DELIVERY (READ-ONLY) ─── */}
+          {/* When the category is "Quick Bites", we replace the manual date
+              & slot pickers with a single informational card. The delivery
+              is locked to today, within 75 minutes of order placement, and
+              that window INCLUDES both cooking time and delivery time.
+              The slot label itself is just the clock time (e.g. "4:30 PM"). */}
+          {isQuickBites ? (
+            <View style={styles.deliveryDateSlotOuterContainer}>
+              <View style={styles.sectionHeaderFlexContainer}>
+                <Text style={styles.cardSectionMainHeaderLabelTitle}>Quick Delivery</Text>
+                <View style={styles.quickBitesBadge}>
+                  <Feather name="zap" size={11} color="#0F382A" />
+                  <Text style={styles.quickBitesBadgeText}>FAST</Text>
+                </View>
+              </View>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.deliveryDateScrollContent}
-              style={styles.deliveryDateScrollView}
-            >
-              {STATIC_DELIVERY_DATES.map((item) => {
-                const isSelected = selectedDeliveryDateKey === item.key;
-                const isDisabled = item.isToday;
-                return (
-                  <TouchableOpacity
-                    key={item.key}
-                    activeOpacity={isDisabled ? 1 : 0.75}
-                    disabled={isDisabled}
-                    onPress={() => {
-                      if (isDisabled) return;
-                      setSelectedDeliveryDateKey(item.key);
-                    }}
-                    style={[
-                      styles.deliveryDateCard,
-                      isSelected
-                        ? styles.deliveryDateCardActive
-                        : styles.deliveryDateCardInactive,
-                      isDisabled && styles.deliveryDateCardDisabled,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.deliveryDateDayText,
-                        isSelected
-                          ? styles.deliveryDateDayTextActive
-                          : styles.deliveryDateDayTextInactive,
-                      ]}
-                    >
-                      {item.isToday ? 'Today' : item.day}
+              <View style={styles.quickBitesInfoCard}>
+                <View style={styles.quickBitesIconCircle}>
+                  <Feather name="zap" size={18} color="#166534" />
+                </View>
+                <View style={styles.quickBitesTextBlock}>
+                  <Text style={styles.quickBitesTitle}>Same Day Delivery</Text>
+                  <Text style={styles.quickBitesSubtitle}>
+                    Delivered within {QUICK_BITES_WINDOW_MINUTES} minutes of order — includes cooking & delivery
+                  </Text>
+                  <View style={styles.quickBitesTimePill}>
+                    <Feather name="clock" size={12} color="#166534" />
+                    <Text style={styles.quickBitesTimeText}>
+                      Today by {formatTimeShort(quickBitesDeadline) || '—'}
                     </Text>
-                    <Text
-                      style={[
-                        styles.deliveryDateNumberText,
-                        isSelected
-                          ? styles.deliveryDateNumberTextActive
-                          : styles.deliveryDateNumberTextInactive,
-                      ]}
-                    >
-                      {item.date}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.deliveryDateMonthText,
-                        isSelected
-                          ? styles.deliveryDateMonthTextActive
-                          : styles.deliveryDateMonthTextInactive,
-                      ]}
-                    >
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          {/* ─── DELIVERY TIME SLOT SECTION (UI ONLY) ─── */}
-          <View style={styles.deliveryDateSlotOuterContainer}>
-            <View style={styles.sectionHeaderFlexContainer}>
-              <Text style={styles.cardSectionMainHeaderLabelTitle}>
-                Preferred Delivery Time Slot
-              </Text>
+                  </View>
+                </View>
+              </View>
             </View>
+          ) : (
+            <>
+              {/* ─── DELIVERY DATE SECTION (UI ONLY, TODAY DISABLED) ─── */}
+              <View style={styles.deliveryDateSlotOuterContainer}>
+                <View style={styles.sectionHeaderFlexContainer}>
+                  <Text style={styles.cardSectionMainHeaderLabelTitle}>Choose Delivery Date</Text>
+                </View>
 
-            <View style={styles.deliverySlotListWrapper}>
-              {STATIC_DELIVERY_SLOTS.map((slot) => {
-                const isSelected = selectedDeliverySlotId === slot.id;
-                return (
-                  <TouchableOpacity
-                    key={slot.id}
-                    activeOpacity={0.8}
-                    onPress={() => setSelectedDeliverySlotId(slot.id)}
-                    style={[
-                      styles.deliverySlotRow,
-                      isSelected
-                        ? styles.deliverySlotRowActive
-                        : styles.deliverySlotRowInactive,
-                    ]}
-                  >
-                    <View style={styles.deliverySlotLeftCol}>
-                      <Text style={styles.deliverySlotMainTimeText}>{slot.time}</Text>
-                      <Text style={styles.deliverySlotSubTypeText}>{slot.type}</Text>
-                    </View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.deliveryDateScrollContent}
+                  style={styles.deliveryDateScrollView}
+                >
+                  {STATIC_DELIVERY_DATES.map((item) => {
+                    const isSelected = selectedDeliveryDateKey === item.key;
+                    const isDisabled = item.isToday;
+                    return (
+                      <TouchableOpacity
+                        key={item.key}
+                        activeOpacity={isDisabled ? 1 : 0.75}
+                        disabled={isDisabled}
+                        onPress={() => {
+                          if (isDisabled) return;
+                          setSelectedDeliveryDateKey(item.key);
+                        }}
+                        style={[
+                          styles.deliveryDateCard,
+                          isSelected
+                            ? styles.deliveryDateCardActive
+                            : styles.deliveryDateCardInactive,
+                          isDisabled && styles.deliveryDateCardDisabled,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.deliveryDateDayText,
+                            isSelected
+                              ? styles.deliveryDateDayTextActive
+                              : styles.deliveryDateDayTextInactive,
+                          ]}
+                        >
+                          {item.isToday ? 'Today' : item.day}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.deliveryDateNumberText,
+                            isSelected
+                              ? styles.deliveryDateNumberTextActive
+                              : styles.deliveryDateNumberTextInactive,
+                          ]}
+                        >
+                          {item.date}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.deliveryDateMonthText,
+                            isSelected
+                              ? styles.deliveryDateMonthTextActive
+                              : styles.deliveryDateMonthTextInactive,
+                          ]}
+                        >
+                          {item.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
 
-                    <View
-                      style={[
-                        styles.deliverySlotRadioOuter,
-                        isSelected
-                          ? styles.deliverySlotRadioOuterActive
-                          : styles.deliverySlotRadioOuterInactive,
-                      ]}
-                    >
-                      {isSelected && <View style={styles.deliverySlotRadioInner} />}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
+              {/* ─── DELIVERY TIME SLOT SECTION (UI ONLY) ─── */}
+              <View style={styles.deliveryDateSlotOuterContainer}>
+                <View style={styles.sectionHeaderFlexContainer}>
+                  <Text style={styles.cardSectionMainHeaderLabelTitle}>
+                    Preferred Delivery Time Slot
+                  </Text>
+                </View>
+
+                <View style={styles.deliverySlotListWrapper}>
+                  {STATIC_DELIVERY_SLOTS.map((slot) => {
+                    const isSelected = selectedDeliverySlotId === slot.id;
+                    return (
+                      <TouchableOpacity
+                        key={slot.id}
+                        activeOpacity={0.8}
+                        onPress={() => setSelectedDeliverySlotId(slot.id)}
+                        style={[
+                          styles.deliverySlotRow,
+                          isSelected
+                            ? styles.deliverySlotRowActive
+                            : styles.deliverySlotRowInactive,
+                        ]}
+                      >
+                        <View style={styles.deliverySlotLeftCol}>
+                          <Text style={styles.deliverySlotMainTimeText}>{slot.time}</Text>
+                          <Text style={styles.deliverySlotSubTypeText}>{slot.type}</Text>
+                        </View>
+
+                        <View
+                          style={[
+                            styles.deliverySlotRadioOuter,
+                            isSelected
+                              ? styles.deliverySlotRadioOuterActive
+                              : styles.deliverySlotRadioOuterInactive,
+                          ]}
+                        >
+                          {isSelected && <View style={styles.deliverySlotRadioInner} />}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            </>
+          )}
 
           {/* SPECIAL INSTRUCTIONS SEGMENT */}
           <View style={styles.specialInstructionsOuterContainer}>
@@ -1879,6 +2016,81 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: '#FAF8F5',
+  },
+
+  /* ─── QUICKBITES INFO CARD ─── */
+  quickBitesBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(22, 101, 52, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(22, 101, 52, 0.18)',
+  },
+  quickBitesBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#0F382A',
+    letterSpacing: 0.5,
+  },
+  quickBitesInfoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(22, 101, 52, 0.06)',
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(22, 101, 52, 0.18)',
+  },
+  quickBitesIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(22, 101, 52, 0.2)',
+  },
+  quickBitesTextBlock: {
+    flex: 1,
+  },
+  quickBitesTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0B261D',
+    letterSpacing: -0.2,
+  },
+  quickBitesSubtitle: {
+    fontSize: 11.5,
+    color: '#4F6B61',
+    marginTop: 3,
+    fontWeight: '500',
+    lineHeight: 16,
+  },
+  quickBitesTimePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(22, 101, 52, 0.15)',
+  },
+  quickBitesTimeText: {
+    fontSize: 11.5,
+    fontWeight: '800',
+    color: '#166534',
+    marginLeft: 5,
+    letterSpacing: 0.1,
   },
 
   /* ADDRESS CHOOSER SHEET */

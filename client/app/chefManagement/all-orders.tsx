@@ -36,6 +36,9 @@ import { socket } from '@/src/lib/socket';
 
 const { width, height } = Dimensions.get('window');
 
+// ✅ Static Customer Support number used for call/message actions
+const CUSTOMER_SUPPORT_PHONE = '9133450555';
+
 // Check if running in Expo Go client
 const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
 
@@ -326,6 +329,23 @@ const parseDateParts = (dateStr: string) => {
   }
 
   return { dayName: "DAY", dayNumber: "1", month: "JUN", fullString: cleanedStr };
+};
+
+// ✅ NEW HELPER — Validate coordinates coming from the order document
+const hasValidCoords = (lat: any, lng: any): boolean => {
+  const nLat = Number(lat);
+  const nLng = Number(lng);
+  return (
+    Number.isFinite(nLat) &&
+    Number.isFinite(nLng) &&
+    !(nLat === 0 && nLng === 0)
+  );
+};
+
+// ✅ NEW HELPER — Compact coordinate label (e.g. "12.97160, 77.59460")
+const formatCoordLabel = (lat: any, lng: any): string => {
+  if (!hasValidCoords(lat, lng)) return '';
+  return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 };
 
 // ─── DeliverySlotCountdownWidget ──────────────────────────────────
@@ -953,6 +973,8 @@ export default function AllOrdersScreen() {
     timeSlot: string;
     address: string;
     isPaused: boolean;
+    latitude?: number;
+    longitude?: number;
   }> = useMemo(() => {
     if (!isMealBoxFlow || !activeOrder) return [];
 
@@ -973,12 +995,18 @@ export default function AllOrdersScreen() {
       const timeSlot = match?.timeSlot || activeOrder.deliveryTimeSlot || '7:00 PM - 9:00 PM';
       const address = match?.address || activeOrder.addressDetails || activeOrder.deliveryAddress || customerAddress;
 
+      // ✅ NEW: Prefer per-schedule coords, fall back to order-level coords.
+      const sLat = match?.latitude ?? activeOrder?.latitude;
+      const sLng = match?.longitude ?? activeOrder?.longitude;
+
       return {
         date: dateStr,
         status,
         timeSlot,
         address,
         isPaused,
+        latitude: sLat !== undefined && sLat !== null ? Number(sLat) : undefined,
+        longitude: sLng !== undefined && sLng !== null ? Number(sLng) : undefined,
       };
     });
   }, [isMealBoxFlow, activeOrder, customerAddress]);
@@ -1044,21 +1072,89 @@ export default function AllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
+  // ✅ NEW: Detect QuickBites homemade flow — this order's slot/date must
+  // be derived LIVE from the persisted `estimatedDeliveryAt` timestamp.
+  const isQuickBitesFlow =
+    isHomemadeFlow &&
+    (activeOrder?.isQuickBites === true ||
+      String(activeOrder?.isQuickBites).toLowerCase() === 'true');
+
+  // ✅ NEW: Compute dynamic QuickBites date/time from `estimatedDeliveryAt`
+  const quickBitesDateTime = useMemo(() => {
+    if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
+    const d = new Date(activeOrder.estimatedDeliveryAt);
+    if (isNaN(d.getTime())) return null;
+
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const dayNum = d.getDate();
+    const monthShort = d.toLocaleDateString('en-US', { month: 'short' });
+
+    const displayDate = sameDay
+      ? `Today, ${dayNum} ${monthShort}`
+      : `${weekday}, ${dayNum} ${monthShort}`;
+
+    // Parse-friendly format for the countdown widget ("Wed, 17 Sep")
+    const timerDate = `${weekday}, ${dayNum} ${monthShort}`;
+
+    const timeStr = d.toLocaleTimeString('en-IN', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    return { displayDate, timerDate, timeStr };
+  }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
+
   // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
-  // Prefers the new top-level `deliverySlot` field, falls back to legacy `deliveryTimeSlot`.
+  //    • For QuickBites: computed live from `estimatedDeliveryAt`.
+  //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
+  //      falls back to legacy `deliveryTimeSlot`.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
+    if (isQuickBitesFlow && quickBitesDateTime) {
+      return quickBitesDateTime.timerDate; // parse-friendly for timer widget
+    }
     return String(activeOrder?.deliveryDate || '').trim();
-  }, [activeOrder?.deliveryDate, isHomemadeFlow]);
+  }, [
+    activeOrder?.deliveryDate,
+    isHomemadeFlow,
+    isQuickBitesFlow,
+    quickBitesDateTime,
+  ]);
 
   const homemadeDeliverySlotResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
+    if (isQuickBitesFlow && quickBitesDateTime) {
+      return quickBitesDateTime.timeStr;
+    }
     return String(
       activeOrder?.deliverySlot ||
       activeOrder?.deliveryTimeSlot ||
       ''
     ).trim();
-  }, [activeOrder?.deliverySlot, activeOrder?.deliveryTimeSlot, isHomemadeFlow]);
+  }, [
+    activeOrder?.deliverySlot,
+    activeOrder?.deliveryTimeSlot,
+    isHomemadeFlow,
+    isQuickBitesFlow,
+    quickBitesDateTime,
+  ]);
+
+  // ✅ NEW: Human-friendly display date specifically for headers/cards.
+  const homemadeDeliveryDateDisplay = useMemo(() => {
+    if (!isHomemadeFlow) return '';
+    if (isQuickBitesFlow && quickBitesDateTime) {
+      return quickBitesDateTime.displayDate;
+    }
+    return String(activeOrder?.deliveryDate || '').trim();
+  }, [
+    activeOrder?.deliveryDate,
+    isHomemadeFlow,
+    isQuickBitesFlow,
+    quickBitesDateTime,
+  ]);
 
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
@@ -1067,15 +1163,15 @@ export default function AllOrdersScreen() {
       : 'Today, 09:41 AM',
     // ✅ For homemade: use the resolved persisted values. For mealbox/catering: keep original.
     deliveryDate: isHomemadeFlow
-      ? (homemadeDeliveryDateResolved || 'Today')
+      ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
       : (activeOrder?.deliveryDate || (isCateringFlow ? (activeOrder?.eventDate || '18 March') : 'Mon, 17 Jun 2024')),
     deliveryTimeSlot: isHomemadeFlow
       ? (homemadeDeliverySlotResolved || '30–45 min')
       : (activeOrder?.deliveryTimeSlot || (isCateringFlow ? (activeOrder?.eventTime || '08:30 PM') : '7:00 PM - 9:00 PM')),
     customer: {
       name: activeOrder?.userName || 'Customer',
-      phone: customerPhone || '+91 98765 43210',
-      alternatePhone: customerAlternatePhone,
+      phone: CUSTOMER_SUPPORT_PHONE,
+      alternatePhone: '',
       city: customerCity,
     },
     meal: {
@@ -1147,70 +1243,77 @@ export default function AllOrdersScreen() {
       .catch((err) => Alert.alert('Error', err.message));
   };
 
+  // ✅ Customer numbers are hidden — actions route through the static Customer Support number
   const handleCallCustomer = () => {
-    const primary = customerPhone || orderData.customer.phone;
-    const alt = customerAlternatePhone;
-
-    if (!primary && !alt) {
-      Alert.alert('No Phone', 'Customer phone number is not available for this order.');
-      return;
-    }
-
-    if (primary && alt) {
-      Alert.alert('Call Customer', 'Choose phone number to dial:', [
-        { text: `Primary: ${primary}`, onPress: () => triggerCall(primary) },
-        { text: `Alternative: ${alt}`, onPress: () => triggerCall(alt) },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
-    } else {
-      triggerCall(primary || alt);
-    }
+    triggerCall(CUSTOMER_SUPPORT_PHONE);
   };
 
   const handleMessageCustomer = () => {
-    const primary = customerPhone || orderData.customer.phone;
-    const alt = customerAlternatePhone;
-
-    if (!primary && !alt) {
-      Alert.alert('No Phone', 'Customer phone number is not available.');
-      return;
-    }
-
-    if (primary && alt) {
-      Alert.alert('Message Customer', 'Choose recipient number:', [
-        { text: `Primary: ${primary}`, onPress: () => triggerSMS(primary) },
-        { text: `Alternative: ${alt}`, onPress: () => triggerSMS(alt) },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
-    } else {
-      triggerSMS(primary || alt);
-    }
+    triggerSMS(CUSTOMER_SUPPORT_PHONE);
   };
 
-  const handleOpenMap = (addressOverride?: string) => {
+  // ✅ UPDATED: Prefers coordinates for exact pin placement, falls back to address.
+  const handleOpenMap = (
+    addressOverride?: string,
+    latOverride?: any,
+    lngOverride?: any
+  ) => {
+    const lat =
+      latOverride !== undefined && latOverride !== null
+        ? Number(latOverride)
+        : Number(activeOrder?.latitude);
+    const lng =
+      lngOverride !== undefined && lngOverride !== null
+        ? Number(lngOverride)
+        : Number(activeOrder?.longitude);
+    const coordsValid =
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      !(lat === 0 && lng === 0);
+
     const targetAddr = addressOverride || customerAddress;
-    if (!targetAddr || targetAddr.trim() === '') {
-      Alert.alert('No Address', 'Customer delivery address is not available.');
-      return;
+    const safeAddr =
+      targetAddr && targetAddr.trim() !== '' ? targetAddr : 'Delivery Location';
+    const label = encodeURIComponent(
+      safeAddr.replace(/\n/g, ' ').substring(0, 120)
+    );
+
+    let mapUrl = '';
+    if (coordsValid) {
+      mapUrl =
+        Platform.select({
+          ios: `maps:0,0?q=${label}@${lat},${lng}`,
+          android: `geo:${lat},${lng}?q=${lat},${lng}(${label})`,
+        }) || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+    } else {
+      if (!targetAddr || targetAddr.trim() === '') {
+        Alert.alert(
+          'No Location',
+          'Delivery coordinates are not available for this order.'
+        );
+        return;
+      }
+      const query = encodeURIComponent(targetAddr.replace(/\n/g, ' '));
+      mapUrl =
+        Platform.select({
+          ios: `maps:0,0?q=${query}`,
+          android: `geo:0,0?q=${query}`,
+        }) || `https://www.google.com/maps/search/?api=1&query=${query}`;
     }
 
-    const query = encodeURIComponent(targetAddr.replace(/\n/g, ' '));
-    const mapUrl =
-      Platform.select({
-        ios: `maps:0,0?q=${query}`,
-        android: `geo:0,0?q=${query}`,
-      }) || `https://www.google.com/maps/search/?api=1&query=${query}`;
+    const fallbackUrl = coordsValid
+      ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+          targetAddr || ''
+        )}`;
 
     Linking.canOpenURL(mapUrl)
       .then((supported) => {
-        if (supported) {
-          return Linking.openURL(mapUrl);
-        } else {
-          return Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`);
-        }
+        if (supported) return Linking.openURL(mapUrl);
+        return Linking.openURL(fallbackUrl);
       })
       .catch(() => {
-        Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`);
+        Linking.openURL(fallbackUrl);
       });
   };
 
@@ -1722,7 +1825,7 @@ export default function AllOrdersScreen() {
                 <View style={styles.orderMetaGridRow}>
                   <View style={styles.orderMetaColumn}>
                     <View style={styles.metaLabelRow}>
-                      <Feather name="clock" size={12} color="#64748B" style={{ marginRight: 4 }} />
+                      {/* Calendar/time icons removed */}
                       <Text style={styles.metaLabelText}>ORDER TIME</Text>
                     </View>
                     <Text style={styles.metaValueText}>{orderData.orderTime}</Text>
@@ -1732,7 +1835,7 @@ export default function AllOrdersScreen() {
 
                   <View style={[styles.orderMetaColumn, { paddingLeft: 12 }]}>
                     <View style={styles.metaLabelRow}>
-                      <Feather name="calendar" size={12} color="#64748B" style={{ marginRight: 4 }} />
+                      {/* Calendar/time icons removed */}
                       <Text style={styles.metaLabelText}>SCHEDULED SLOT</Text>
                     </View>
                     <Text style={styles.metaValueTextBold}>{orderData.deliveryDate}</Text>
@@ -1753,16 +1856,6 @@ export default function AllOrdersScreen() {
                   <View style={styles.customerDetailsCol}>
                     <Text style={styles.customerName}>{orderData.customer.name}</Text>
                     <View style={styles.customerMetaRow}>
-                      <Feather name="phone" size={11} color="#166348" style={{ marginRight: 4 }} />
-                      <Text style={styles.customerMetaText}>{orderData.customer.phone}</Text>
-                    </View>
-                    {orderData.customer.alternatePhone ? (
-                      <View style={styles.customerMetaRow}>
-                        <Feather name="phone-call" size={11} color="#D97706" style={{ marginRight: 4 }} />
-                        <Text style={styles.customerMetaAltText}>Alt: {orderData.customer.alternatePhone}</Text>
-                      </View>
-                    ) : null}
-                    <View style={styles.customerMetaRow}>
                       <Ionicons name="location-outline" size={12} color="#64748B" style={{ marginRight: 4 }} />
                       <Text style={styles.customerMetaText}>{orderData.customer.city}</Text>
                     </View>
@@ -1776,12 +1869,12 @@ export default function AllOrdersScreen() {
                 <View style={styles.customerActionsRow}>
                   <TouchableOpacity style={styles.actionOutlineBtn} activeOpacity={0.85} onPress={handleCallCustomer}>
                     <Feather name="phone-call" size={13} color="#166348" style={{ marginRight: 6 }} />
-                    <Text style={styles.actionOutlineBtnText}>Call Customer</Text>
+                    <Text style={styles.actionOutlineBtnText}>Call Support</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity style={styles.actionOutlineBtn} activeOpacity={0.85} onPress={handleMessageCustomer}>
                     <MaterialCommunityIcons name="message-processing-outline" size={15} color="#166348" style={{ marginRight: 6 }} />
-                    <Text style={styles.actionOutlineBtnText}>Send Message</Text>
+                    <Text style={styles.actionOutlineBtnText}>Message Support</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1809,13 +1902,10 @@ export default function AllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
-                {/* ✅ NEW: Dynamic Delivery Date & Slot Strip (Chef) */}
+                {/* ✅ Dynamic Delivery Date & Slot Strip (Chef) — calendar/time icons removed */}
                 <View style={styles.deliveryInfoStripContainer}>
                   <View style={styles.deliveryInfoCell}>
-                    <View style={styles.deliveryInfoIconCircle}>
-                      <Ionicons name="calendar-outline" size={13} color="#166348" />
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 8 }}>
+                    <View style={{ flex: 1 }}>
                       <Text style={styles.deliveryInfoLabel}>DELIVERY DATE</Text>
                       <Text style={styles.deliveryInfoValue} numberOfLines={1}>
                         {orderData.deliveryDate}
@@ -1826,10 +1916,7 @@ export default function AllOrdersScreen() {
                   <View style={styles.deliveryInfoDivider} />
 
                   <View style={styles.deliveryInfoCell}>
-                    <View style={styles.deliveryInfoIconCircle}>
-                      <Ionicons name="time-outline" size={13} color="#166348" />
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 8 }}>
+                    <View style={{ flex: 1 }}>
                       <Text style={styles.deliveryInfoLabel}>DELIVERY SLOT</Text>
                       <Text style={styles.deliveryInfoValue} numberOfLines={1}>
                         {orderData.deliveryTimeSlot}
@@ -1958,7 +2045,7 @@ export default function AllOrdersScreen() {
                         <View key={`sched-${scheduleItem.date}-${sIdx}`} style={styles.scheduleCardBlock}>
                           <View style={styles.scheduleTopRow}>
                             <View style={styles.scheduleDateBadge}>
-                              <Ionicons name="calendar-outline" size={14} color="#166348" />
+                              {/* Calendar icon removed */}
                               <Text style={styles.scheduleDateBadgeText}>{scheduleItem.date}</Text>
                             </View>
 
@@ -1982,16 +2069,38 @@ export default function AllOrdersScreen() {
                           {/* Dynamic Location and Map Button on Every Delivery Card */}
                           <View style={styles.scheduleAddressRow}>
                             <Ionicons name="location-sharp" size={14} color="#166348" style={{ marginTop: 2 }} />
-                            <Text style={styles.scheduleAddressText} numberOfLines={2}>
-                              {scheduleItem.address}
-                            </Text>
+                            <View style={{ flex: 1, paddingRight: 6 }}>
+                              <Text style={styles.scheduleAddressText} numberOfLines={2}>
+                                {scheduleItem.address}
+                              </Text>
+                              {hasValidCoords(scheduleItem.latitude, scheduleItem.longitude) && (
+                                <Text style={styles.scheduleCoordText} numberOfLines={1}>
+                                  📍 {formatCoordLabel(scheduleItem.latitude, scheduleItem.longitude)}
+                                </Text>
+                              )}
+                            </View>
                             <TouchableOpacity
                               style={styles.scheduleMapBtn}
                               activeOpacity={0.8}
-                              onPress={() => handleOpenMap(scheduleItem.address)}
+                              onPress={() =>
+                                handleOpenMap(
+                                  scheduleItem.address,
+                                  scheduleItem.latitude,
+                                  scheduleItem.longitude
+                                )
+                              }
                             >
-                              <MaterialCommunityIcons name="map-marker-radius" size={13} color="#166348" style={{ marginRight: 3 }} />
-                              <Text style={styles.scheduleMapBtnText}>Map</Text>
+                              <MaterialCommunityIcons
+                                name="map-marker-radius"
+                                size={13}
+                                color="#166348"
+                                style={{ marginRight: 3 }}
+                              />
+                              <Text style={styles.scheduleMapBtnText}>
+                                {hasValidCoords(scheduleItem.latitude, scheduleItem.longitude)
+                                  ? 'Pin'
+                                  : 'Map'}
+                              </Text>
                             </TouchableOpacity>
                           </View>
 
@@ -2082,11 +2191,29 @@ export default function AllOrdersScreen() {
                       <Text style={styles.addressHeaderTitle}>Delivery Address</Text>
                     </View>
                     <Text style={styles.addressBodyText}>{orderData.deliveryAddress}</Text>
+                    {hasValidCoords(activeOrder?.latitude, activeOrder?.longitude) && (
+                      <Text style={styles.addressCoordText}>
+                        📍 {formatCoordLabel(activeOrder?.latitude, activeOrder?.longitude)}
+                      </Text>
+                    )}
                   </View>
 
-                  <TouchableOpacity style={styles.viewOnMapBtn} activeOpacity={0.8} onPress={() => handleOpenMap()}>
-                    <MaterialCommunityIcons name="map-marker-radius" size={14} color="#166348" style={{ marginRight: 4 }} />
-                    <Text style={styles.viewOnMapBtnText}>Map</Text>
+                  <TouchableOpacity
+                    style={styles.viewOnMapBtn}
+                    activeOpacity={0.8}
+                    onPress={() => handleOpenMap()}
+                  >
+                    <MaterialCommunityIcons
+                      name="map-marker-radius"
+                      size={14}
+                      color="#166348"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={styles.viewOnMapBtnText}>
+                      {hasValidCoords(activeOrder?.latitude, activeOrder?.longitude)
+                        ? 'Pinned'
+                        : 'Map'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2954,6 +3081,22 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontWeight: '500',
     lineHeight: 16,
+  },
+  // ✅ NEW: coordinate label style (green theme)
+  scheduleCoordText: {
+    fontSize: 10.5,
+    color: '#166348',
+    fontWeight: '700',
+    marginTop: 3,
+    letterSpacing: 0.2,
+  },
+  // ✅ NEW: primary-address coordinate label style (green theme)
+  addressCoordText: {
+    fontSize: 11,
+    color: '#166348',
+    fontWeight: '700',
+    marginTop: 4,
+    letterSpacing: 0.2,
   },
   scheduleMapBtn: {
     flexDirection: 'row',

@@ -92,6 +92,48 @@ const parseIfJsonString = (value: any, fallback: any = null) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Safely parse a numeric coordinate value that
+   may arrive as a string from multipart/form-data. Returns
+   undefined for invalid/empty values so MongoDB does not store NaN.
+   ───────────────────────────────────────────────────────────────── */
+const parseNumberOrUndefined = (val: any): number | undefined => {
+  if (val === undefined || val === null || val === "") return undefined;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Format an absolute Date into "4:30 PM" style string.
+   Used to build the delivery slot label. This is the ONLY format
+   that will be persisted for QuickBites / homemade delivery slots.
+   ───────────────────────────────────────────────────────────────── */
+const formatTimeShort = (d: Date): string => {
+  try {
+    return d.toLocaleTimeString("en-IN", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return "";
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Format an absolute Date into "17 Sep" style string.
+   Used only for the delivery date label.
+   ───────────────────────────────────────────────────────────────── */
+const formatDateShort = (d: Date): string => {
+  try {
+    const day = d.getDate();
+    const month = d.toLocaleDateString("en-US", { month: "short" });
+    return `${day} ${month}`;
+  } catch {
+    return "";
+  }
+};
+
 const uploadBufferToCloudinary = (fileBuffer: Buffer) => {
   return new Promise<any>((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -186,6 +228,22 @@ setInterval(async () => {
  * IMPORTANT: When an order is created, it goes ONLY to the Admin.
  * The chef is NOT notified here. Chef receives the order only after
  * admin verifies advance payment via /verify-advance.
+ *
+ * ✅ NEW: The controller computes and persists three additional
+ *    timestamp fields on the order document at the exact moment of
+ *    order placement:
+ *
+ *      • orderPlacedAt          → the server time when createOrder ran.
+ *      • estimatedDeliveryAt    → absolute Date when delivery is expected.
+ *      • deliveryWindowMinutes  → the window size (75 for QuickBites, else 0).
+ *
+ *    ✅ The human-readable delivery slot label that gets stored in
+ *       MongoDB is now ONLY the time in "4:30 PM" format (e.g. "4:30 PM"),
+ *       never the long "ASAP (Within 75 minutes...)" string.
+ *
+ *    ✅ NEW: latitude & longitude are also persisted on the order and
+ *       on each delivery schedule so downstream map actions can pin
+ *       the exact location.
  */
 export const createOrder = async (req: AuthRequest, res: Response) => {
   try {
@@ -207,6 +265,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       menuImage,
       durationType,
       deliveryTimeSlot,
+      // ✅ New: top-level delivery slot label for homemade (mirror of deliveryTimeSlot)
       deliverySlot,
       addressDetails,
       deliveryAddress,
@@ -232,9 +291,18 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       deliveryType,
       pricePerPlate,
       addons,
-      latitude: reqLat,
-      longitude: reqLng,
+      // ✅ NEW: QuickBites flow hint + optional client-provided absolute timestamp
+      isQuickBites,
+      estimatedDeliveryAtMs,
+      deliveryWindowMinutes,
+      // ✅ NEW: geo coordinates for map pinning
+      latitude,
+      longitude,
     } = req.body;
+
+    // ✅ Normalize coordinates once (works for JSON and multipart/form-data)
+    const resolvedLatitude = parseNumberOrUndefined(latitude);
+    const resolvedLongitude = parseNumberOrUndefined(longitude);
 
     const finalUserId = String(rawUserId || userId || "");
 
@@ -256,11 +324,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       ""
     );
 
-    let resolvedLat = Number(reqLat) || 0;
-    let resolvedLng = Number(reqLng) || 0;
-
     if (finalUserId && mongoose.Types.ObjectId.isValid(finalUserId)) {
-      if (!finalUserPhone || !finalAlternatePhone || resolvedLat === 0 || resolvedLng === 0) {
+      if (!finalUserPhone || !finalAlternatePhone) {
         let userCart = null;
         if (cartId && mongoose.Types.ObjectId.isValid(cartId)) {
           userCart = await Cart.findById(cartId);
@@ -279,16 +344,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         }
       }
 
-      const userObj = await User.findById(finalUserId);
-      if (userObj) {
-        if (!finalUserPhone && userObj.phone) {
+      if (!finalUserPhone) {
+        const userObj = await User.findById(finalUserId);
+        if (userObj && userObj.phone) {
           finalUserPhone = userObj.phone;
-        }
-        if (resolvedLat === 0 && resolvedLng === 0) {
-          if (userObj.activeAddress && (userObj.activeAddress.latitude || userObj.activeAddress.longitude)) {
-            resolvedLat = userObj.activeAddress.latitude || 0;
-            resolvedLng = userObj.activeAddress.longitude || 0;
-          }
         }
       }
     }
@@ -339,6 +398,63 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       console.log("Chef phone lookup warning:", lookupErr);
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // ✅ Compute absolute delivery timestamps at order placement.
+    //    • orderPlacedAt = server "now"
+    //    • If QuickBites OR serviceType === homemade with a QuickBites
+    //      hint: estimatedDeliveryAt = now + 75 min (or the provided
+    //      deliveryWindowMinutes), deliveryWindowMinutes = that value.
+    //    • Else if the client sent an absolute ms timestamp: use it.
+    //    • Else: leave estimatedDeliveryAt unset.
+    // ────────────────────────────────────────────────────────────────
+    const orderPlacedAt = new Date();
+    const quickBitesFlag =
+      String(isQuickBites || "").toLowerCase() === "true" ||
+      String(req.body?.category || "").trim().toLowerCase().replace(/\s+/g, "") === "quickbites";
+
+    let resolvedWindowMinutes = Number(deliveryWindowMinutes) || 0;
+    let resolvedEstimatedDeliveryAt: Date | undefined = undefined;
+
+    if (quickBitesFlag) {
+      // Default to 75 minutes when the client didn't specify
+      if (!resolvedWindowMinutes || resolvedWindowMinutes <= 0) {
+        resolvedWindowMinutes = 75;
+      }
+      resolvedEstimatedDeliveryAt = new Date(
+        orderPlacedAt.getTime() + resolvedWindowMinutes * 60 * 1000
+      );
+    } else if (estimatedDeliveryAtMs !== undefined && estimatedDeliveryAtMs !== null && estimatedDeliveryAtMs !== "") {
+      const parsedMs = Number(estimatedDeliveryAtMs);
+      if (Number.isFinite(parsedMs) && parsedMs > 0) {
+        resolvedEstimatedDeliveryAt = new Date(parsedMs);
+      }
+    }
+
+    // ✅ Format the human-readable delivery slot label so downstream UIs
+    // can display a fixed string even without reading the Date.
+    //
+    // ✅ NEW: The slot label is now ALWAYS just the time — "4:30 PM" —
+    // never the long "ASAP (Within 75 minutes…)" string.
+    let finalDeliverySlotLabel = String(deliverySlot || deliveryTimeSlot || "").trim();
+    let finalDeliveryDateLabel = String(deliveryDate || "").trim();
+
+    if (resolvedEstimatedDeliveryAt) {
+      const timeStr = formatTimeShort(resolvedEstimatedDeliveryAt);
+      const dateStr = formatDateShort(orderPlacedAt);
+
+      if (quickBitesFlag) {
+        // ✅ Just the time, e.g. "4:30 PM"
+        finalDeliveryDateLabel = `Today, ${dateStr}`;
+        finalDeliverySlotLabel = timeStr;
+      } else if (!finalDeliverySlotLabel) {
+        // ✅ Just the time
+        finalDeliverySlotLabel = timeStr;
+      }
+      if (!finalDeliveryDateLabel) {
+        finalDeliveryDateLabel = dateStr;
+      }
+    }
+
     let savedOrder: any = null;
 
     if (resolvedServiceType === "homemade") {
@@ -358,7 +474,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           }))
         : [];
 
-      const resolvedHomemadeSlot = String(deliverySlot || deliveryTimeSlot || "30–45 min");
+      // ✅ Resolve the delivery slot label for homemade — prefer the new
+      // top-level `deliverySlot` param, fall back to legacy `deliveryTimeSlot`.
+      const resolvedHomemadeSlot = finalDeliverySlotLabel || "";
 
       const newHomemadeOrder = new HomemadeOrderModel({
         orderId: generatedOrderId,
@@ -374,9 +492,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         deliveryAddress: resolvedAddress,
         deliveryTimeSlot: resolvedHomemadeSlot,
         deliverySlot: resolvedHomemadeSlot,
-        deliveryDate: deliveryDate || "Today",
-        latitude: resolvedLat,
-        longitude: resolvedLng,
+        deliveryDate: finalDeliveryDateLabel || "Today",
+        // ✅ Persist the QuickBites flag alongside the timestamps
+        isQuickBites: quickBitesFlag,
+        // ✅ Persist the absolute delivery timestamps computed from "now"
+        orderPlacedAt,
+        estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
+        deliveryWindowMinutes: resolvedWindowMinutes,
+        // ✅ Persist geo coordinates for map pinning
+        latitude: resolvedLatitude,
+        longitude: resolvedLongitude,
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
@@ -391,7 +516,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         paymentStatus: "Verification Pending",
         orderStatus: "Placed",
         statusTimeline: [
-          { status: "Placed", timestamp: new Date(), note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -422,8 +547,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         addons: Array.isArray(addons) ? addons : [],
         selections: selections || null,
         items: items || [],
-        latitude: resolvedLat,
-        longitude: resolvedLng,
+        // ✅ Timestamps for downstream UIs
+        orderPlacedAt,
+        estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
+        deliveryWindowMinutes: resolvedWindowMinutes,
+        // ✅ Persist geo coordinates for map pinning
+        latitude: resolvedLatitude,
+        longitude: resolvedLongitude,
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
@@ -438,22 +568,24 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         paymentStatus: "Verification Pending",
         orderStatus: "Placed",
         statusTimeline: [
-          { status: "Placed", timestamp: new Date(), note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
       savedOrder = await newCateringOrder.save();
     }
     else {
+      // ✅ Copy coordinates onto each schedule as well so per-schedule
+      // map actions can pin the exact drop location.
       const initialSchedules = sortedDeliveries.map((dateItem: string) => ({
         date: dateItem,
         status: "Scheduled",
         timeSlot: deliveryTimeSlot || "7:00 PM - 9:00 PM",
         address: resolvedAddress,
-        latitude: resolvedLat,
-        longitude: resolvedLng,
+        latitude: resolvedLatitude,
+        longitude: resolvedLongitude,
         statusTimeline: [
-          { status: "Scheduled", timestamp: new Date(), note: `Delivery scheduled for ${dateItem}` },
+          { status: "Scheduled", timestamp: orderPlacedAt, note: `Delivery scheduled for ${dateItem}` },
         ],
       }));
 
@@ -478,8 +610,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         pausedDates: [],
         selections: selections || null,
         items: items || [],
-        latitude: resolvedLat,
-        longitude: resolvedLng,
+        // ✅ Timestamps for downstream UIs
+        orderPlacedAt,
+        estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
+        deliveryWindowMinutes: resolvedWindowMinutes,
+        // ✅ Persist geo coordinates for map pinning
+        latitude: resolvedLatitude,
+        longitude: resolvedLongitude,
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
@@ -494,7 +631,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         paymentStatus: "Verification Pending",
         orderStatus: "Placed",
         statusTimeline: [
-          { status: "Placed", timestamp: new Date(), note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -564,9 +701,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
 /**
  * PATCH /api/orders/:orderId/verify-advance
- *
- * Called when Admin clicks "Payment Received".
- * After verification, the order is dispatched to the assigned chef.
  */
 export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
   try {
@@ -592,7 +726,6 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
       io.emit("advance_payment_verified", updatedOrder);
       io.emit("order_updated", updatedOrder);
 
-      // Notify the customer
       if (order.userId) {
         io.to(order.userId).emit("advance_payment_verified", updatedOrder);
         io.to(order.userId).emit("order_updated", updatedOrder);
@@ -767,10 +900,15 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
           order.prepStartedAt = new Date();
         }
         if (!order.targetDeliveryTime) {
-          order.targetDeliveryTime = calculateSlotTargetTime(
-            (order as any).deliveryDate || (order as any).eventDate || "",
-            (order as any).deliveryTimeSlot || (order as any).eventTime || ""
-          );
+          // ✅ Prefer the persisted estimatedDeliveryAt if we have one
+          if (order.estimatedDeliveryAt) {
+            order.targetDeliveryTime = order.estimatedDeliveryAt;
+          } else {
+            order.targetDeliveryTime = calculateSlotTargetTime(
+              (order as any).deliveryDate || (order as any).eventDate || "",
+              (order as any).deliveryTimeSlot || (order as any).eventTime || ""
+            );
+          }
         }
       }
 
@@ -845,8 +983,8 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
         status: isCashCollectedForSchedule ? "Delivered" : normalizedStatus,
         timeSlot: (order as any).deliveryTimeSlot || "7:00 PM - 9:00 PM",
         address: (order as any).addressDetails || (order as any).deliveryAddress || "",
-        latitude: order.latitude || 0,
-        longitude: order.longitude || 0,
+        latitude: (order as any).latitude,
+        longitude: (order as any).longitude,
         statusTimeline: [
           {
             status: isCashCollectedForSchedule ? "Delivered" : normalizedStatus,
@@ -982,8 +1120,8 @@ export const pauseOrderDelivery = async (req: AuthRequest, res: Response) => {
           status: "Paused",
           timeSlot: (order as any).deliveryTimeSlot || "7:00 PM - 9:00 PM",
           address: (order as any).addressDetails || "",
-          latitude: order.latitude || 0,
-          longitude: order.longitude || 0,
+          latitude: (order as any).latitude,
+          longitude: (order as any).longitude,
           statusTimeline: [{ status: "Paused", timestamp: new Date() }],
         } as any);
       }
@@ -1057,12 +1195,6 @@ export const rescheduleOrderDelivery = async (req: AuthRequest, res: Response) =
 
 /**
  * POST /api/orders/:orderId/feedback
- *
- * ✅ FIXED: Now ALSO mirrors the review into the corresponding Chef
- * document's `reviews[]` array (creating the review, preventing
- * duplicates by orderId), recalculates the chef's `averageRating`
- * and `totalReviews`, and emits a live socket event to the chef's
- * user room so their app can refresh in real-time.
  */
 export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
   try {
@@ -1095,9 +1227,6 @@ export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
 
     const updatedOrder = await order.save();
 
-    // ────────────────────────────────────────────────────────────────
-    // ✅ MIRROR THE REVIEW INTO THE CHEF DOCUMENT'S `reviews[]` ARRAY
-    // ────────────────────────────────────────────────────────────────
     try {
       const chefIdentifier = order.chefId;
       const chefNameStr = order.chefName;
@@ -1119,7 +1248,6 @@ export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
         const alreadyExists = existingReviews.some((r: any) => r && r.orderId === order.orderId);
 
         if (!alreadyExists) {
-          // Resolve customer name / avatar from User doc when available
           let userNameForReview = order.userName || "Customer";
           let userAvatarForReview = "";
 
@@ -1128,10 +1256,10 @@ export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
               const customerDoc = await User.findById(order.userId);
               if (customerDoc) {
                 if (customerDoc.name) userNameForReview = customerDoc.name;
-                if ((customerDoc as any).avatar) userAvatarForReview = (customerDoc as any).avatar;
+                if (customerDoc.avatar) userAvatarForReview = customerDoc.avatar;
               }
             } catch (userLookupErr) {
-              // Silently ignore — fallback values already set
+              // Silently ignore
             }
           }
 
@@ -1156,14 +1284,12 @@ export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
 
           await chefDoc.save();
 
-          // Recalculate averageRating & totalReviews based on the new reviews array
           try {
             await recalculateChefRating(chefDoc._id);
           } catch (recalcErr) {
             console.log("Recalculate chef rating warning:", recalcErr);
           }
 
-          // Emit real-time notification to the chef's user room
           try {
             const chefUserId = chefDoc.user ? String(chefDoc.user) : null;
             if (chefUserId) {
@@ -1184,7 +1310,6 @@ export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
         }
       }
     } catch (chefReviewErr) {
-      // Never fail the customer response because of chef-mirror errors
       console.log("Error mirroring feedback into Chef document:", chefReviewErr);
     }
 

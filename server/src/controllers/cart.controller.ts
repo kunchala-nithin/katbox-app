@@ -25,7 +25,6 @@ export const addToCart = async (req: Request, res: Response) => {
       const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
 
       // ✅ Homemade-only: resolve delivery date & slot from top-level body OR nested orderDetails
-      // Also derive from the selected date key if only keys were sent (UI-only fallback).
       const resolvedDeliveryDate = String(
         req.body.deliveryDate ||
         orderDetails?.deliveryDate ||
@@ -38,6 +37,20 @@ export const addToCart = async (req: Request, res: Response) => {
         orderDetails?.deliveryTimeSlot ||
         ''
       );
+
+      // ✅ NEW: Resolve the absolute estimated delivery timestamp + window + QuickBites flag.
+      // The client (HomeMadeOrderReview) sends these for QuickBites so the cart
+      // doc carries a fixed Date that the CartScreen can render dynamically.
+      const estimatedDeliveryAtMsRaw = req.body.estimatedDeliveryAtMs;
+      const parsedEstimatedDeliveryAtMs = Number(estimatedDeliveryAtMsRaw);
+      const resolvedEstimatedDeliveryAt =
+        Number.isFinite(parsedEstimatedDeliveryAtMs) && parsedEstimatedDeliveryAtMs > 0
+          ? new Date(parsedEstimatedDeliveryAtMs)
+          : undefined;
+      const resolvedDeliveryWindowMinutes = Number(req.body.deliveryWindowMinutes) || 0;
+      const resolvedIsQuickBites =
+        String(req.body.isQuickBites || '').toLowerCase() === 'true' ||
+        String(orderDetails?.isQuickBites || '').toLowerCase() === 'true';
 
       // Clear out active current instances sitting in standard active workflow session
       await Cart.deleteMany({ user: userId, status: "in-cart" });
@@ -62,7 +75,11 @@ export const addToCart = async (req: Request, res: Response) => {
         totalPriceAfterDiscount: calculatedFinalTotal,
         // ✅ Only meaningful for homemade; harmless for mealbox (stays empty string)
         deliveryDate: serviceType === 'homemade' ? resolvedDeliveryDate : '',
-        deliverySlot: serviceType === 'homemade' ? resolvedDeliverySlot : ''
+        deliverySlot: serviceType === 'homemade' ? resolvedDeliverySlot : '',
+        // ✅ NEW: Absolute timestamp for dynamic display in CartScreen
+        estimatedDeliveryAt: serviceType === 'homemade' ? resolvedEstimatedDeliveryAt : undefined,
+        deliveryWindowMinutes: serviceType === 'homemade' ? resolvedDeliveryWindowMinutes : 0,
+        isQuickBites: serviceType === 'homemade' ? resolvedIsQuickBites : false
       });
 
       const savedHomemade = await newHomemadeCart.save();
@@ -118,7 +135,7 @@ export const addToCart = async (req: Request, res: Response) => {
       restaurant,
       menu,
       selections,
-      addons: addons || [], // ✅ SAVE DYNAMIC ITEMS TO MONGO BLOCK RECORD INSTANCE DIRECTLY
+      addons: addons || [],
       orderDetails,
 
       specialInstructions: {
@@ -140,7 +157,11 @@ export const addToCart = async (req: Request, res: Response) => {
       totalPriceAfterDiscount: calculatedFinalTotal,
       // ✅ Catering flow untouched — leave deliveryDate/Slot empty
       deliveryDate: '',
-      deliverySlot: ''
+      deliverySlot: '',
+      // ✅ NEW: Catering doesn't use the estimatedDeliveryAt timestamp
+      estimatedDeliveryAt: undefined,
+      deliveryWindowMinutes: 0,
+      isQuickBites: false
     });
 
     const saved = await newCart.save();
@@ -199,6 +220,18 @@ export const updateCart = async (req: Request, res: Response) => {
         ''
       );
 
+      // ✅ NEW: Same timestamp handling as addToCart
+      const estimatedDeliveryAtMsRaw = req.body.estimatedDeliveryAtMs;
+      const parsedEstimatedDeliveryAtMs = Number(estimatedDeliveryAtMsRaw);
+      const resolvedEstimatedDeliveryAt =
+        Number.isFinite(parsedEstimatedDeliveryAtMs) && parsedEstimatedDeliveryAtMs > 0
+          ? new Date(parsedEstimatedDeliveryAtMs)
+          : undefined;
+      const resolvedDeliveryWindowMinutes = Number(req.body.deliveryWindowMinutes) || 0;
+      const resolvedIsQuickBites =
+        String(req.body.isQuickBites || '').toLowerCase() === 'true' ||
+        String(orderDetails?.isQuickBites || '').toLowerCase() === 'true';
+
       const updatedHomemade = await Cart.findByIdAndUpdate(
         cartId,
         { 
@@ -219,7 +252,11 @@ export const updateCart = async (req: Request, res: Response) => {
           totalPriceAfterDiscount: calculatedFinalTotal,
           // ✅ Preserve delivery date & slot on every update for homemade; empty for mealbox
           deliveryDate: serviceType === 'homemade' ? resolvedDeliveryDate : '',
-          deliverySlot: serviceType === 'homemade' ? resolvedDeliverySlot : ''
+          deliverySlot: serviceType === 'homemade' ? resolvedDeliverySlot : '',
+          // ✅ NEW: Preserve the absolute timestamp fields
+          estimatedDeliveryAt: serviceType === 'homemade' ? resolvedEstimatedDeliveryAt : undefined,
+          deliveryWindowMinutes: serviceType === 'homemade' ? resolvedDeliveryWindowMinutes : 0,
+          isQuickBites: serviceType === 'homemade' ? resolvedIsQuickBites : false
         },
         { new: true }
       );
@@ -234,13 +271,13 @@ export const updateCart = async (req: Request, res: Response) => {
       menu,
       restaurant,
       selections,
-      addons, // ✅ DESTRUCTURED FOR MULTI-VENDOR TRACKING SEQUENCING ARCHITECTURE
+      addons,
       orderItemDetails,
       orderDetails,
       type,
       finalPrice,
       deliveryPrice,
-      extraItems, // ✅ NEW
+      extraItems,
       userPhone,
       alternatePhone
     } = req.body;
@@ -271,7 +308,7 @@ export const updateCart = async (req: Request, res: Response) => {
         userPhone: resolvedUserPhone,
         alternatePhone: resolvedAltPhone,
         selections,
-        addons: addons || [], // ✅ SYNC MODIFIED METRIC ADDONS RECORD BLOCKS
+        addons: addons || [],
         orderDetails,
 
         specialInstructions: {
@@ -301,7 +338,11 @@ export const updateCart = async (req: Request, res: Response) => {
         totalPriceAfterDiscount: calculatedFinalTotal,
         // ✅ Catering flow untouched — keep deliveryDate/Slot empty
         deliveryDate: '',
-        deliverySlot: ''
+        deliverySlot: '',
+        // ✅ NEW: Catering doesn't use the timestamp fields
+        estimatedDeliveryAt: undefined,
+        deliveryWindowMinutes: 0,
+        isQuickBites: false
       },
       { new: true }
     );

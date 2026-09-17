@@ -86,6 +86,23 @@ const parseDateParts = (dateStr: string) => {
   return { dayName: "DAY", dayNumber: "1", month: "JUN", fullString: cleanedStr };
 };
 
+// ✅ NEW HELPER — Validate coordinates coming from the order document
+const hasValidCoords = (lat: any, lng: any): boolean => {
+  const nLat = Number(lat);
+  const nLng = Number(lng);
+  return (
+    Number.isFinite(nLat) &&
+    Number.isFinite(nLng) &&
+    !(nLat === 0 && nLng === 0)
+  );
+};
+
+// ✅ NEW HELPER — Compact coordinate label (e.g. "12.97160, 77.59460")
+const formatCoordLabel = (lat: any, lng: any): string => {
+  if (!hasValidCoords(lat, lng)) return '';
+  return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
+};
+
 /* ─── COUNTDOWN TIMER WIDGET (ADMIN BLUE THEME) ─── */
 function DeliverySlotCountdownWidget({
   deliveryDate,
@@ -253,18 +270,23 @@ export default function AdminAllOrdersScreen() {
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(0);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
 
+  // Filter tabs
   const [statusFilter, setStatusFilter] = useState<'All' | 'Placed' | 'Accepted' | 'Preparing' | 'Delivered' | 'Cancelled'>('All');
 
+  // Status dropdowns
   const [showStatusDropdown, setShowStatusDropdown] = useState<boolean>(false);
   const [activeScheduleDropdownDate, setActiveScheduleDropdownDate] = useState<string | null>(null);
 
+  // Price breakdown expander
   const [isPriceExpanded, setIsPriceExpanded] = useState<boolean>(false);
   const chevronAnim = useRef(new Animated.Value(0)).current;
 
+  // Preview modal
   const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>('');
   const sheetAnim = useRef(new Animated.Value(400)).current;
 
+  // Alarm refs
   const soundRef = useRef<Audio.Sound | null>(null);
   const alarmIntervalRef = useRef<any>(null);
   const alarmStopTimeoutRef = useRef<any>(null);
@@ -422,6 +444,7 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
+  // ─── Real-time socket listeners ───
   useEffect(() => {
     fetchAllOrders();
 
@@ -497,6 +520,7 @@ export default function AdminAllOrdersScreen() {
     fetchAllOrders();
   }, []);
 
+  // ─── Filtered orders ───
   const filteredOrders = useMemo(() => {
     if (statusFilter === 'All') return orders;
     return orders.filter(
@@ -664,9 +688,9 @@ export default function AdminAllOrdersScreen() {
     status: string;
     timeSlot: string;
     address: string;
+    isPaused: boolean;
     latitude?: number;
     longitude?: number;
-    isPaused: boolean;
   }> = useMemo(() => {
     if (!isMealBoxFlow || !activeOrder) return [];
 
@@ -685,10 +709,20 @@ export default function AdminAllOrdersScreen() {
       const status = isPaused ? 'Paused' : (match?.status || 'Scheduled');
       const timeSlot = match?.timeSlot || activeOrder.deliveryTimeSlot || '7:00 PM - 9:00 PM';
       const address = match?.address || activeOrder.addressDetails || activeOrder.deliveryAddress || customerAddress;
-      const latitude = match?.latitude ?? activeOrder.latitude;
-      const longitude = match?.longitude ?? activeOrder.longitude;
 
-      return { date: dateStr, status, timeSlot, address, latitude, longitude, isPaused };
+      // ✅ NEW: Prefer per-schedule coords, fall back to order-level coords.
+      const sLat = match?.latitude ?? activeOrder?.latitude;
+      const sLng = match?.longitude ?? activeOrder?.longitude;
+
+      return {
+        date: dateStr,
+        status,
+        timeSlot,
+        address,
+        isPaused,
+        latitude: sLat !== undefined && sLat !== null ? Number(sLat) : undefined,
+        longitude: sLng !== undefined && sLng !== null ? Number(sLng) : undefined,
+      };
     });
   }, [isMealBoxFlow, activeOrder, customerAddress]);
 
@@ -717,28 +751,99 @@ export default function AdminAllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
+  // ✅ NEW: Detect QuickBites homemade flow — this order's slot/date must
+  // be derived LIVE from the persisted `estimatedDeliveryAt` timestamp.
+  const isQuickBitesFlow =
+    isHomemadeFlow &&
+    (activeOrder?.isQuickBites === true ||
+      String(activeOrder?.isQuickBites).toLowerCase() === 'true');
+
+  // ✅ NEW: Compute dynamic QuickBites date/time from `estimatedDeliveryAt`
+  const quickBitesDateTime = useMemo(() => {
+    if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
+    const d = new Date(activeOrder.estimatedDeliveryAt);
+    if (isNaN(d.getTime())) return null;
+
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
+    const dayNum = d.getDate();
+    const monthShort = d.toLocaleDateString('en-US', { month: 'short' });
+
+    const displayDate = sameDay
+      ? `Today, ${dayNum} ${monthShort}`
+      : `${weekday}, ${dayNum} ${monthShort}`;
+
+    const timerDate = `${weekday}, ${dayNum} ${monthShort}`;
+
+    const timeStr = d.toLocaleTimeString('en-IN', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    return { displayDate, timerDate, timeStr };
+  }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
+
+  // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
+  //    • For QuickBites: computed live from `estimatedDeliveryAt`.
+  //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
+  //      falls back to legacy `deliveryTimeSlot`.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
+    if (isQuickBitesFlow && quickBitesDateTime) {
+      return quickBitesDateTime.timerDate;
+    }
     return String(activeOrder?.deliveryDate || '').trim();
-  }, [activeOrder?.deliveryDate, isHomemadeFlow]);
+  }, [
+    activeOrder?.deliveryDate,
+    isHomemadeFlow,
+    isQuickBitesFlow,
+    quickBitesDateTime,
+  ]);
 
   const homemadeDeliverySlotResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
+    if (isQuickBitesFlow && quickBitesDateTime) {
+      return quickBitesDateTime.timeStr;
+    }
     return String(
       activeOrder?.deliverySlot ||
       activeOrder?.deliveryTimeSlot ||
       ''
     ).trim();
-  }, [activeOrder?.deliverySlot, activeOrder?.deliveryTimeSlot, isHomemadeFlow]);
+  }, [
+    activeOrder?.deliverySlot,
+    activeOrder?.deliveryTimeSlot,
+    isHomemadeFlow,
+    isQuickBitesFlow,
+    quickBitesDateTime,
+  ]);
+
+  // ✅ NEW: Human-friendly display date specifically for headers/cards.
+  const homemadeDeliveryDateDisplay = useMemo(() => {
+    if (!isHomemadeFlow) return '';
+    if (isQuickBitesFlow && quickBitesDateTime) {
+      return quickBitesDateTime.displayDate;
+    }
+    return String(activeOrder?.deliveryDate || '').trim();
+  }, [
+    activeOrder?.deliveryDate,
+    isHomemadeFlow,
+    isQuickBitesFlow,
+    quickBitesDateTime,
+  ]);
 
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today',
+    // ✅ For homemade QuickBites: use the live-computed display date.
+    //    For non-QuickBites homemade: use the persisted value.
     deliveryDate:
       isHomemadeFlow
-        ? (homemadeDeliveryDateResolved || 'Today')
+        ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
         : (activeOrder?.deliveryDate ||
            activeOrder?.eventDate ||
            'Mon, 17 Jun 2024'),
@@ -787,8 +892,6 @@ export default function AdminAllOrdersScreen() {
       image: defaultDishImage,
     },
     deliveryAddress: customerAddress,
-    latitude: activeOrder?.latitude ?? 0,
-    longitude: activeOrder?.longitude ?? 0,
     status: isCashCollected ? 'Cash Collected' : currentStatus,
   };
 
@@ -904,38 +1007,68 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  const handleOpenMap = (lat?: number, lng?: number, addressOverride?: string) => {
-    const latitude = lat ?? orderData.latitude;
-    const longitude = lng ?? orderData.longitude;
+  // ✅ UPDATED: Prefers coordinates for exact pin placement, falls back to address.
+  const handleOpenMap = (
+    addressOverride?: string,
+    latOverride?: any,
+    lngOverride?: any
+  ) => {
+    const lat =
+      latOverride !== undefined && latOverride !== null
+        ? Number(latOverride)
+        : Number(activeOrder?.latitude);
+    const lng =
+      lngOverride !== undefined && lngOverride !== null
+        ? Number(lngOverride)
+        : Number(activeOrder?.longitude);
+    const coordsValid =
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      !(lat === 0 && lng === 0);
+
+    const targetAddr = addressOverride || customerAddress;
+    const safeAddr =
+      targetAddr && targetAddr.trim() !== '' ? targetAddr : 'Delivery Location';
+    const label = encodeURIComponent(
+      safeAddr.replace(/\n/g, ' ').substring(0, 120)
+    );
 
     let mapUrl = '';
-    if (latitude && longitude && latitude !== 0 && longitude !== 0) {
-      mapUrl = Platform.select({
-        ios: `maps:0,0?q=${latitude},${longitude}(Delivery Location)`,
-        android: `geo:${latitude},${longitude}?q=${latitude},${longitude}(Delivery Location)`,
-      }) || `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+    if (coordsValid) {
+      mapUrl =
+        Platform.select({
+          ios: `maps:0,0?q=${label}@${lat},${lng}`,
+          android: `geo:${lat},${lng}?q=${lat},${lng}(${label})`,
+        }) || `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
     } else {
-      const targetAddr = addressOverride || customerAddress;
       if (!targetAddr || targetAddr.trim() === '' || targetAddr === 'Address not provided') {
-        Alert.alert('No Location', 'Delivery coordinates and address are not available.');
+        Alert.alert(
+          'No Location',
+          'Delivery coordinates are not available for this order.'
+        );
         return;
       }
       const query = encodeURIComponent(targetAddr.replace(/\n/g, ' '));
-      mapUrl = Platform.select({
-        ios: `maps:0,0?q=${query}`,
-        android: `geo:0,0?q=${query}`,
-      }) || `https://www.google.com/maps/search/?api=1&query=${query}`;
+      mapUrl =
+        Platform.select({
+          ios: `maps:0,0?q=${query}`,
+          android: `geo:0,0?q=${query}`,
+        }) || `https://www.google.com/maps/search/?api=1&query=${query}`;
     }
+
+    const fallbackUrl = coordsValid
+      ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+          targetAddr || ''
+        )}`;
 
     Linking.canOpenURL(mapUrl)
       .then((supported) => {
         if (supported) return Linking.openURL(mapUrl);
-        const fallbackQuery = latitude && longitude ? `${latitude},${longitude}` : encodeURIComponent(customerAddress);
-        return Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${fallbackQuery}`);
+        return Linking.openURL(fallbackUrl);
       })
       .catch(() => {
-        const fallbackQuery = latitude && longitude ? `${latitude},${longitude}` : encodeURIComponent(customerAddress);
-        Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${fallbackQuery}`);
+        Linking.openURL(fallbackUrl);
       });
   };
 
@@ -961,6 +1094,7 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
+  // ─── ADMIN VERIFY ADVANCE / PAYMENT RECEIVED ACTION ───
   const handleVerifyAdvancePayment = async () => {
     if (!activeOrder) return;
 
@@ -1546,28 +1680,7 @@ export default function AdminAllOrdersScreen() {
                     <Text style={styles.simplePlanTitleText}>{orderData.meal.planType}</Text>
                     <Text style={styles.simplePlanDaysText}>{orderData.meal.daysRange}</Text>
                   </View>
-                </View>
-
-                <View style={styles.deliveryInfoStripContainer}>
-                  <View style={styles.deliveryInfoCell}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.deliveryInfoLabel}>DELIVERY DATE</Text>
-                      <Text style={styles.deliveryInfoValue} numberOfLines={1}>
-                        {orderData.deliveryDate}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.deliveryInfoDivider} />
-
-                  <View style={styles.deliveryInfoCell}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.deliveryInfoLabel}>DELIVERY SLOT</Text>
-                      <Text style={styles.deliveryInfoValue} numberOfLines={1}>
-                        {orderData.deliveryTimeSlot}
-                      </Text>
-                    </View>
-                  </View>
+                  <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
                 {hasAnyItemsToPreview && (
@@ -1725,13 +1838,26 @@ export default function AdminAllOrdersScreen() {
 
                           <View style={styles.scheduleAddressRow}>
                             <Ionicons name="location-sharp" size={14} color="#2563EB" style={{ marginTop: 2 }} />
-                            <Text style={styles.scheduleAddressText} numberOfLines={2}>
-                              {scheduleItem.address}
-                            </Text>
+                            <View style={{ flex: 1, paddingRight: 6 }}>
+                              <Text style={styles.scheduleAddressText} numberOfLines={2}>
+                                {scheduleItem.address}
+                              </Text>
+                              {hasValidCoords(scheduleItem.latitude, scheduleItem.longitude) && (
+                                <Text style={styles.scheduleCoordText} numberOfLines={1}>
+                                  📍 {formatCoordLabel(scheduleItem.latitude, scheduleItem.longitude)}
+                                </Text>
+                              )}
+                            </View>
                             <TouchableOpacity
                               style={styles.scheduleMapBtn}
                               activeOpacity={0.8}
-                              onPress={() => handleOpenMap(scheduleItem.latitude, scheduleItem.longitude, scheduleItem.address)}
+                              onPress={() =>
+                                handleOpenMap(
+                                  scheduleItem.address,
+                                  scheduleItem.latitude,
+                                  scheduleItem.longitude
+                                )
+                              }
                             >
                               <MaterialCommunityIcons
                                 name="map-marker-radius"
@@ -1739,16 +1865,13 @@ export default function AdminAllOrdersScreen() {
                                 color="#2563EB"
                                 style={{ marginRight: 3 }}
                               />
-                              <Text style={styles.scheduleMapBtnText}>Map</Text>
+                              <Text style={styles.scheduleMapBtnText}>
+                                {hasValidCoords(scheduleItem.latitude, scheduleItem.longitude)
+                                  ? 'Pin'
+                                  : 'Map'}
+                              </Text>
                             </TouchableOpacity>
                           </View>
-
-                          {/* Dynamic Coordinates Display */}
-                          {scheduleItem.latitude !== 0 && scheduleItem.longitude !== 0 && (
-                            <Text style={styles.coordinatesSubtitleText}>
-                              Lat: {scheduleItem.latitude?.toFixed(4)}, Lng: {scheduleItem.longitude?.toFixed(4)}
-                            </Text>
-                          )}
 
                           <View style={styles.schedulePreviewRow}>
                             <TouchableOpacity
@@ -1821,7 +1944,7 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* 4. DELIVERY ADDRESS & MAP REDIRECTION */}
+              {/* 4. DELIVERY ADDRESS */}
               <View style={styles.card}>
                 <View style={styles.addressRow}>
                   <View style={styles.addressLeftCol}>
@@ -1830,9 +1953,9 @@ export default function AdminAllOrdersScreen() {
                       <Text style={styles.addressHeaderTitle}>Delivery Address</Text>
                     </View>
                     <Text style={styles.addressBodyText}>{orderData.deliveryAddress}</Text>
-                    {orderData.latitude !== 0 && orderData.longitude !== 0 && (
-                      <Text style={styles.coordinatesSubtitleText}>
-                        Coordinates: {orderData.latitude.toFixed(4)}, {orderData.longitude.toFixed(4)}
+                    {hasValidCoords(activeOrder?.latitude, activeOrder?.longitude) && (
+                      <Text style={styles.addressCoordText}>
+                        📍 {formatCoordLabel(activeOrder?.latitude, activeOrder?.longitude)}
                       </Text>
                     )}
                   </View>
@@ -1840,7 +1963,7 @@ export default function AdminAllOrdersScreen() {
                   <TouchableOpacity
                     style={styles.viewOnMapBtn}
                     activeOpacity={0.8}
-                    onPress={() => handleOpenMap(orderData.latitude, orderData.longitude, orderData.deliveryAddress)}
+                    onPress={() => handleOpenMap()}
                   >
                     <MaterialCommunityIcons
                       name="map-marker-radius"
@@ -1848,7 +1971,11 @@ export default function AdminAllOrdersScreen() {
                       color="#2563EB"
                       style={{ marginRight: 4 }}
                     />
-                    <Text style={styles.viewOnMapBtnText}>Map</Text>
+                    <Text style={styles.viewOnMapBtnText}>
+                      {hasValidCoords(activeOrder?.latitude, activeOrder?.longitude)
+                        ? 'Pinned'
+                        : 'Map'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2154,6 +2281,7 @@ export default function AdminAllOrdersScreen() {
   );
 }
 
+/* ─── ADMIN BLUE THEME STYLES ─── */
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0F172A' },
   darkHeader: { paddingBottom: 16 },
@@ -2334,42 +2462,7 @@ const styles = StyleSheet.create({
   simplePlanTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   simplePlanTitleText: { fontSize: 13, fontWeight: '800', color: '#0F172A' },
   simplePlanDaysText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
-
-  deliveryInfoStripContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#DBEAFE',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 10,
-  },
-  deliveryInfoCell: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  deliveryInfoLabel: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#64748B',
-    letterSpacing: 0.4,
-    marginBottom: 1,
-  },
-  deliveryInfoValue: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.2,
-  },
-  deliveryInfoDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: 'rgba(37, 99, 235, 0.18)',
-    marginHorizontal: 10,
-  },
+  simplePlanDetailsText: { fontSize: 12, color: '#64748B', fontWeight: '500', marginTop: 2 },
 
   centeredPreviewContainer: { alignItems: 'center', justifyContent: 'center', marginVertical: 6 },
   previewMenuCenteredCTA: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
@@ -2416,9 +2509,24 @@ const styles = StyleSheet.create({
 
   scheduleAddressRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, paddingHorizontal: 2, gap: 5 },
   scheduleAddressText: { flex: 1, fontSize: 12, color: '#475569', fontWeight: '500', lineHeight: 16 },
+  // ✅ NEW: coordinate label style (blue theme)
+  scheduleCoordText: {
+    fontSize: 10.5,
+    color: '#2563EB',
+    fontWeight: '700',
+    marginTop: 3,
+    letterSpacing: 0.2,
+  },
+  // ✅ NEW: primary-address coordinate label style (blue theme)
+  addressCoordText: {
+    fontSize: 11,
+    color: '#2563EB',
+    fontWeight: '700',
+    marginTop: 4,
+    letterSpacing: 0.2,
+  },
   scheduleMapBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1' },
   scheduleMapBtnText: { fontSize: 11, fontWeight: '800', color: '#2563EB' },
-  coordinatesSubtitleText: { fontSize: 10.5, color: '#3B82F6', fontWeight: '700', marginTop: 3, paddingLeft: 2 },
   schedulePreviewRow: { marginTop: 8, flexDirection: 'row', justifyContent: 'flex-start' },
   schedulePreviewBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#DBEAFE', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 14, alignSelf: 'flex-start' },
   schedulePreviewBtnText: { fontSize: 12, fontWeight: '700', color: '#2563EB' },
@@ -2495,5 +2603,6 @@ const styles = StyleSheet.create({
 
   modalAbsoluteFooterCTAWrapper: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.08, shadowRadius: 16, elevation: 20, zIndex: 99 },
   modalAbsoluteFooterCTAButtonSolid: { backgroundColor: '#2563EB', paddingVertical: 18, borderRadius: 18, alignItems: 'center', justifyContent: 'center', shadowColor: '#2563EB', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 6 },
+  modalAbsoluteFooterButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
   modalAbsoluteFooterCTAButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 });
