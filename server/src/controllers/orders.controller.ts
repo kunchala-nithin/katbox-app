@@ -207,7 +207,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       menuImage,
       durationType,
       deliveryTimeSlot,
-      // ✅ New: top-level delivery slot label for homemade (mirror of deliveryTimeSlot)
       deliverySlot,
       addressDetails,
       deliveryAddress,
@@ -233,6 +232,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       deliveryType,
       pricePerPlate,
       addons,
+      latitude: reqLat,
+      longitude: reqLng,
     } = req.body;
 
     const finalUserId = String(rawUserId || userId || "");
@@ -255,8 +256,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       ""
     );
 
+    let resolvedLat = Number(reqLat) || 0;
+    let resolvedLng = Number(reqLng) || 0;
+
     if (finalUserId && mongoose.Types.ObjectId.isValid(finalUserId)) {
-      if (!finalUserPhone || !finalAlternatePhone) {
+      if (!finalUserPhone || !finalAlternatePhone || resolvedLat === 0 || resolvedLng === 0) {
         let userCart = null;
         if (cartId && mongoose.Types.ObjectId.isValid(cartId)) {
           userCart = await Cart.findById(cartId);
@@ -275,10 +279,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         }
       }
 
-      if (!finalUserPhone) {
-        const userObj = await User.findById(finalUserId);
-        if (userObj && userObj.phone) {
+      const userObj = await User.findById(finalUserId);
+      if (userObj) {
+        if (!finalUserPhone && userObj.phone) {
           finalUserPhone = userObj.phone;
+        }
+        if (resolvedLat === 0 && resolvedLng === 0) {
+          if (userObj.activeAddress && (userObj.activeAddress.latitude || userObj.activeAddress.longitude)) {
+            resolvedLat = userObj.activeAddress.latitude || 0;
+            resolvedLng = userObj.activeAddress.longitude || 0;
+          }
         }
       }
     }
@@ -332,11 +342,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     let savedOrder: any = null;
 
     if (resolvedServiceType === "homemade") {
-      /* ─────────────────────────────────────────────────────────
-         ✅ FIX — Parse the incoming `items` (which arrives as a
-         JSON string via multipart/form-data) before sanitizing.
-         This is the ONLY change to the homemade branch.
-         ───────────────────────────────────────────────────────── */
       const parsedItemsRaw = parseIfJsonString(items, []);
 
       const sanitizedItems = Array.isArray(parsedItemsRaw)
@@ -353,8 +358,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           }))
         : [];
 
-      // ✅ Resolve the delivery slot label for homemade — prefer the new
-      // top-level `deliverySlot` param, fall back to legacy `deliveryTimeSlot`.
       const resolvedHomemadeSlot = String(deliverySlot || deliveryTimeSlot || "30–45 min");
 
       const newHomemadeOrder = new HomemadeOrderModel({
@@ -370,10 +373,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         items: sanitizedItems,
         deliveryAddress: resolvedAddress,
         deliveryTimeSlot: resolvedHomemadeSlot,
-        // ✅ Persist the same slot under the new dedicated field so chef/admin
-        // order screens can read either key without breaking older records.
         deliverySlot: resolvedHomemadeSlot,
         deliveryDate: deliveryDate || "Today",
+        latitude: resolvedLat,
+        longitude: resolvedLng,
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
@@ -419,6 +422,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         addons: Array.isArray(addons) ? addons : [],
         selections: selections || null,
         items: items || [],
+        latitude: resolvedLat,
+        longitude: resolvedLng,
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
@@ -445,6 +450,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         status: "Scheduled",
         timeSlot: deliveryTimeSlot || "7:00 PM - 9:00 PM",
         address: resolvedAddress,
+        latitude: resolvedLat,
+        longitude: resolvedLng,
         statusTimeline: [
           { status: "Scheduled", timestamp: new Date(), note: `Delivery scheduled for ${dateItem}` },
         ],
@@ -471,6 +478,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         pausedDates: [],
         selections: selections || null,
         items: items || [],
+        latitude: resolvedLat,
+        longitude: resolvedLng,
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
@@ -533,12 +542,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         }
       }
 
-      // ────────────────────────────────────────────────────────────────
-      // IMPORTANT: Chef is NOT notified at order creation time.
-      // The order stays with ADMIN first. Once admin verifies the advance
-      // payment via `/verify-advance`, only then is `new_chef_order`
-      // emitted to the chef (see verifyAdvancePayment below).
-      // ────────────────────────────────────────────────────────────────
       io.emit("new_order_placed", savedOrder);
     } catch (e) {
       console.log("Order creation notification emit warning:", e);
@@ -604,11 +607,6 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
         }
       }
 
-      // ────────────────────────────────────────────────────────────────
-      // NOW send the order to the CHEF (only after admin verification).
-      // This is the moment the chef's app will start showing the order
-      // and playing the alarm.
-      // ────────────────────────────────────────────────────────────────
       const chefIdentifier = order.chefId;
       let chefUserDoc: any = null;
 
@@ -847,6 +845,8 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
         status: isCashCollectedForSchedule ? "Delivered" : normalizedStatus,
         timeSlot: (order as any).deliveryTimeSlot || "7:00 PM - 9:00 PM",
         address: (order as any).addressDetails || (order as any).deliveryAddress || "",
+        latitude: order.latitude || 0,
+        longitude: order.longitude || 0,
         statusTimeline: [
           {
             status: isCashCollectedForSchedule ? "Delivered" : normalizedStatus,
@@ -982,6 +982,8 @@ export const pauseOrderDelivery = async (req: AuthRequest, res: Response) => {
           status: "Paused",
           timeSlot: (order as any).deliveryTimeSlot || "7:00 PM - 9:00 PM",
           address: (order as any).addressDetails || "",
+          latitude: order.latitude || 0,
+          longitude: order.longitude || 0,
           statusTimeline: [{ status: "Paused", timestamp: new Date() }],
         } as any);
       }
@@ -1126,7 +1128,7 @@ export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
               const customerDoc = await User.findById(order.userId);
               if (customerDoc) {
                 if (customerDoc.name) userNameForReview = customerDoc.name;
-                if (customerDoc.avatar) userAvatarForReview = customerDoc.avatar;
+                if ((customerDoc as any).avatar) userAvatarForReview = (customerDoc as any).avatar;
               }
             } catch (userLookupErr) {
               // Silently ignore — fallback values already set

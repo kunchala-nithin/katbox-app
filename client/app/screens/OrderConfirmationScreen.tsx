@@ -472,7 +472,7 @@ export default function OrderConfirmationScreen() {
           </Animated.View>
         </View>
 
-        <View style={{ alignItems: "center" }}>
+        <View style={{ alignItems: "center", width: "100%" }}>
           <Text style={styles.orderConfirmedTitle}>
             {isCateringFlow ? "Catering Order Confirmed!" : (isHomemadeFlow ? "Homemade Order Confirmed!" : "Order Confirmed!")}
           </Text>
@@ -1328,6 +1328,9 @@ const styles = StyleSheet.create({
     color: "#FAF8F5",
     letterSpacing: -0.4,
     marginBottom: 6,
+    textAlign: "center",   // ✅ ensures the title text is centered
+    width: "100%",         // ✅ takes full width of parent so centering is visible
+    alignSelf: "center",   // ✅ safety net for cross-axis alignment
   },
   orderConfirmedSubtitle: {
     fontSize: 13,

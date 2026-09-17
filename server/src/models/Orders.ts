@@ -6,6 +6,8 @@ export interface IDeliverySchedule {
   status: string;
   timeSlot: string;
   address: string;
+  latitude?: number;
+  longitude?: number;
   actualDeliveredAt?: Date;
   statusTimeline: Array<{
     status: string;
@@ -47,6 +49,8 @@ export interface IBaseOrder extends Document {
   paymentMethod: string;
   paymentStatus: string;
   orderStatus: string;
+  latitude?: number;
+  longitude?: number;
   statusTimeline?: Array<{
     status: string;
     timestamp: Date;
@@ -86,7 +90,6 @@ export interface IHomemadeOrder extends IBaseOrder {
   items: IHomemadeOrderItem[];
   deliveryAddress: string;
   deliveryTimeSlot?: string;
-  // ✅ New top-level delivery slot label for homemade orders (e.g. "9:00 AM - 11:00 AM")
   deliverySlot?: string;
   deliveryDate?: string;
 }
@@ -123,6 +126,8 @@ const DeliveryScheduleSchema = new Schema(
     status: { type: String, required: true, default: "Scheduled" },
     timeSlot: { type: String, default: "7:00 PM - 9:00 PM" },
     address: { type: String, default: "" },
+    latitude: { type: Number, default: 0 },
+    longitude: { type: Number, default: 0 },
     actualDeliveredAt: { type: Date },
     statusTimeline: {
       type: [
@@ -186,6 +191,8 @@ const BaseOrderSchema: Schema = new Schema(
     paymentMethod: { type: String, required: true, default: "cod" },
     paymentStatus: { type: String, default: "Verification Pending" },
     orderStatus: { type: String, default: "Placed" },
+    latitude: { type: Number, default: 0 },
+    longitude: { type: Number, default: 0 },
     statusTimeline: {
       type: [
         {
@@ -238,7 +245,6 @@ const HomemadeOrderSchema = new Schema({
   items: { type: [HomemadeItemSubSchema], required: true, default: [] },
   deliveryAddress: { type: String, required: true, default: "" },
   deliveryTimeSlot: { type: String, default: "30–45 min" },
-  // ✅ New: human-readable delivery slot label selected by user on the review screen
   deliverySlot: { type: String, default: "" },
   deliveryDate: { type: String, default: "Today" },
 });
