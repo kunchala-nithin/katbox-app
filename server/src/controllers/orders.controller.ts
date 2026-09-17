@@ -207,6 +207,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       menuImage,
       durationType,
       deliveryTimeSlot,
+      // ✅ New: top-level delivery slot label for homemade (mirror of deliveryTimeSlot)
+      deliverySlot,
       addressDetails,
       deliveryAddress,
       deliveryDate,
@@ -351,6 +353,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           }))
         : [];
 
+      // ✅ Resolve the delivery slot label for homemade — prefer the new
+      // top-level `deliverySlot` param, fall back to legacy `deliveryTimeSlot`.
+      const resolvedHomemadeSlot = String(deliverySlot || deliveryTimeSlot || "30–45 min");
+
       const newHomemadeOrder = new HomemadeOrderModel({
         orderId: generatedOrderId,
         userId: finalUserId,
@@ -363,7 +369,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         serviceType: "homemade",
         items: sanitizedItems,
         deliveryAddress: resolvedAddress,
-        deliveryTimeSlot: deliveryTimeSlot || "30–45 min",
+        deliveryTimeSlot: resolvedHomemadeSlot,
+        // ✅ Persist the same slot under the new dedicated field so chef/admin
+        // order screens can read either key without breaking older records.
+        deliverySlot: resolvedHomemadeSlot,
         deliveryDate: deliveryDate || "Today",
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,

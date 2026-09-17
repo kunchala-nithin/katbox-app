@@ -152,8 +152,36 @@ export default function OrderConfirmationScreen() {
   })();
 
   const rawDurationType = dbOrder?.durationType || (params.durationType as string) || "Flexible Days (2 Days Running)";
-  const rawDeliveryDate = isCateringFlow ? eventDate : (isHomemadeFlow ? "Today" : (dbOrder?.deliveryDate || (params.deliveryDate as string) || "Mon, 17 Jun"));
-  
+
+  // ✅ HOMEMADE-ONLY: resolve the persisted delivery date & slot from db order / route params
+  // Both the new `deliverySlot` field and the legacy `deliveryTimeSlot` are checked so
+  // that older records created before the field existed still render.
+  const homemadeDeliveryDateResolved = useMemo(() => {
+    if (!isHomemadeFlow) return "";
+    return String(
+      dbOrder?.deliveryDate ||
+      (params.deliveryDate as string) ||
+      ""
+    ).trim();
+  }, [dbOrder, params.deliveryDate, isHomemadeFlow]);
+
+  const homemadeDeliverySlotResolved = useMemo(() => {
+    if (!isHomemadeFlow) return "";
+    return String(
+      dbOrder?.deliverySlot ||
+      dbOrder?.deliveryTimeSlot ||
+      (params.deliverySlot as string) ||
+      (params.deliveryTimeSlot as string) ||
+      ""
+    ).trim();
+  }, [dbOrder, params.deliverySlot, params.deliveryTimeSlot, isHomemadeFlow]);
+
+  const rawDeliveryDate = isCateringFlow
+    ? eventDate
+    : isHomemadeFlow
+    ? (homemadeDeliveryDateResolved || "Today")
+    : (dbOrder?.deliveryDate || (params.deliveryDate as string) || "Mon, 17 Jun");
+
   const totalAmount = dbOrder ? String(dbOrder.totalAmount) : ((params.totalAmount as string) || "687");
   const numericTotal = Number(totalAmount) || 0;
   
@@ -273,9 +301,17 @@ export default function OrderConfirmationScreen() {
   const isCod = String(paymentMethod).toLowerCase() === "cod";
 
   // Dynamic Date Display Resolvers
+  // ✅ For homemade: combine the selected date with the selected slot (when both exist).
+  // Falls back to the legacy "Today (within 30–45 min)" message when neither is available.
   const confirmedFirstDeliveryDate = isCateringFlow
     ? `${eventDate} • ${eventTime}`
-    : (isHomemadeFlow ? "Today (within 30–45 min)" : (scheduledDatesArray.length > 0 ? scheduledDatesArray[0] : rawDeliveryDate));
+    : isHomemadeFlow
+    ? (homemadeDeliveryDateResolved && homemadeDeliverySlotResolved
+        ? `${homemadeDeliveryDateResolved} • ${homemadeDeliverySlotResolved}`
+        : (homemadeDeliveryDateResolved
+            ? homemadeDeliveryDateResolved
+            : "Today (within 30–45 min)"))
+    : (scheduledDatesArray.length > 0 ? scheduledDatesArray[0] : rawDeliveryDate);
 
   // Animated Values
   const checkmarkZoomAnim = useRef(new Animated.Value(1)).current;
@@ -347,6 +383,10 @@ export default function OrderConfirmationScreen() {
         selections: parsedSelections ? JSON.stringify(parsedSelections) : undefined,
         items: parsedItems ? JSON.stringify(parsedItems) : undefined,
         addons: parsedAddons ? JSON.stringify(parsedAddons) : undefined,
+        // ✅ For homemade, forward the resolved date + slot so the Orders tab
+        // can display them without needing to refetch the order document.
+        deliverySlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
+        deliveryTimeSlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
       },
     });
   };
@@ -492,6 +532,43 @@ export default function OrderConfirmationScreen() {
                 </View>
                 <Text style={styles.homemadeChefBadgeText}>Cooked by {chefName}</Text>
               </View>
+
+              {/* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP (only renders when at least one value exists) */}
+              {(homemadeDeliveryDateResolved || homemadeDeliverySlotResolved) ? (
+                <View style={styles.homemadeConfirmedDeliveryStripContainer}>
+                  {!!homemadeDeliveryDateResolved && (
+                    <View style={styles.homemadeConfirmedDeliveryCell}>
+                      <View style={styles.homemadeConfirmedDeliveryIconCircle}>
+                        <Ionicons name="calendar-outline" size={13} color="#166348" />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 8 }}>
+                        <Text style={styles.homemadeConfirmedDeliveryLabel}>DELIVERY DATE</Text>
+                        <Text style={styles.homemadeConfirmedDeliveryValue} numberOfLines={1}>
+                          {homemadeDeliveryDateResolved}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {!!homemadeDeliveryDateResolved && !!homemadeDeliverySlotResolved && (
+                    <View style={styles.homemadeConfirmedDeliveryDivider} />
+                  )}
+
+                  {!!homemadeDeliverySlotResolved && (
+                    <View style={styles.homemadeConfirmedDeliveryCell}>
+                      <View style={styles.homemadeConfirmedDeliveryIconCircle}>
+                        <Ionicons name="time-outline" size={13} color="#166348" />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 8 }}>
+                        <Text style={styles.homemadeConfirmedDeliveryLabel}>DELIVERY SLOT</Text>
+                        <Text style={styles.homemadeConfirmedDeliveryValue} numberOfLines={1}>
+                          {homemadeDeliverySlotResolved}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ) : null}
 
               <View style={styles.homemadeDishesContainer}>
                 {parsedItems.map((dishItem: any, idx: number) => {
@@ -1439,6 +1516,51 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
     color: "#0B261D",
+  },
+
+  /* ✅ HOMEMADE CONFIRMED DELIVERY DATE & SLOT STRIP */
+  homemadeConfirmedDeliveryStripContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F2FBF4",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(22, 101, 52, 0.15)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  homemadeConfirmedDeliveryCell: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  homemadeConfirmedDeliveryIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "rgba(22, 101, 52, 0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  homemadeConfirmedDeliveryLabel: {
+    fontSize: 9.5,
+    fontWeight: "800",
+    color: "#5B756C",
+    letterSpacing: 0.4,
+    marginBottom: 1,
+  },
+  homemadeConfirmedDeliveryValue: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0B261D",
+    letterSpacing: -0.2,
+  },
+  homemadeConfirmedDeliveryDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: "rgba(22, 101, 52, 0.15)",
+    marginHorizontal: 10,
   },
 
   /* Premium Clean User-Friendly Dishes Container */

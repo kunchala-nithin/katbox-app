@@ -24,6 +24,21 @@ export const addToCart = async (req: Request, res: Response) => {
       const resolvedUserPhone = userPhone || orderDetails?.contactPhone || (req as any).user?.phone || '';
       const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
 
+      // ✅ Homemade-only: resolve delivery date & slot from top-level body OR nested orderDetails
+      // Also derive from the selected date key if only keys were sent (UI-only fallback).
+      const resolvedDeliveryDate = String(
+        req.body.deliveryDate ||
+        orderDetails?.deliveryDate ||
+        orderDetails?.deliveryDateKey ||
+        ''
+      );
+      const resolvedDeliverySlot = String(
+        req.body.deliverySlot ||
+        orderDetails?.deliverySlot ||
+        orderDetails?.deliveryTimeSlot ||
+        ''
+      );
+
       // Clear out active current instances sitting in standard active workflow session
       await Cart.deleteMany({ user: userId, status: "in-cart" });
 
@@ -44,7 +59,10 @@ export const addToCart = async (req: Request, res: Response) => {
         status: 'in-cart',
         couponCode: couponCode || null,
         discount: appliedDiscount,
-        totalPriceAfterDiscount: calculatedFinalTotal
+        totalPriceAfterDiscount: calculatedFinalTotal,
+        // ✅ Only meaningful for homemade; harmless for mealbox (stays empty string)
+        deliveryDate: serviceType === 'homemade' ? resolvedDeliveryDate : '',
+        deliverySlot: serviceType === 'homemade' ? resolvedDeliverySlot : ''
       });
 
       const savedHomemade = await newHomemadeCart.save();
@@ -119,7 +137,10 @@ export const addToCart = async (req: Request, res: Response) => {
       serviceType: 'catering',
       couponCode: couponCode || null,
       discount: appliedDiscount,
-      totalPriceAfterDiscount: calculatedFinalTotal
+      totalPriceAfterDiscount: calculatedFinalTotal,
+      // ✅ Catering flow untouched — leave deliveryDate/Slot empty
+      deliveryDate: '',
+      deliverySlot: ''
     });
 
     const saved = await newCart.save();
@@ -164,6 +185,20 @@ export const updateCart = async (req: Request, res: Response) => {
       const resolvedUserPhone = userPhone || orderDetails?.contactPhone || '';
       const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
 
+      // ✅ Homemade-only: resolve delivery date & slot from top-level body OR nested orderDetails
+      const resolvedDeliveryDate = String(
+        req.body.deliveryDate ||
+        orderDetails?.deliveryDate ||
+        orderDetails?.deliveryDateKey ||
+        ''
+      );
+      const resolvedDeliverySlot = String(
+        req.body.deliverySlot ||
+        orderDetails?.deliverySlot ||
+        orderDetails?.deliveryTimeSlot ||
+        ''
+      );
+
       const updatedHomemade = await Cart.findByIdAndUpdate(
         cartId,
         { 
@@ -181,7 +216,10 @@ export const updateCart = async (req: Request, res: Response) => {
           serviceType,
           couponCode: couponCode || null,
           discount: appliedDiscount,
-          totalPriceAfterDiscount: calculatedFinalTotal
+          totalPriceAfterDiscount: calculatedFinalTotal,
+          // ✅ Preserve delivery date & slot on every update for homemade; empty for mealbox
+          deliveryDate: serviceType === 'homemade' ? resolvedDeliveryDate : '',
+          deliverySlot: serviceType === 'homemade' ? resolvedDeliverySlot : ''
         },
         { new: true }
       );
@@ -260,7 +298,10 @@ export const updateCart = async (req: Request, res: Response) => {
         type: type || 'veg',
         couponCode: couponCode || null,
         discount: appliedDiscount,
-        totalPriceAfterDiscount: calculatedFinalTotal
+        totalPriceAfterDiscount: calculatedFinalTotal,
+        // ✅ Catering flow untouched — keep deliveryDate/Slot empty
+        deliveryDate: '',
+        deliverySlot: ''
       },
       { new: true }
     );

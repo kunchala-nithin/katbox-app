@@ -86,6 +86,8 @@ export interface IHomemadeOrder extends IBaseOrder {
   items: IHomemadeOrderItem[];
   deliveryAddress: string;
   deliveryTimeSlot?: string;
+  // ✅ New top-level delivery slot label for homemade orders (e.g. "9:00 AM - 11:00 AM")
+  deliverySlot?: string;
   deliveryDate?: string;
 }
 
@@ -236,6 +238,8 @@ const HomemadeOrderSchema = new Schema({
   items: { type: [HomemadeItemSubSchema], required: true, default: [] },
   deliveryAddress: { type: String, required: true, default: "" },
   deliveryTimeSlot: { type: String, default: "30–45 min" },
+  // ✅ New: human-readable delivery slot label selected by user on the review screen
+  deliverySlot: { type: String, default: "" },
   deliveryDate: { type: String, default: "Today" },
 });
 

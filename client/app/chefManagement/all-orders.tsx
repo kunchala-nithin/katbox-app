@@ -1044,13 +1044,34 @@ export default function AllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
+  // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
+  // Prefers the new top-level `deliverySlot` field, falls back to legacy `deliveryTimeSlot`.
+  const homemadeDeliveryDateResolved = useMemo(() => {
+    if (!isHomemadeFlow) return '';
+    return String(activeOrder?.deliveryDate || '').trim();
+  }, [activeOrder?.deliveryDate, isHomemadeFlow]);
+
+  const homemadeDeliverySlotResolved = useMemo(() => {
+    if (!isHomemadeFlow) return '';
+    return String(
+      activeOrder?.deliverySlot ||
+      activeOrder?.deliveryTimeSlot ||
+      ''
+    ).trim();
+  }, [activeOrder?.deliverySlot, activeOrder?.deliveryTimeSlot, isHomemadeFlow]);
+
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today, 09:41 AM',
-    deliveryDate: activeOrder?.deliveryDate || (isHomemadeFlow ? 'Today' : 'Mon, 17 Jun 2024'),
-    deliveryTimeSlot: activeOrder?.deliveryTimeSlot || (isHomemadeFlow ? '30–45 min' : '7:00 PM - 9:00 PM'),
+    // ✅ For homemade: use the resolved persisted values. For mealbox/catering: keep original.
+    deliveryDate: isHomemadeFlow
+      ? (homemadeDeliveryDateResolved || 'Today')
+      : (activeOrder?.deliveryDate || (isCateringFlow ? (activeOrder?.eventDate || '18 March') : 'Mon, 17 Jun 2024')),
+    deliveryTimeSlot: isHomemadeFlow
+      ? (homemadeDeliverySlotResolved || '30–45 min')
+      : (activeOrder?.deliveryTimeSlot || (isCateringFlow ? (activeOrder?.eventTime || '08:30 PM') : '7:00 PM - 9:00 PM')),
     customer: {
       name: activeOrder?.userName || 'Customer',
       phone: customerPhone || '+91 98765 43210',

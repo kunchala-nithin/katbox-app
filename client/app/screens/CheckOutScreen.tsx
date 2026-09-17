@@ -87,7 +87,13 @@ export default function CheckOutScreen() {
   const durationType = (params.durationType as string) || "Flexible Days (2 Days Running)";
   const deliveryDate = (params.deliveryDate as string) || "Mon, 20 May – Tue, 21 May";
   const deliveryTimeSlot = (params.deliveryTimeSlot as string) || "7:00 PM - 9:00 PM";
-  
+  // ✅ Homemade-only: top-level delivery slot param (may be empty for mealbox/catering)
+  const deliverySlotParam = (params.deliverySlot as string) || "";
+
+  // ✅ Homemade resolution — prefer the top-level slot; fall back to deliveryTimeSlot
+  const homemadeResolvedDate = deliveryDate || "";
+  const homemadeResolvedSlot = deliverySlotParam || deliveryTimeSlot || "";
+
   const [addressDetails, setAddressDetails] = useState<string>(
     (params.addressDetails as string) || (params.deliveryAddress as string) || "2-91/32, Sai Enclave, Hyderabad"
   );
@@ -432,8 +438,11 @@ export default function CheckOutScreen() {
       formData.append("chefId", chefId);
       formData.append("chefName", chefName);
       formData.append("items", JSON.stringify(parsedItems));
-      formData.append("deliveryDate", "Today");
-      formData.append("deliveryTimeSlot", "30–45 min");
+      // ✅ Homemade now sends the real selected delivery date & slot instead of hardcoded "Today" / "30-45 min"
+      formData.append("deliveryDate", homemadeResolvedDate || "Today");
+      formData.append("deliveryTimeSlot", homemadeResolvedSlot || "30–45 min");
+      // ✅ New top-level deliverySlot param for order controller to persist
+      formData.append("deliverySlot", homemadeResolvedSlot || "30–45 min");
     } else {
       formData.append("chefId", chefId);
       formData.append("chefName", chefName);
@@ -551,6 +560,43 @@ export default function CheckOutScreen() {
                 </Text>
               </View>
             </View>
+
+            {/* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP (only renders when at least one value exists) */}
+            {(homemadeResolvedDate || homemadeResolvedSlot) ? (
+              <View style={styles.homemadeDeliveryStripContainer}>
+                {!!homemadeResolvedDate && (
+                  <View style={styles.homemadeDeliveryCell}>
+                    <View style={styles.homemadeDeliveryIconCircle}>
+                      <Ionicons name="calendar-outline" size={13} color="#166348" />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      <Text style={styles.homemadeDeliveryLabel}>DELIVERY DATE</Text>
+                      <Text style={styles.homemadeDeliveryValue} numberOfLines={1}>
+                        {homemadeResolvedDate}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {!!homemadeResolvedDate && !!homemadeResolvedSlot && (
+                  <View style={styles.homemadeDeliveryDivider} />
+                )}
+
+                {!!homemadeResolvedSlot && (
+                  <View style={styles.homemadeDeliveryCell}>
+                    <View style={styles.homemadeDeliveryIconCircle}>
+                      <Ionicons name="time-outline" size={13} color="#166348" />
+                    </View>
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      <Text style={styles.homemadeDeliveryLabel}>DELIVERY SLOT</Text>
+                      <Text style={styles.homemadeDeliveryValue} numberOfLines={1}>
+                        {homemadeResolvedSlot}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+            ) : null}
 
             <View style={styles.groupedMetaSectionContainer}>
               {parsedItems && parsedItems.length > 0 ? (
@@ -1920,6 +1966,52 @@ const styles = StyleSheet.create({
     color: "#0F382A",
     letterSpacing: 0.1,
   },
+
+  /* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP */
+  homemadeDeliveryStripContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F2FBF4",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(22, 101, 52, 0.15)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  homemadeDeliveryCell: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  homemadeDeliveryIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "rgba(22, 101, 52, 0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  homemadeDeliveryLabel: {
+    fontSize: 9.5,
+    fontWeight: "800",
+    color: "#5B756C",
+    letterSpacing: 0.4,
+    marginBottom: 1,
+  },
+  homemadeDeliveryValue: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0B261D",
+    letterSpacing: -0.2,
+  },
+  homemadeDeliveryDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: "rgba(22, 101, 52, 0.15)",
+    marginHorizontal: 10,
+  },
+
   homemadeItemCardRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -214,6 +214,26 @@ export default function CartScreen() {
     return [];
   }, [orderDetails]);
 
+  // ✅ HOMEMADE ONLY: resolve the persisted delivery date & slot for display + downstream params
+  const homemadeDeliveryDate: string = React.useMemo(() => {
+    return String(
+      cartData?.deliveryDate ||
+      orderDetails?.deliveryDate ||
+      (params.deliveryDate as string) ||
+      ''
+    );
+  }, [cartData, orderDetails, params.deliveryDate]);
+
+  const homemadeDeliverySlot: string = React.useMemo(() => {
+    return String(
+      cartData?.deliverySlot ||
+      orderDetails?.deliverySlot ||
+      orderDetails?.deliveryTimeSlot ||
+      (params.deliverySlot as string) ||
+      ''
+    );
+  }, [cartData, orderDetails, params.deliverySlot]);
+
   const selectionsSummary = Array.isArray(cartData?.selections)
     ? cartData.selections.map((cat: any) => ({
         ...cat,
@@ -402,6 +422,9 @@ export default function CartScreen() {
         extraItems: cartData?.extraItems,
         couponCode: code,
         discount: computedDiscount,
+        // ✅ Preserve delivery date & slot for homemade on coupon sync
+        deliveryDate: cartData?.deliveryDate || homemadeDeliveryDate || '',
+        deliverySlot: cartData?.deliverySlot || homemadeDeliverySlot || '',
       });
     } catch (err) {
       console.log("Error syncing discount with backend:", err);
@@ -611,6 +634,8 @@ export default function CartScreen() {
       return;
     }
 
+    // ✅ Non-catering (homemade OR mealbox) — preserve original params EXACTLY for mealbox,
+    // and additionally forward deliveryDate/deliverySlot for homemade.
     router.push({
       pathname: "/screens/CheckOutScreen",
       params: {
@@ -631,8 +656,18 @@ export default function CartScreen() {
           (cartData?.items?.[0]?.image) ||
           "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400",
         durationType: menu?.durationType || (isHomemadeFlow ? "On Demand Prep" : "Flexible Days (2 Days Running)"),
-        deliveryDate: orderDetails?.deliveryDate || "Today",
-        deliveryTimeSlot: orderDetails?.deliveryTimeSlot || (isHomemadeFlow ? "30–45 min" : "7:00 PM - 9:00 PM"),
+        // ✅ For homemade: prefer top-level cart fields; fall back to orderDetails for legacy
+        // For mealbox: keep the original behavior exactly as it was
+        deliveryDate: isHomemadeFlow
+          ? (homemadeDeliveryDate || orderDetails?.deliveryDate || "")
+          : (orderDetails?.deliveryDate || "Today"),
+        deliveryTimeSlot: isHomemadeFlow
+          ? (homemadeDeliverySlot || orderDetails?.deliveryTimeSlot || "")
+          : (orderDetails?.deliveryTimeSlot || "7:00 PM - 9:00 PM"),
+        // ✅ New top-level param, homemade only, so CheckoutScreen can read it directly
+        deliverySlot: isHomemadeFlow
+          ? (homemadeDeliverySlot || orderDetails?.deliverySlot || "")
+          : "",
         addressDetails: orderDetails?.addressDetails || orderDetails?.address || "2-91/32, Sai Enclave, Hyderabad",
         scheduledDatesFormatted: orderDetails?.scheduledDatesFormatted
           ? JSON.stringify(orderDetails.scheduledDatesFormatted)
@@ -736,6 +771,43 @@ export default function CartScreen() {
               <Text style={[styles.restaurantName, { fontSize: 16, color: "#0F382A", marginBottom: 16 }]}>
                 👨‍🍳 Chef: {cartData?.chefName || "Homemade Chef"}
               </Text>
+
+              {/* ✅ HOMEMADE DELIVERY DATE & SLOT BLOCK (only renders when values exist) */}
+              {(homemadeDeliveryDate || homemadeDeliverySlot) ? (
+                <View style={styles.homemadeDeliveryStripContainer}>
+                  {!!homemadeDeliveryDate && (
+                    <View style={styles.homemadeDeliveryCell}>
+                      <View style={styles.homemadeDeliveryIconCircle}>
+                        <Ionicons name="calendar-outline" size={13} color="#0F382A" />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 8 }}>
+                        <Text style={styles.homemadeDeliveryLabel}>DELIVERY DATE</Text>
+                        <Text style={styles.homemadeDeliveryValue} numberOfLines={1}>
+                          {homemadeDeliveryDate}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {!!homemadeDeliveryDate && !!homemadeDeliverySlot && (
+                    <View style={styles.homemadeDeliveryDivider} />
+                  )}
+
+                  {!!homemadeDeliverySlot && (
+                    <View style={styles.homemadeDeliveryCell}>
+                      <View style={styles.homemadeDeliveryIconCircle}>
+                        <Ionicons name="time-outline" size={13} color="#0F382A" />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 8 }}>
+                        <Text style={styles.homemadeDeliveryLabel}>DELIVERY SLOT</Text>
+                        <Text style={styles.homemadeDeliveryValue} numberOfLines={1}>
+                          {homemadeDeliverySlot}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ) : null}
 
               {cartData?.items &&
                 cartData.items.map((item: any, idx: number) => (
@@ -2033,6 +2105,51 @@ const styles = StyleSheet.create({
   itemImage: { width: 80, height: 100, borderRadius: 16, backgroundColor: "#E5ECE8" },
   itemTitle: { fontSize: 17, fontWeight: "800", color: "#0B261D", letterSpacing: -0.2 },
   restaurantName: { fontSize: 13, fontWeight: "700", color: "#5B756C", marginBottom: 4 },
+
+  /* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP */
+  homemadeDeliveryStripContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F2FBF4",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(22, 101, 52, 0.15)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+  },
+  homemadeDeliveryCell: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  homemadeDeliveryIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "rgba(22, 101, 52, 0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  homemadeDeliveryLabel: {
+    fontSize: 9.5,
+    fontWeight: "800",
+    color: "#5B756C",
+    letterSpacing: 0.4,
+    marginBottom: 1,
+  },
+  homemadeDeliveryValue: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0B261D",
+    letterSpacing: -0.2,
+  },
+  homemadeDeliveryDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: "rgba(22, 101, 52, 0.15)",
+    marginHorizontal: 10,
+  },
 
   upcomingDeliveriesContainer: {
     marginTop: 16,

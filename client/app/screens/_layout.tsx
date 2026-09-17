@@ -24,6 +24,7 @@ export default function ScreensLayout() {
       <Stack.Screen name="MealBoxOrderReview" />
       <Stack.Screen name="CheckOutScreen" />
       <Stack.Screen name="OrderConfirmationScreen" />
+      <Stack.Screen name="HomeMadeOrderReview" />
     </Stack>
 
   )

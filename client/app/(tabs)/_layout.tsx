@@ -10,6 +10,7 @@ import {
   Platform,
   Animated,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { getToken, getUser, refreshUser } from '@/src/lib/authStorage'
 import { isTokenExpired } from '@/src/lib/jwtUtils'
 import { useRouter } from 'expo-router'
@@ -54,6 +55,9 @@ type RoleState =
 
 export default function TabsLayout() {
   const router = useRouter()
+
+  // ─── SAFE AREA INSETS (fixes Android nav-bar overlap) ───
+  const insets = useSafeAreaInsets()
 
   const [role, setRole] =
     useState<RoleState>('loading')
@@ -174,6 +178,14 @@ export default function TabsLayout() {
     )
   }
 
+  // ─── DYNAMIC TAB BAR DIMENSIONS (safe-area aware) ───
+  const baseContentHeight = Platform.OS === 'ios' ? 56 : 54
+  const safeBottomPadding = Math.max(
+    Platform.OS === 'ios' ? 18 : 4,
+    insets.bottom
+  )
+  const footerBarHeight = baseContentHeight + safeBottomPadding
+
   return (
     <Tabs
       screenOptions={{
@@ -188,7 +200,15 @@ export default function TabsLayout() {
             style={styles.fixedFooterContainer}
             pointerEvents="box-none"
           >
-            <View style={styles.footerBar}>
+            <View
+              style={[
+                styles.footerBar,
+                {
+                  height: footerBarHeight,
+                  paddingBottom: safeBottomPadding,
+                },
+              ]}
+            >
               <View
                 style={styles.topGlowBorder}
               />
@@ -430,10 +450,9 @@ const styles = StyleSheet.create({
 
   footerBar: {
     width: '100%',
-    height:
-      Platform.OS === 'ios'
-        ? 74
-        : 58,
+    // NOTE: `height` and `paddingBottom` are now applied dynamically
+    // from the component (see footerBarHeight / safeBottomPadding)
+    // so that the bar is never covered by the Android system nav bar.
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
@@ -442,10 +461,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
     paddingTop: 4,
-    paddingBottom:
-      Platform.OS === 'ios'
-        ? 18
-        : 4,
     paddingHorizontal: 8,
     borderTopWidth: 1,
     borderLeftWidth: 1,

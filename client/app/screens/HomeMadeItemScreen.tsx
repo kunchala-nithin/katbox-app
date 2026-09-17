@@ -1,5 +1,4 @@
 import React, { useRef, useState, useEffect } from "react";
-
 import {
   View,
   Text,
@@ -473,8 +472,8 @@ const HomeMadeItemScreen = () => {
     );
   };
 
-  // Persist Cart and Navigate
-  const handleViewCartNavigation = async () => {
+  // Persist Cart context and Navigate to HomeMadeOrderReview
+  const handlePlaceOrder = async () => {
     try {
       const cartItemsPayload = Object.entries(itemQuantities).map(([itemId, qty]) => {
         const flatItem = menuSections.flatMap(s => s.data).find(i => i.id === itemId);
@@ -485,27 +484,30 @@ const HomeMadeItemScreen = () => {
           image: flatItem?.image || "",
           price: flatItem?.prices[chosenConfig] || 0,
           quantity: qty,
-          selectedQtyConfig: chosenConfig
+          selectedQtyConfig: chosenConfig,
+          isVeg: flatItem?.isVeg ?? true,
         };
       });
 
       if (cartItemsPayload.length === 0) return;
 
-      await api.post("/api/cart", {
-        serviceType: 'homemade',
-        chefId: effectiveChefId,
-        chefName: effectiveChefName,
-        items: cartItemsPayload,
-        totalItems: totalCartCount,
-        totalPrice: totalCartPrice
-      });
-
       router.push({
-        pathname: "/screens/CartScreen",
-        params: { serviceType: 'homemade' }
+        pathname: "/screens/HomeMadeOrderReview",
+        params: {
+          serviceType: 'homemade',
+          chefId: effectiveChefId,
+          chefName: effectiveChefName,
+          chefImage: headerImage,
+          chefRating: rating || "",
+          chefLocation: location || "",
+          pageTitle: pageTitle,
+          items: JSON.stringify(cartItemsPayload),
+          totalItems: String(totalCartCount),
+          totalPrice: String(totalCartPrice),
+        },
       });
     } catch (error) {
-      console.error("❌ Failed to save homemade cart context:", error);
+      console.error("❌ Failed to navigate to homemade order review:", error);
     }
   };
 
@@ -688,9 +690,9 @@ const HomeMadeItemScreen = () => {
             <TouchableOpacity 
               style={styles.cartViewButton}
               activeOpacity={0.85}
-              onPress={handleViewCartNavigation}
+              onPress={handlePlaceOrder}
             >
-              <Text style={styles.cartViewText}>View Cart</Text>
+              <Text style={styles.cartViewText}>Place Order</Text>
               <Ionicons name="arrow-forward" size={16} color="#fff" style={{ marginLeft: 6 }} />
             </TouchableOpacity>
           </View>

@@ -720,19 +720,40 @@ export default function AdminAllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
+  // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
+  // Prefers the new top-level `deliverySlot` field, falls back to legacy `deliveryTimeSlot`.
+  const homemadeDeliveryDateResolved = useMemo(() => {
+    if (!isHomemadeFlow) return '';
+    return String(activeOrder?.deliveryDate || '').trim();
+  }, [activeOrder?.deliveryDate, isHomemadeFlow]);
+
+  const homemadeDeliverySlotResolved = useMemo(() => {
+    if (!isHomemadeFlow) return '';
+    return String(
+      activeOrder?.deliverySlot ||
+      activeOrder?.deliveryTimeSlot ||
+      ''
+    ).trim();
+  }, [activeOrder?.deliverySlot, activeOrder?.deliveryTimeSlot, isHomemadeFlow]);
+
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today',
+    // ✅ For homemade: use the resolved persisted values. For mealbox/catering: keep original behavior.
     deliveryDate:
-      activeOrder?.deliveryDate ||
-      activeOrder?.eventDate ||
-      (isHomemadeFlow ? 'Today' : 'Mon, 17 Jun 2024'),
+      isHomemadeFlow
+        ? (homemadeDeliveryDateResolved || 'Today')
+        : (activeOrder?.deliveryDate ||
+           activeOrder?.eventDate ||
+           'Mon, 17 Jun 2024'),
     deliveryTimeSlot:
-      activeOrder?.deliveryTimeSlot ||
-      activeOrder?.eventTime ||
-      (isHomemadeFlow ? '30–45 min' : '7:00 PM - 9:00 PM'),
+      isHomemadeFlow
+        ? (homemadeDeliverySlotResolved || '30–45 min')
+        : (activeOrder?.deliveryTimeSlot ||
+           activeOrder?.eventTime ||
+           '7:00 PM - 9:00 PM'),
     customer: {
       name: activeOrder?.userName || 'Customer',
       phone: customerPhone || 'N/A',
@@ -2395,5 +2416,6 @@ const styles = StyleSheet.create({
 
   modalAbsoluteFooterCTAWrapper: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32, borderTopLeftRadius: 28, borderTopRightRadius: 28, shadowColor: '#000', shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.08, shadowRadius: 16, elevation: 20, zIndex: 99 },
   modalAbsoluteFooterCTAButtonSolid: { backgroundColor: '#2563EB', paddingVertical: 18, borderRadius: 18, alignItems: 'center', justifyContent: 'center', shadowColor: '#2563EB', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 6 },
+  modalAbsoluteFooterButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
   modalAbsoluteFooterCTAButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 });

@@ -353,10 +353,11 @@ export default function AddressMapModal({
             markerZoomAnimation: true
           });
 
-          L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-            maxZoom: 20,
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
             minZoom: 10,
-            subdomains: 'abcd'
+            subdomains: 'abc',
+            attribution: '&copy; OpenStreetMap contributors'
           }).addTo(map);
 
           map.on('movestart', function() {

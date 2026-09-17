@@ -35,6 +35,9 @@ interface ICart extends Document {
   couponCode?: string;
   discount?: number;
   totalPriceAfterDiscount?: number;
+  // ✅ Homemade Delivery Date & Slot Fields (Optional, Only Used By Homemade Flow)
+  deliveryDate?: string;
+  deliverySlot?: string;
 }
 
 const CartSchema = new Schema<ICart>(
@@ -72,7 +75,12 @@ const CartSchema = new Schema<ICart>(
     // ✅ Coupon Tracking Field Definitions
     couponCode: { type: String, default: null },
     discount: { type: Number, default: 0 },
-    totalPriceAfterDiscount: { type: Number, default: 0 }
+    totalPriceAfterDiscount: { type: Number, default: 0 },
+
+    // ✅ Homemade Delivery Date & Slot Field Definitions
+    // Only populated for the homemade flow. Left empty for mealbox & catering.
+    deliveryDate: { type: String, default: '' },
+    deliverySlot: { type: String, default: '' }
   },
   { timestamps: true }
 );
