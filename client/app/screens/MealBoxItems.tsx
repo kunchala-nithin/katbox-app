@@ -47,10 +47,10 @@ const LUNCH_IMAGE = {
   uri: 'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400',
 }
 const DINNER_IMAGE = {
-  uri: 'https://images.unsplash.com/photo-1574653853027-5382a3d23a15?w=400',
+  uri: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSWgHmdhw1PdQtqbFxpsK5pcDA3tqw8Ytt_huh8x12eRQ&s=10',
 }
 const SNACKS_IMAGE = {
-  uri: 'https://images.unsplash.com/photo-1599487488170-ded1ec2660f3?w=400',
+  uri: 'https://img.magnific.com/free-photo/side-view-crackers-bowls-horizontal_176474-1072.jpg?semt=ais_hybrid&w=740&q=80',
 }
 
 const FOOD_THUMB = { uri: 'https://via.placeholder.com/80?text=Food' }

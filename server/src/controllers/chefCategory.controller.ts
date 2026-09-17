@@ -24,10 +24,10 @@ export const addChefCategory = async (req: any, res: Response) => {
 
     const upload: any = await new Promise((resolve, reject) => {
       cloudinary.uploader
-        .upload_stream({
-          folder: "chef-categories",
-          quality: "auto:good",
-          fetch_format: "auto"
+        .upload_stream({ 
+          folder: "chef-categories", 
+          quality: "auto:good", 
+          fetch_format: "auto" 
         }, (error, result) => {
           if (error) reject(error);
           else resolve(result);
@@ -78,15 +78,15 @@ export const updateChefCategory = async (req: any, res: Response) => {
 
     if (heroFile) {
       if (heroCloudinaryId) {
-        try { await cloudinary.uploader.destroy(heroCloudinaryId); } catch (e) { }
+        try { await cloudinary.uploader.destroy(heroCloudinaryId); } catch (e) {}
       }
 
       const upload: any = await new Promise((resolve, reject) => {
         cloudinary.uploader
-          .upload_stream({
-            folder: "chef-categories",
-            quality: "auto:good",
-            fetch_format: "auto"
+          .upload_stream({ 
+            folder: "chef-categories", 
+            quality: "auto:good", 
+            fetch_format: "auto" 
           }, (error, result) => {
             if (error) reject(error);
             else resolve(result);
@@ -140,7 +140,7 @@ export const deleteChefCategory = async (req: any, res: Response) => {
     if (category.heroCloudinaryId) {
       try {
         await cloudinary.uploader.destroy(category.heroCloudinaryId);
-      } catch (e) { }
+      } catch (e) {}
     }
 
     if (category.subCategories && category.subCategories.length > 0) {
@@ -150,7 +150,7 @@ export const deleteChefCategory = async (req: any, res: Response) => {
             if (item.cloudinaryId) {
               try {
                 await cloudinary.uploader.destroy(item.cloudinaryId);
-              } catch (e) { }
+              } catch (e) {}
             }
           }
         }
@@ -228,7 +228,7 @@ export const saveCategoryItems = async (req: any, res: Response) => {
     for (const orphanId of orphanedIds) {
       try {
         await cloudinary.uploader.destroy(orphanId);
-      } catch (e) { }
+      } catch (e) {}
     }
 
     const finalSubCategories: any[] = [];
@@ -245,7 +245,7 @@ export const saveCategoryItems = async (req: any, res: Response) => {
         if (cloudinaryId && isNewFile) {
           try {
             await cloudinary.uploader.destroy(cloudinaryId);
-          } catch (e) { }
+          } catch (e) {}
         }
 
         if (isNewFile) {
@@ -253,10 +253,10 @@ export const saveCategoryItems = async (req: any, res: Response) => {
           if (file) {
             const upload: any = await new Promise((resolve, reject) => {
               cloudinary.uploader
-                .upload_stream({
-                  folder: "chef-categories/items",
-                  quality: "auto:good",
-                  fetch_format: "auto"
+                .upload_stream({ 
+                  folder: "chef-categories/items", 
+                  quality: "auto:good", 
+                  fetch_format: "auto" 
                 }, (error, result) => {
                   if (error) reject(error);
                   else resolve(result);
@@ -279,6 +279,7 @@ export const saveCategoryItems = async (req: any, res: Response) => {
           cloudinaryId,
           price: Number(item.price),
           quantity: item.quantity,
+          isVeg: item.isVeg !== undefined ? item.isVeg : true,
           variants: item.variants || [],
         });
       }
@@ -324,7 +325,7 @@ export const deleteSubCategory = async (req: any, res: Response) => {
         if (item.cloudinaryId) {
           try {
             await cloudinary.uploader.destroy(item.cloudinaryId);
-          } catch (e) { }
+          } catch (e) {}
         }
       }
     }
@@ -371,9 +372,9 @@ export const deleteSingleItem = async (req: any, res: Response) => {
     if (!foundItem) return res.status(404).json({ message: "Item not found" });
 
     if (foundItem.cloudinaryId) {
-      try {
-        await cloudinary.uploader.destroy(foundItem.cloudinaryId);
-      } catch (e) { }
+      try { 
+        await cloudinary.uploader.destroy(foundItem.cloudinaryId); 
+      } catch (e) {}
     }
 
     await ChefCategory.updateOne(
@@ -435,8 +436,6 @@ export const addChefMenu = async (req: any, res: Response) => {
       "/upload/f_auto,q_auto:good,w_900,c_limit/"
     );
 
-    // Consume uploaded item files sequentially — ONLY for entries whose imageUrl is a
-    // new local pick (file:// / content://). Remote URLs keep their existing asset.
     const uploadedItems: any[] = [];
     let fileIndex = 0;
 
@@ -514,14 +513,13 @@ export const updateChefMenu = async (req: any, res: Response) => {
 
     const { name, price, itemsPerPlate, mealType, plateItems, categoryId, isNonVeg } = req.body;
 
-    // ---------- HERO IMAGE REPLACEMENT ----------
     let heroImageUrl = menu.heroImageUrl;
     let heroCloudinaryId = menu.heroCloudinaryId;
 
     const heroFile = req.files?.heroImage?.[0];
     if (heroFile) {
       if (heroCloudinaryId) {
-        try { await cloudinary.uploader.destroy(heroCloudinaryId); } catch (e) { }
+        try { await cloudinary.uploader.destroy(heroCloudinaryId); } catch (e) {}
       }
       const heroUpload: any = await new Promise((resolve, reject) => {
         cloudinary.uploader
@@ -535,12 +533,10 @@ export const updateChefMenu = async (req: any, res: Response) => {
       heroCloudinaryId = heroUpload.public_id;
     }
 
-    // ---------- PLATE ITEMS REPLACEMENT ----------
     const parsedItems: any[] = plateItems ? JSON.parse(plateItems) : [];
     const itemFiles: any[] = req.files?.itemImages || [];
     const existingPlateItems: any[] = menu.plateItems || [];
 
-    // Collect cloudinaryIds that are being kept so we know which ones to orphan.
     const incomingCloudinaryIds = new Set<string>();
     parsedItems.forEach((item: any) => {
       const url = item.imageUrl || "";
@@ -552,11 +548,10 @@ export const updateChefMenu = async (req: any, res: Response) => {
 
     for (const existing of existingPlateItems) {
       if (existing.cloudinaryId && !incomingCloudinaryIds.has(existing.cloudinaryId)) {
-        try { await cloudinary.uploader.destroy(existing.cloudinaryId); } catch (e) { }
+        try { await cloudinary.uploader.destroy(existing.cloudinaryId); } catch (e) {}
       }
     }
 
-    // Rebuild plate items — upload new local files, preserve untouched assets.
     const rebuiltItems: any[] = [];
     let fileIndex = 0;
 
@@ -585,7 +580,6 @@ export const updateChefMenu = async (req: any, res: Response) => {
           );
           cloudinaryId = upload.public_id;
         } else {
-          // Fallback: preserve existing asset matched by name to avoid data loss.
           const match = existingPlateItems.find((ex: any) => ex.name === item.name);
           imageUrl = match?.imageUrl || "";
           cloudinaryId = match?.cloudinaryId || "";
@@ -649,24 +643,24 @@ export const deleteChefMenu = async (req: any, res: Response) => {
     }
 
     if (menu.heroCloudinaryId) {
-      try { await cloudinary.uploader.destroy(menu.heroCloudinaryId); } catch (e) { }
+      try { await cloudinary.uploader.destroy(menu.heroCloudinaryId); } catch (e) {}
     }
 
     for (const item of menu.plateItems) {
       if (item.cloudinaryId) {
-        try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) { }
+        try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) {}
       }
     }
 
     if (menu.daawathCategories && menu.daawathCategories.length > 0) {
       for (const cat of menu.daawathCategories) {
         if (cat.cloudinaryId) {
-          try { await cloudinary.uploader.destroy(cat.cloudinaryId); } catch (e) { }
+          try { await cloudinary.uploader.destroy(cat.cloudinaryId); } catch (e) {}
         }
         if (cat.items && cat.items.length > 0) {
           for (const item of cat.items) {
             if (item.cloudinaryId) {
-              try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) { }
+              try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) {}
             }
           }
         }
@@ -676,7 +670,7 @@ export const deleteChefMenu = async (req: any, res: Response) => {
     if (menu.daawathAddons && menu.daawathAddons.length > 0) {
       for (const addon of menu.daawathAddons) {
         if (addon.cloudinaryId) {
-          try { await cloudinary.uploader.destroy(addon.cloudinaryId); } catch (e) { }
+          try { await cloudinary.uploader.destroy(addon.cloudinaryId); } catch (e) {}
         }
       }
     }
@@ -734,7 +728,7 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
 
       const isNewFile = categoryImageUrl?.startsWith("file");
       if (categoryCloudinaryId && (!categoryImageUrl || isNewFile)) {
-        try { await cloudinary.uploader.destroy(categoryCloudinaryId); } catch (e) { }
+        try { await cloudinary.uploader.destroy(categoryCloudinaryId); } catch (e) {}
       }
 
       if (isNewFile) {
@@ -764,7 +758,7 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
         const itemIsNewFile = itemImageUrl?.startsWith("file");
 
         if (itemCloudinaryId && (!itemImageUrl || itemIsNewFile)) {
-          try { await cloudinary.uploader.destroy(itemCloudinaryId); } catch (e) { }
+          try { await cloudinary.uploader.destroy(itemCloudinaryId); } catch (e) {}
         }
 
         if (itemIsNewFile) {
@@ -811,7 +805,7 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
       const addonIsNewFile = addonImageUrl?.startsWith("file");
 
       if (addonCloudinaryId && (!addonImageUrl || addonIsNewFile)) {
-        try { await cloudinary.uploader.destroy(addonCloudinaryId); } catch (e) { }
+        try { await cloudinary.uploader.destroy(addonCloudinaryId); } catch (e) {}
       }
 
       if (addonIsNewFile) {
@@ -840,7 +834,7 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
 
     const updatedMenu = await ChefMenu.findByIdAndUpdate(
       id,
-      {
+      { 
         daawathCategories: finalCategories,
         daawathAddons: finalAddons
       },
@@ -875,10 +869,10 @@ export const addChefPlan = async (req: any, res: Response) => {
 
     const upload: any = await new Promise((resolve, reject) => {
       cloudinary.uploader
-        .upload_stream({
-          folder: "chef-plans",
-          quality: "auto:good",
-          fetch_format: "auto"
+        .upload_stream({ 
+          folder: "chef-plans", 
+          quality: "auto:good", 
+          fetch_format: "auto" 
         }, (error, result) => {
           if (error) reject(error);
           else resolve(result);
@@ -908,19 +902,7 @@ export const addChefPlan = async (req: any, res: Response) => {
     res.status(201).json(plan);
   } catch (err: any) {
     console.error("Add chef plan error:", err);
-    console.error("Add chef plan error message:", err?.message);
-    console.error("Add chef plan validation errors:", err?.errors);
-
-    res.status(500).json({
-      message: "Error creating plan",
-      reason: err?.message || "Unknown error",
-      validationErrors: err?.errors
-        ? Object.keys(err.errors).map((k) => ({
-          field: k,
-          message: err.errors[k]?.message,
-        }))
-        : undefined,
-    });
+    res.status(500).json({ message: "Error creating plan" });
   }
 };
 
@@ -946,15 +928,15 @@ export const updateChefPlan = async (req: any, res: Response) => {
 
     if (heroFile) {
       if (cloudinaryId) {
-        try { await cloudinary.uploader.destroy(cloudinaryId); } catch (e) { }
+        try { await cloudinary.uploader.destroy(cloudinaryId); } catch (e) {}
       }
 
       const upload: any = await new Promise((resolve, reject) => {
         cloudinary.uploader
-          .upload_stream({
-            folder: "chef-plans",
-            quality: "auto:good",
-            fetch_format: "auto"
+          .upload_stream({ 
+            folder: "chef-plans", 
+            quality: "auto:good", 
+            fetch_format: "auto" 
           }, (error, result) => {
             if (error) reject(error);
             else resolve(result);
@@ -971,28 +953,24 @@ export const updateChefPlan = async (req: any, res: Response) => {
 
     const updated = await ChefPlan.findByIdAndUpdate(
       id,
-      {
-        name,
-        description,
-        mealsPerDay: Number(mealsPerDay),
-        mealsPerWeek: Number(mealsPerWeek),
-        price: Number(price),
-        category,
+      { 
+        name, 
+        description, 
+        mealsPerDay: Number(mealsPerDay), 
+        mealsPerWeek: Number(mealsPerWeek), 
+        price: Number(price), 
+        category, 
         ...(categoryId && { categoryId }),
         heroImageUrl,
-        cloudinaryId
+        cloudinaryId 
       },
       { new: true }
     );
 
     res.json(updated);
-  } catch (err: any) {
-    console.error("Update chef plan error:", err);
-    console.error("Update chef plan error message:", err?.message);
-    res.status(500).json({
-      message: "Error updating plan",
-      reason: err?.message || "Unknown error",
-    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Error updating plan" });
   }
 };
 
@@ -1022,21 +1000,19 @@ export const deleteChefPlan = async (req: any, res: Response) => {
     if (plan.cloudinaryId) {
       try {
         await cloudinary.uploader.destroy(plan.cloudinaryId);
-      } catch (e) { }
+      } catch (e) {}
     }
 
-    // Clean up associated mealbox item images if any exist.
-    // Iterate all 4 meal-type keys so Breakfast/Snacks assets are also purged.
     if (plan.mealBoxData) {
       for (const [dayKey, dayData] of plan.mealBoxData.entries()) {
-        const meals = [dayData.Breakfast, dayData.Lunch, dayData.Snacks, dayData.Dinner];
+        const meals = [dayData.Breakfast, dayData.Lunch, dayData.Dinner, dayData.Snacks];
         for (const meal of meals) {
           if (meal) {
             for (const [sectionKey, sectionWrapper] of meal.entries()) {
               const itemsList = sectionWrapper?.items || [];
               for (const item of itemsList) {
                 if (item.cloudinaryId) {
-                  try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) { }
+                  try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) {}
                 }
               }
             }
@@ -1087,12 +1063,10 @@ export const savePlanMealBoxItems = async (req: any, res: Response) => {
       return files[fileIndex++];
     };
 
-    // Clean up any missing images if they are explicitly modified/orphaned.
-    // Iterate all 4 meal-type keys so Breakfast/Snacks assets are tracked too.
     const incomingCloudinaryIds = new Set<string>();
     Object.values(mealBoxDataInput).forEach((dayData: any) => {
       if (dayData) {
-        ["Breakfast", "Lunch", "Snacks", "Dinner"].forEach((mealType) => {
+        ["Breakfast", "Lunch", "Dinner", "Snacks"].forEach((mealType) => {
           const sections = dayData[mealType] || {};
           Object.values(sections).forEach((sectionWrapper: any) => {
             const itemsList = sectionWrapper?.items || (Array.isArray(sectionWrapper) ? sectionWrapper : []);
@@ -1108,14 +1082,14 @@ export const savePlanMealBoxItems = async (req: any, res: Response) => {
 
     if (plan.mealBoxData) {
       for (const [dayKey, dayData] of plan.mealBoxData.entries()) {
-        const meals = [dayData.Breakfast, dayData.Lunch, dayData.Snacks, dayData.Dinner];
+        const meals = [dayData.Breakfast, dayData.Lunch, dayData.Dinner, dayData.Snacks];
         for (const meal of meals) {
           if (meal) {
             for (const [sectionKey, sectionWrapper] of meal.entries()) {
               const itemsList = sectionWrapper?.items || [];
               for (const item of itemsList) {
                 if (item.cloudinaryId && !incomingCloudinaryIds.has(item.cloudinaryId)) {
-                  try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) { }
+                  try { await cloudinary.uploader.destroy(item.cloudinaryId); } catch (e) {}
                 }
               }
             }
@@ -1124,23 +1098,21 @@ export const savePlanMealBoxItems = async (req: any, res: Response) => {
       }
     }
 
-    // Process fresh files and rebuild the meal-box structure.
-    // Iterate all 4 meal-type keys so Breakfast/Snacks items persist to MongoDB.
     const updatedMealBoxData: any = {};
 
     for (const [dayKey, dayData] of Object.entries(mealBoxDataInput)) {
-      updatedMealBoxData[dayKey] = { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} };
+      updatedMealBoxData[dayKey] = { Breakfast: {}, Lunch: {}, Dinner: {}, Snacks: {} };
       const currentDay: any = dayData;
 
-      for (const mealType of ["Breakfast", "Lunch", "Snacks", "Dinner"]) {
+      for (const mealType of ["Breakfast", "Lunch", "Dinner", "Snacks"]) {
         const sections = currentDay[mealType] || {};
         for (const [sectionKey, sectionWrapper] of Object.entries(sections)) {
           const processedItems: any[] = [];
-
-          const rawItems = (sectionWrapper && Array.isArray((sectionWrapper as any).items))
-            ? (sectionWrapper as any).items
+          
+          const rawItems = (sectionWrapper && Array.isArray((sectionWrapper as any).items)) 
+            ? (sectionWrapper as any).items 
             : (Array.isArray(sectionWrapper) ? sectionWrapper : []);
-
+          
           const maxSelectable = (sectionWrapper && typeof (sectionWrapper as any).maxItems === "number")
             ? (sectionWrapper as any).maxItems
             : 1;

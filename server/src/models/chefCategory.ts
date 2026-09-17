@@ -10,6 +10,7 @@ interface ICategoryItem {
   cloudinaryId: string;
   price: number;
   quantity: string;
+  isVeg: boolean;
   variants: Array<{
     quantity: string;
     price: number;
@@ -37,6 +38,7 @@ const CategoryItemSchema = new Schema({
   cloudinaryId: { type: String, required: true },
   price: { type: Number, required: true },
   quantity: { type: String, required: true },
+  isVeg: { type: Boolean, default: true },
   variants: [{
     quantity: String,
     price: Number
@@ -112,7 +114,7 @@ export interface IChefMenu extends Document {
   plateItems: IDaawathItem[];
   daawathCategories: IDaawathCategory[];
   daawathAddons: IDaawathItem[];
-  isNonVeg: boolean;  // <-- NEW FIELD
+  isNonVeg: boolean;
 }
 
 const ChefMenuSchema = new Schema<IChefMenu>(
@@ -140,7 +142,7 @@ const ChefMenuSchema = new Schema<IChefMenu>(
     plateItems: { type: [MenuPlateItemSchema], default: [] },
     daawathCategories: { type: [DaawathCategorySchema], default: [] },
     daawathAddons: { type: [MenuPlateItemSchema], default: [] },
-    isNonVeg: { type: Boolean, default: false },  // <-- NEW FIELD
+    isNonVeg: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
@@ -174,8 +176,8 @@ const MealBoxSectionWrapperSchema = new Schema({
 const DayMealBoxSchema = new Schema({
   Breakfast: { type: Map, of: MealBoxSectionWrapperSchema, default: {} },
   Lunch: { type: Map, of: MealBoxSectionWrapperSchema, default: {} },
-  Snacks: { type: Map, of: MealBoxSectionWrapperSchema, default: {} },
-  Dinner: { type: Map, of: MealBoxSectionWrapperSchema, default: {} }
+  Dinner: { type: Map, of: MealBoxSectionWrapperSchema, default: {} },
+  Snacks: { type: Map, of: MealBoxSectionWrapperSchema, default: {} }
 }, { _id: false });
 
 interface IChefPlan extends Document {
@@ -209,11 +211,11 @@ const ChefPlanSchema = new Schema<IChefPlan>({
     type: Map,
     of: DayMealBoxSchema,
     default: {
-      Mon: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
-      Tue: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
-      Wed: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
-      Thu: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} },
-      Fri: { Breakfast: {}, Lunch: {}, Snacks: {}, Dinner: {} }
+      Mon: { Breakfast: {}, Lunch: {}, Dinner: {}, Snacks: {} },
+      Tue: { Breakfast: {}, Lunch: {}, Dinner: {}, Snacks: {} },
+      Wed: { Breakfast: {}, Lunch: {}, Dinner: {}, Snacks: {} },
+      Thu: { Breakfast: {}, Lunch: {}, Dinner: {}, Snacks: {} },
+      Fri: { Breakfast: {}, Lunch: {}, Dinner: {}, Snacks: {} }
     }
   }
 }, { timestamps: true });
@@ -221,12 +223,6 @@ const ChefPlanSchema = new Schema<IChefPlan>({
 // ==========================================
 // 4. EXPORTS
 // ==========================================
-// Force fresh model registration so schema/enum changes are always picked up
-// on process restart (Node caches models in mongoose.models per-process).
-if (mongoose.models.ChefCategory) mongoose.deleteModel("ChefCategory");
-if (mongoose.models.ChefMenu) mongoose.deleteModel("ChefMenu");
-if (mongoose.models.ChefPlan) mongoose.deleteModel("ChefPlan");
-
 const ChefCategory = mongoose.model<IChefCategory>("ChefCategory", ChefCategorySchema);
 const ChefMenu = mongoose.model<IChefMenu>("ChefMenu", ChefMenuSchema);
 const ChefPlan = mongoose.model<IChefPlan>("ChefPlan", ChefPlanSchema);

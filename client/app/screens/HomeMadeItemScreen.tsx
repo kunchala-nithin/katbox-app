@@ -176,18 +176,19 @@ const HomeMadeItemScreen = () => {
                   }
                   const availableQuantities = Object.keys(pricesMap);
                   const defaultQty = item.quantity || availableQuantities[0] || "";
+                  const resolvedIsVeg = item.isVeg !== undefined ? item.isVeg : true;
                   return {
                     id: item._id || Math.random().toString(),
                     name: item.name,
                     image: item.imageUrl,
-                    veg: item.isVeg,
+                    veg: resolvedIsVeg,
                     prices: pricesMap,
                     availableQuantities,
                     defaultQuantity: defaultQty,
                     customisable: item.variants?.length > 0,
                     description: item.description || "A meticulously prepared dish crafted with authentic spices and premium ingredients.",
                     isBestSeller: false,
-                    isVeg: item.isVeg,
+                    isVeg: resolvedIsVeg,
                   };
                 }),
               };

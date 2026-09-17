@@ -1,7 +1,9 @@
-import { View, Image, StyleSheet, Text, TouchableOpacity, StatusBar } from 'react-native';
-import React, { useState } from 'react';
+import { View, Image, StyleSheet, Text, TouchableOpacity, StatusBar, ScrollView, Dimensions } from 'react-native';
+import React, { useState, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const SLIDES = [
   { id: 1, source: require('../assets/images/slide1.png') },
@@ -14,35 +16,53 @@ const SlidingScreens = () => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const scrollViewRef = useRef<ScrollView>(null);
 
   const isFirstSlide = currentSlideIndex === 0;
   const isLastSlide = currentSlideIndex === SLIDES.length - 1;
 
+  const scrollToSlide = (index: number) => {
+    scrollViewRef.current?.scrollTo({
+      x: index * SCREEN_WIDTH,
+      animated: true,
+    });
+    setCurrentSlideIndex(index);
+  };
+
   const handleNext = () => {
     if (currentSlideIndex < SLIDES.length - 1) {
-      setCurrentSlideIndex(currentSlideIndex + 1);
+      scrollToSlide(currentSlideIndex + 1);
     } else {
-      setCurrentSlideIndex(0); 
+      scrollToSlide(0); 
     }
   };
 
   const handlePrev = () => {
     if (currentSlideIndex > 0) {
-      setCurrentSlideIndex(currentSlideIndex - 1);
+      scrollToSlide(currentSlideIndex - 1);
     }
   };
 
   const handleSkip = () => {
-    setCurrentSlideIndex(SLIDES.length - 1);
+    scrollToSlide(SLIDES.length - 1);
   };
 
   const handleGetStarted = () => {
     router.replace('/login'); 
   };
 
+  const handleScrollEnd = (event: any) => {
+    const contentOffsetX = event.nativeEvent.contentOffset.x;
+    const currentIndex = Math.round(contentOffsetX / SCREEN_WIDTH);
+    if (currentIndex !== currentSlideIndex) {
+      setCurrentSlideIndex(currentIndex);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+      
       {/* Top-Right Small Skip Pill Button */}
       {!isLastSlide && (
         <TouchableOpacity 
@@ -54,14 +74,28 @@ const SlidingScreens = () => {
         </TouchableOpacity>
       )}
 
-      {/* Slide Image Container */}
+      {/* Swipeable Slide Image Container */}
       <View style={styles.imageContainer}>
-        <Image 
-          key={currentSlideIndex} 
-          source={SLIDES[currentSlideIndex].source} 
-          style={styles.image}
-          resizeMode="contain" 
-        />
+        <ScrollView
+          ref={scrollViewRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={handleScrollEnd}
+          scrollEventThrottle={16}
+          bounces={false}
+          style={styles.scrollViewStyle}
+        >
+          {SLIDES.map((slide) => (
+            <View key={slide.id} style={styles.slideWrapper}>
+              <Image 
+                source={slide.source} 
+                style={styles.image}
+                resizeMode="contain" 
+              />
+            </View>
+          ))}
+        </ScrollView>
       </View>
 
       {/* Dynamic Controls Box */}
@@ -187,6 +221,16 @@ const styles = StyleSheet.create({
   imageContainer: {
     width: '100%',
     height: '80%', 
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scrollViewStyle: {
+    width: '100%',
+    height: '100%',
+  },
+  slideWrapper: {
+    width: SCREEN_WIDTH,
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
   },

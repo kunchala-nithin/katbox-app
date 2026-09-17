@@ -917,7 +917,8 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   cardSpacing: {
-    marginBottom: 10,
+    marginBottom: 6, // Reduced spacing to make cards fit more compactly and appear tighter vertically
+    transform: [{ scale: 0.96 }], // Slightly scales down the card container appearance without changing inner components
   },
   loadingContainer: {
     marginTop: 70,

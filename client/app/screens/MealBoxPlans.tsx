@@ -629,10 +629,6 @@ const MealBoxPlans = () => {
                       <Text style={styles.cardTopBadgeText}>{item.category?.toUpperCase() || "MEAL BOX"}</Text>
                     </View>
 
-                    <TouchableOpacity style={styles.bookmarkButton} activeOpacity={0.75}>
-                      <Ionicons name="bookmark-outline" size={18} color="#FFFFFF" />
-                    </TouchableOpacity>
-
                     <View style={styles.textOverlayContainer}>
                       <Text style={styles.cardTitle} numberOfLines={1}>{item.name || item.title}</Text>
                       <Text style={styles.cardSubtitle} numberOfLines={2}>{item.description || item.subtitle}</Text>
@@ -641,12 +637,12 @@ const MealBoxPlans = () => {
 
                   <View style={styles.detailsContainer}>
                     <View style={styles.infoRow}>
-                      <Ionicons name="time-outline" size={14} color="#0F382A" />
+                      <Ionicons name="time-outline" size={13} color="#0F382A" />
                       <Text style={styles.infoRowText}>{displayMealsPerDay}</Text>
                     </View>
 
                     <View style={styles.infoRow}>
-                      <Ionicons name="calendar-outline" size={14} color="#0F382A" />
+                      <Ionicons name="calendar-outline" size={13} color="#0F382A" />
                       <Text style={styles.infoRowText}>{displayMealsPerWeek}</Text>
                     </View>
 
@@ -668,7 +664,7 @@ const MealBoxPlans = () => {
                         onPress={() => openPlanModal(item, displayMealsPerDay, displayMealsPerWeek, planImgUrl)}
                       >
                         <Text style={styles.selectButtonText}>Select Plan</Text>
-                        <Ionicons name="arrow-forward" size={14} color="#FAF8F5" style={styles.buttonArrow} />
+                        <Ionicons name="arrow-forward" size={13} color="#FAF8F5" style={styles.buttonArrow} />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1349,20 +1345,21 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   cardShadowWrapper: {
-    marginBottom: 14,
-    borderRadius: 18,
+    marginBottom: 10,
+    borderRadius: 16,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
     shadowColor: "#0F382A",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.07,
-    shadowRadius: 12,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
+    transform: [{ scale: 0.96 }],
   },
   cardSurface: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 18,
+    borderRadius: 16,
     overflow: "hidden",
   },
   cardPressed: {
@@ -1372,56 +1369,43 @@ const styles = StyleSheet.create({
   imageContainer: {
     position: "relative",
     width: "100%",
-    height: 201,
+    height: 155,
     backgroundColor: "#E5ECE8",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     overflow: "hidden",
   },
   cardImage: {
     width: "100%",
     height: "100%",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
   },
   cardTopBadge: {
     position: "absolute",
-    top: 12,
-    left: 12,
+    top: 10,
+    left: 10,
     backgroundColor: "rgba(250, 248, 245, 0.95)",
-    paddingHorizontal: 9,
-    paddingVertical: 3.5,
-    borderRadius: 7,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.12)",
   },
   cardTopBadgeText: {
     color: "#0F382A",
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: "800",
     letterSpacing: 0.6,
   },
-  bookmarkButton: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(11, 38, 29, 0.45)",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.2)",
-  },
   textOverlayContainer: {
     position: "absolute",
-    bottom: 12,
-    left: 14,
-    right: 14,
+    bottom: 10,
+    left: 12,
+    right: 12,
   },
   cardTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "900",
     color: "#FFFFFF",
     letterSpacing: -0.4,
@@ -1430,36 +1414,36 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
   cardSubtitle: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: "#E5ECE8",
-    marginTop: 3,
+    marginTop: 2,
     fontWeight: "500",
-    lineHeight: 16,
+    lineHeight: 14,
     textShadowColor: "rgba(0, 0, 0, 0.75)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
   detailsContainer: {
-    padding: 13,
+    padding: 10,
     backgroundColor: "#FFFFFF",
-    borderBottomLeftRadius: 18,
-    borderBottomRightRadius: 18,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
   },
   infoRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 6,
+    marginBottom: 4,
   },
   infoRowText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: "#4F6B61",
-    marginLeft: 7,
+    marginLeft: 6,
     fontWeight: "600",
   },
   cardDividerLine: {
     height: 1,
     backgroundColor: "rgba(15, 56, 42, 0.08)",
-    marginVertical: 9,
+    marginVertical: 7,
   },
   footerRow: {
     flexDirection: "row",
@@ -1474,26 +1458,26 @@ const styles = StyleSheet.create({
     alignItems: "baseline",
   },
   currencySymbol: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "900",
     color: "#0B261D",
   },
   priceNumber: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "900",
     color: "#0B261D",
     marginLeft: 2,
     letterSpacing: -0.4,
   },
   pricePeriod: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: "#5B756C",
     fontWeight: "600",
     marginLeft: 3,
   },
   savingsText: {
     color: "#0F382A",
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: "700",
     marginTop: 1,
   },
@@ -1501,23 +1485,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#166534",
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
     shadowColor: "#166534",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.16,
-    shadowRadius: 6,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
   },
   selectButtonText: {
     color: "#FAF8F5",
-    fontSize: 12.5,
+    fontSize: 11.5,
     fontWeight: "800",
     letterSpacing: 0.2,
   },
   buttonArrow: {
-    marginLeft: 5,
+    marginLeft: 4,
   },
   loadingContainer: {
     marginTop: 60,

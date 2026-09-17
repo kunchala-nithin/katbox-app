@@ -249,7 +249,7 @@ export default function AddChefCategory() {
         data: { publicId: cloudinaryId },
       });
     } catch (err) {
-      console.log("Failed to delete plan image from Cloudinary:", err);
+      console.log("Failed to delete image from Cloudinary:", err);
     }
   };
 
@@ -593,6 +593,7 @@ export default function AddChefCategory() {
           cloudinaryId: item.cloudinaryId || "",
           price: item.price !== undefined ? String(item.price) : "",
           quantity: item.quantity || "",
+          isVeg: item.isVeg !== undefined ? item.isVeg : true,
           variants: (item.variants || []).map((v: any, idx: number) => ({
             id: v._id || Date.now().toString() + idx,
             quantity: v.quantity || "",
@@ -613,6 +614,7 @@ export default function AddChefCategory() {
               cloudinaryId: "",
               price: "",
               quantity: "",
+              isVeg: true,
               variants: [],
             },
           ],
@@ -644,6 +646,7 @@ export default function AddChefCategory() {
             cloudinaryId: "",
             price: "",
             quantity: "",
+            isVeg: true,
             variants: [],
           },
         ],
@@ -661,6 +664,7 @@ export default function AddChefCategory() {
       cloudinaryId: "",
       price: "",
       quantity: "",
+      isVeg: true,
       variants: [],
     });
     setModalSubCategories(newSubCats);
@@ -732,6 +736,7 @@ export default function AddChefCategory() {
             cloudinaryId: item.cloudinaryId || "",
             price: item.price !== undefined ? String(item.price) : "",
             quantity: item.quantity || "",
+            isVeg: item.isVeg !== undefined ? item.isVeg : true,
             variants: (item.variants || []).map((v: any, idx: number) => ({
               id: v._id || Date.now().toString() + idx,
               quantity: v.quantity || "",
@@ -2044,6 +2049,22 @@ export default function AddChefCategory() {
                           />
                         </View>
                       </View>
+
+                      {/* VEG / NON-VEG TOGGLE FOR ITEM */}
+                      <Text style={styles.label}>Food Type</Text>
+                      <View style={styles.toggleRow}>
+                        <Text style={[styles.toggleLabel, item.isVeg !== false && styles.toggleLabelActive]}>Veg</Text>
+                        <Switch
+                          trackColor={{ false: '#166538', true: '#D32F2F' }}
+                          thumbColor="#FFFFFF"
+                          ios_backgroundColor="#3e3e3e"
+                          onValueChange={(value) => updateltemField(subIndex, itemIndex, "isVeg", value ? false : true)}
+                          value={item.isVeg === false}
+                          disabled={!isEditMode}
+                        />
+                        <Text style={[styles.toggleLabel, item.isVeg === false && styles.toggleLabelActive]}>Non-Veg</Text>
+                      </View>
+
                       {item.variants && item.variants.map((variant: any, variantIndex: number) => (
                         <View key={`${variant.id || variantIndex}-${variantIndex}`} style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
                           <View style={{ flex: 1 }}>
