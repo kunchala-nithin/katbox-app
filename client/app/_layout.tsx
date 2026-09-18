@@ -74,6 +74,25 @@ function InitialLayout() {
   const logoutTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  /**
+   * ──────────────────────────────────────────────────────────
+   * LOGIN TRANSITION GUARD
+   * ──────────────────────────────────────────────────────────
+   *
+   * When login.tsx calls notifyAuthChanged(), the layout's
+   * checkAuth() runs asynchronously. During that window,
+   * `isAuthenticated` is still `false`. If the user was on a
+   * protected route (or navigating to one), the navigation
+   * guard below would bounce them back to /login.
+   *
+   * We suppress the "logged-out → /login" rule for a short
+   * window after an auth-change event to allow checkAuth() to
+   * resolve.
+   */
+  const loginTransitionRef = useRef<boolean>(false)
+  const loginTransitionTimerRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const [isAuthenticated, setIsAuthenticated] =
     useState<boolean | null>(null)
 
@@ -266,12 +285,30 @@ function InitialLayout() {
    *
    * This causes the layout to immediately re-check the
    * Katbox JWT.
+   *
+   * We ALSO mark a short "login transition" window so the
+   * navigation guard does not bounce the user while
+   * checkAuth() is still resolving.
    */
 
   useEffect(() => {
     checkAuth()
 
     const unsubscribe = subscribeAuth(() => {
+      /**
+       * Mark a login transition in-flight so the navigation
+       * guard does not immediately bounce the user.
+       */
+      loginTransitionRef.current = true
+
+      if (loginTransitionTimerRef.current) {
+        clearTimeout(loginTransitionTimerRef.current)
+      }
+
+      loginTransitionTimerRef.current = setTimeout(() => {
+        loginTransitionRef.current = false
+      }, 1500)
+
       checkAuth()
     })
 
@@ -281,6 +318,11 @@ function InitialLayout() {
       if (logoutTimerRef.current) {
         clearTimeout(logoutTimerRef.current)
         logoutTimerRef.current = null
+      }
+
+      if (loginTransitionTimerRef.current) {
+        clearTimeout(loginTransitionTimerRef.current)
+        loginTransitionTimerRef.current = null
       }
     }
   }, [checkAuth])
@@ -432,6 +474,9 @@ function InitialLayout() {
    *   Customer -> Home
    *   Chef     -> Chef route
    *   Admin    -> Admin route
+   *
+   * AND we skip the "logged-out -> /login" rule while a login
+   * transition is in-flight so we don't bounce the user back.
    */
 
   useEffect(() => {
@@ -456,7 +501,8 @@ function InitialLayout() {
       currentSegment === undefined ||
       currentSegment === 'SlidingScreens' ||
       currentSegment === 'login' ||
-      currentSegment === 'verify'
+      currentSegment === 'verify' ||
+      currentSegment === 'oauth-callback'
 
     /*
      * ----------------------------------------------------------
@@ -465,10 +511,16 @@ function InitialLayout() {
      *
      * If the local Katbox JWT does not exist, protected
      * screens must not remain accessible.
+     *
+     * SKIP while a login transition is in-flight. Otherwise we
+     * would redirect the user back to /login between the moment
+     * saveSession() completes and the moment checkAuth()
+     * finishes resolving the new token.
      */
 
     if (
       !isAuthenticated &&
+      !loginTransitionRef.current &&
       (inTabs ||
         inScreens ||
         inChef ||
@@ -564,6 +616,13 @@ function InitialLayout() {
 
       <Stack.Screen
         name="login"
+        options={{
+          headerShown: false,
+        }}
+      />
+
+      <Stack.Screen
+        name="oauth-callback"
         options={{
           headerShown: false,
         }}

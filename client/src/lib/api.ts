@@ -1,4 +1,4 @@
-import axios, { AxiosHeaders } from "axios";
+import axios, { AxiosHeaders, AxiosError } from "axios";
 import { getToken } from "./authStorage";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
@@ -34,7 +34,9 @@ console.log("🌐 USING BASE URL:", BASE_URL);
 // 🔥 AXIOS INSTANCE
 export const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 30000, // 30s timeout accommodates Render free-tier cold starts
+  // 60s timeout accommodates Render free-tier cold starts (which
+  // can take 40–60s after the service has been idle).
+  timeout: 60000,
 });
 
 // 🔥 REQUEST INTERCEPTOR - Fixed for FormData + Authorization
@@ -66,6 +68,35 @@ api.interceptors.request.use(
   },
   (error) => {
     console.log("❌ INTERCEPTOR ERROR:", error);
+    return Promise.reject(error);
+  }
+);
+
+// 🔥 RESPONSE INTERCEPTOR - single retry for cold-start timeouts
+api.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const config: any = error.config || {};
+    const code = (error as any)?.code;
+    const status = error.response?.status;
+
+    const isNetworkOrTimeout =
+      code === "ECONNABORTED" ||
+      code === "ETIMEDOUT" ||
+      code === "ERR_NETWORK" ||
+      !error.response;
+
+    const isRetryableStatus =
+      status === 502 || status === 503 || status === 504;
+
+    if ((isNetworkOrTimeout || isRetryableStatus) && !config.__retried) {
+      config.__retried = true;
+      console.log("🔁 Retrying request once after cold-start failure:", config.url);
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return api.request(config);
+    }
+
     return Promise.reject(error);
   }
 );

@@ -305,34 +305,61 @@ const Login = () => {
        *     clerk_123456
        *
        * We wait for the actual Clerk user.
+       *
+       * ────────────────────────────────────────────────────────
+       * RELIABILITY NOTE
+       * ────────────────────────────────────────────────────────
+       *
+       * `clerk.user` is React-state backed and can be stale
+       * inside an async closure. `clerk.client.activeSessions[0].user`
+       * is the authoritative source immediately after setActive().
+       *
+       * We prefer the activeSessions source, fall back to clerk.user,
+       * and poll a bit longer on slow Android devices.
        */
 
+      const resolveClerkUser = (): any => {
+        try {
+          const activeSession =
+            (clerk as any)?.client?.activeSessions?.[0]
+
+          const sessionUser =
+            activeSession?.user
+
+          if (sessionUser) {
+            return sessionUser
+          }
+        } catch (_) {}
+
+        return clerk.user
+      }
+
       let currentClerkUser =
-        clerk.user
+        resolveClerkUser()
 
       for (
         let attempt = 0;
-        attempt < 20 &&
+        attempt < 25 &&
         !currentClerkUser;
         attempt++
       ) {
         console.log(
-          `⏳ Waiting for Clerk user... attempt ${attempt + 1}/20`
+          `⏳ Waiting for Clerk user... attempt ${attempt + 1}/25`
         )
 
         await new Promise(
           (resolve) =>
             setTimeout(
               resolve,
-              150
+              200
             )
         )
 
         /*
-         * Re-read the current Clerk instance.
+         * Re-read the current Clerk user.
          */
         currentClerkUser =
-          clerk.user
+          resolveClerkUser()
       }
 
       /*
@@ -644,56 +671,33 @@ const Login = () => {
 
         /*
          * ------------------------------------------------------
-         * DIRECT ROLE NAVIGATION
+         * NAVIGATION IS OWNED BY app/layout.tsx
          * ------------------------------------------------------
+         *
+         * We deliberately DO NOT call router.replace() here.
+         *
+         * Why?
+         *
+         * The RootLayout's auth-state listener runs
+         * checkAuth() asynchronously after notifyAuthChanged().
+         * During that window, `isAuthenticated` in the layout is
+         * still false. If we navigate now, the layout's
+         * navigation guard would bounce the user straight back
+         * to /login the instant `segments` changes — that is
+         * the exact race condition that was causing the
+         * intermittent "Google Sign-In failed" behaviour.
+         *
+         * Instead, we simply return. The layout guard detects
+         * `isAuthenticated === true` on the /login public route
+         * and routes the user by role:
+         *
+         *     Admin    -> /admin/all-users
+         *     Chef     -> /chefManagement/add-chefs
+         *     Customer -> /(tabs)/Home
          */
 
-        if (
-          res.data.user.isAdmin
-        ) {
-          console.log(
-            '👑 Admin login detected.'
-          )
-
-          console.log(
-            '🚀 Navigating to /admin/all-users'
-          )
-
-          router.replace(
-            '/admin/all-users' as any
-          )
-
-          return
-        }
-
-        if (
-          res.data.user.isChef
-        ) {
-          console.log(
-            '👨‍🍳 Chef login detected.'
-          )
-
-          console.log(
-            '🚀 Navigating to /chefManagement/add-chefs'
-          )
-
-          router.replace(
-            '/chefManagement/add-chefs' as any
-          )
-
-          return
-        }
-
         console.log(
-          '👤 Normal customer login detected.'
-        )
-
-        console.log(
-          '🚀 Navigating to /(tabs)/Home'
-        )
-
-        router.replace(
-          '/(tabs)/Home' as any
+          '✅ Login successful — layout will handle role-based navigation.'
         )
 
         return
@@ -740,20 +744,31 @@ const Login = () => {
 
       /*
        * --------------------------------------------------------
-       * CLEAN UP CLERK SESSION
+       * CLEAN UP CLERK SESSION — ONLY ON REAL AUTH REJECTIONS
        * --------------------------------------------------------
        *
-       * If Google succeeded but Katbox authentication failed,
-       * do not leave the Clerk session active.
+       * Network timeouts / Render cold-start failures must NOT
+       * sign the user out of Clerk. Doing so forces them to redo
+       * the entire Google OAuth flow even though nothing was
+       * wrong with their Google account.
        */
 
-      try {
-        await clerk.signOut()
-      } catch (signOutError) {
-        console.log(
-          '⚠️ Clerk cleanup error:',
-          signOutError
-        )
+      const httpStatus =
+        error?.response?.status
+
+      const isAuthRejection =
+        httpStatus === 401 ||
+        httpStatus === 403
+
+      if (isAuthRejection) {
+        try {
+          await clerk.signOut()
+        } catch (signOutError) {
+          console.log(
+            '⚠️ Clerk cleanup error:',
+            signOutError
+          )
+        }
       }
 
       /*
@@ -781,13 +796,37 @@ const Login = () => {
 
       /*
        * --------------------------------------------------------
-       * GENERIC ERROR
+       * FRIENDLY ERROR MESSAGES
        * --------------------------------------------------------
+       *
+       * We translate low-level network errors into language
+       * users can actually act on.
        */
 
-      alert(
+      const errCode =
+        error?.code ||
+        error?.response?.data?.code
+
+      let friendlyMessage =
         'Google Sign-In failed. Please try again.'
-      )
+
+      if (
+        errCode === 'ECONNABORTED' ||
+        errCode === 'ETIMEDOUT' ||
+        errCode === 'ERR_NETWORK'
+      ) {
+        friendlyMessage =
+          'Our servers are waking up. Please tap “Continue with Google” once more — it will be instant this time.'
+      } else if (httpStatus === 500) {
+        friendlyMessage =
+          'Something went wrong on our side. Please try again in a moment.'
+      } else if (httpStatus === 409) {
+        friendlyMessage =
+          error?.response?.data?.message ||
+          'This account is already registered with a different Google account.'
+      }
+
+      alert(friendlyMessage)
     }
   }
 

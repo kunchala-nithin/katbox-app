@@ -198,6 +198,16 @@ export default function CateringMenuItemScreen() {
   const totalSelectedItems = Object.values(selections)
     .reduce((sum: number, set: any) => sum + set.size, 0);
 
+  // ✅ NEW: Gate the "Preview Items" action behind full completion of every course.
+  //    A category is considered "complete" once its base max selection count is reached.
+  const requiredCategoryCount = daawathCategories.length;
+  const completedCategoryCount = daawathCategories.reduce((count: number, _cat: any, index: number) => {
+    const selectedForCategory = selections[index]?.size || 0;
+    return count + (selectedForCategory >= getMaxForCategory(index) ? 1 : 0);
+  }, 0);
+  // Vacuously true when there are no categories to select from.
+  const allCategoriesAtMax = completedCategoryCount >= requiredCategoryCount;
+
   const getAddedCountForCategory = (catIndex: number) => {
     return selections[catIndex]?.size || 0;
   };
@@ -1277,9 +1287,39 @@ export default function CateringMenuItemScreen() {
             />
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.footerActionSubmitBtn} onPress={() => setShowPreviewModal(true)} activeOpacity={0.88}>
-          <Text style={styles.footerSubmitBtnText}>Preview Items</Text>
-          <Feather name="eye" size={15} color="#FAF8F5" style={{ marginLeft: 8 }} />
+
+        {/* ✅ GATED: Only enabled once every course has hit its max selection count */}
+        <TouchableOpacity
+          style={[
+            styles.footerActionSubmitBtn,
+            !allCategoriesAtMax && styles.footerActionSubmitBtnDisabled,
+          ]}
+          onPress={() => {
+            if (!allCategoriesAtMax) return;
+            setShowPreviewModal(true);
+          }}
+          activeOpacity={allCategoriesAtMax ? 0.88 : 1}
+          disabled={!allCategoriesAtMax}
+          accessibilityState={{ disabled: !allCategoriesAtMax }}
+          accessibilityRole="button"
+          accessibilityLabel={allCategoriesAtMax ? "Preview Items" : "Select all courses to preview"}
+        >
+          <Text
+            style={[
+              styles.footerSubmitBtnText,
+              !allCategoriesAtMax && styles.footerSubmitBtnTextDisabled,
+            ]}
+          >
+            {allCategoriesAtMax
+              ? "Preview Items"
+              : `Select all (${completedCategoryCount}/${requiredCategoryCount})`}
+          </Text>
+          <Feather
+            name={allCategoriesAtMax ? "eye" : "lock"}
+            size={15}
+            color={allCategoriesAtMax ? "#FAF8F5" : "#7A8F86"}
+            style={{ marginLeft: 8 }}
+          />
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -1911,11 +1951,22 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
+  // ✅ NEW: Disabled visual state for the gated "Preview Items" button
+  footerActionSubmitBtnDisabled: {
+    backgroundColor: "#E3EAE6",
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+  },
   footerSubmitBtnText: { 
     color: "#FAF8F5", 
     fontSize: 14.5, 
     fontWeight: "800",
     letterSpacing: 0.2,
+  },
+  // ✅ NEW: Disabled text state for the gated "Preview Items" button
+  footerSubmitBtnTextDisabled: {
+    color: "#7A8F86",
   },
   modalRootOverlay: {
     flex: 1,

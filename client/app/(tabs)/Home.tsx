@@ -328,6 +328,11 @@ export default function HomeScreen() {
   // ─── Global "data is refreshing" guard ───
   const isDataRefreshingRef = useRef<boolean>(false);
 
+  // ✅ PERF: Throttle refs — prevent duplicate network calls on rapid focus events
+  const lastUserRefreshAtRef = useRef<number>(0);
+  const lastChefsFetchedAtRef = useRef<number>(0);
+  const hasFocusedOnceRef = useRef<boolean>(false);
+
   // Address bottom sheet
   const [isAddressSheetVisible, setIsAddressSheetVisible] = useState<boolean>(false);
 
@@ -392,10 +397,23 @@ export default function HomeScreen() {
     });
   };
 
-  // Fetch dynamic chefs from backend.
-  const fetchDynamicChefs = async (silent: boolean = false) => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ PERF: fetchDynamicChefs with throttle + smart loading state
+  //    - `silent = true`  → do NOT show loading spinner
+  //    - `force = true`   → bypass the 20-second throttle
+  //    - When chefsData already exists, we never flip chefsLoading back to true
+  // ─────────────────────────────────────────────────────────────────────────
+  const fetchDynamicChefs = async (silent: boolean = false, force: boolean = false) => {
+    const now = Date.now();
+    if (!force && now - lastChefsFetchedAtRef.current < 20000) {
+      // Recently fetched — skip to avoid redundant network calls
+      return;
+    }
     try {
-      if (!silent) setChefsLoading(true);
+      // Only show the big loading state if we truly have no data yet
+      if (!silent && chefsData.length === 0) {
+        setChefsLoading(true);
+      }
       const res = await api.get('/api/chefs');
       if (res.data && res.data.chefs) {
         const formatted = res.data.chefs.map((chef: any, i: number) => {
@@ -423,11 +441,12 @@ export default function HomeScreen() {
           };
         });
         setChefsData(formatted);
+        lastChefsFetchedAtRef.current = Date.now();
       }
     } catch (err) {
       console.log('Home fetch dynamic chefs error:', err);
     } finally {
-      if (!silent) setChefsLoading(false);
+      setChefsLoading(false);
     }
   };
 
@@ -446,13 +465,17 @@ export default function HomeScreen() {
     }
   };
 
-  // Load User Data & Scoped Saved Addresses from MongoDB / Storage
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ PERF: loadUserDataAndAddresses — TWO-PHASE
+  //    Phase 1: Read AsyncStorage instantly → paint name/address immediately
+  //    Phase 2: Background network refresh → update silently when it arrives
+  // ─────────────────────────────────────────────────────────────────────────
   const loadUserDataAndAddresses = async () => {
     try {
-      let activeUid = '';
-      let loadedActive: ActiveAddress | null = null;
-
+      // ─── PHASE 1: FAST — apply cached data right away ───
       const cachedUser = await getUser();
+      let activeUid = '';
+
       if (cachedUser) {
         setCurrentUser(cachedUser);
         activeUid = cachedUser.id || cachedUser._id || '';
@@ -462,7 +485,6 @@ export default function HomeScreen() {
         }
 
         if (cachedUser.activeAddress && cachedUser.activeAddress.fullAddress) {
-          loadedActive = cachedUser.activeAddress;
           setActiveAddress(cachedUser.activeAddress);
           setLocationDisplay(formatAddressDisplay(cachedUser.activeAddress));
           if (cachedUser.activeAddress.id) {
@@ -477,44 +499,57 @@ export default function HomeScreen() {
         }
       }
 
-      const freshUser = await refreshUser();
-      if (freshUser) {
-        setCurrentUser(freshUser);
-        const freshUid = freshUser.id || freshUser._id || activeUid;
-        setCurrentUserId(freshUid);
-        activeUid = freshUid;
-
-        if (freshUser.name && freshUser.name.trim().length > 0 && freshUser.name.trim().toLowerCase() !== 'user') {
-          setUserName(freshUser.name.trim());
-        }
-
-        if (freshUser.activeAddress && freshUser.activeAddress.fullAddress) {
-          loadedActive = freshUser.activeAddress;
-          setActiveAddress(freshUser.activeAddress);
-          setLocationDisplay(formatAddressDisplay(freshUser.activeAddress));
-          if (freshUser.activeAddress.id) {
-            setSelectedAddressId(freshUser.activeAddress.id);
-          }
-        } else if (freshUser.address && freshUser.address.trim().length > 0) {
-          setLocationDisplay(freshUser.address.trim());
-        }
-
-        if (freshUser.savedAddresses && Array.isArray(freshUser.savedAddresses)) {
-          setSavedAddresses(freshUser.savedAddresses);
-        }
+      // ─── PHASE 2: BACKGROUND — refresh from server, non-blocking ───
+      const now = Date.now();
+      if (now - lastUserRefreshAtRef.current < 15000) {
+        // Recently refreshed — skip
+        return;
       }
+      lastUserRefreshAtRef.current = now;
+
+      refreshUser()
+        .then((freshUser) => {
+          if (!freshUser) return;
+          setCurrentUser(freshUser);
+          const freshUid = freshUser.id || freshUser._id || activeUid;
+          setCurrentUserId(freshUid);
+
+          if (freshUser.name && freshUser.name.trim().length > 0 && freshUser.name.trim().toLowerCase() !== 'user') {
+            setUserName(freshUser.name.trim());
+          }
+
+          if (freshUser.activeAddress && freshUser.activeAddress.fullAddress) {
+            setActiveAddress(freshUser.activeAddress);
+            setLocationDisplay(formatAddressDisplay(freshUser.activeAddress));
+            if (freshUser.activeAddress.id) {
+              setSelectedAddressId(freshUser.activeAddress.id);
+            }
+          } else if (freshUser.address && freshUser.address.trim().length > 0) {
+            setLocationDisplay(freshUser.address.trim());
+          }
+
+          if (freshUser.savedAddresses && Array.isArray(freshUser.savedAddresses)) {
+            setSavedAddresses(freshUser.savedAddresses);
+          }
+        })
+        .catch((err) => {
+          console.log('Silent user refresh failed:', err);
+        });
     } catch (error) {
       console.log('Error loading logged in user data:', error);
     }
   };
 
-  // ─── CENTRAL RELOAD ───
+  // ─── CENTRAL RELOAD (pull-to-refresh) — forces fresh data ───
   const reloadAllDynamicData = useCallback(async () => {
     isDataRefreshingRef.current = true;
+    // Reset throttles so reload forces a real refresh
+    lastChefsFetchedAtRef.current = 0;
+    lastUserRefreshAtRef.current = 0;
     try {
       await Promise.allSettled([
         loadUserDataAndAddresses(),
-        fetchDynamicChefs(true),
+        fetchDynamicChefs(true, true), // silent + force
         fetchCartCount(),
         checkLocationStatusAndPrompt(),
       ]);
@@ -525,10 +560,18 @@ export default function HomeScreen() {
     }
   }, []);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ PERF: useFocusEffect — only the FIRST focus shows loading spinners
+  //    Subsequent focuses are silent + throttled
+  // ─────────────────────────────────────────────────────────────────────────
   useFocusEffect(
     useCallback(() => {
-      loadUserDataAndAddresses();
-      fetchDynamicChefs();
+      const isFirstFocus = !hasFocusedOnceRef.current;
+      hasFocusedOnceRef.current = true;
+
+      // Fire all three in parallel, without awaiting (non-blocking)
+      loadUserDataAndAddresses();          // Instant from cache + bg refresh
+      fetchDynamicChefs(!isFirstFocus);    // silent on subsequent focuses
       fetchCartCount();
     }, [])
   );
@@ -751,7 +794,8 @@ export default function HomeScreen() {
       address: formatAddressDisplay(newActive),
     });
 
-    fetchDynamicChefs(true);
+    // ✅ Force a fresh fetch since the delivery location changed
+    fetchDynamicChefs(true, true);
   };
 
   const handleOpenEditAddress = (item: SavedAddress) => {
@@ -923,7 +967,8 @@ export default function HomeScreen() {
     setEditingAddressId(null);
     setIsMapModalVisible(false);
 
-    fetchDynamicChefs(true);
+    // ✅ Force a fresh fetch since the delivery location changed
+    fetchDynamicChefs(true, true);
   };
 
   const toggleFavorite = (id: string) => {
