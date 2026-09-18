@@ -995,7 +995,7 @@ export default function AllOrdersScreen() {
       const timeSlot = match?.timeSlot || activeOrder.deliveryTimeSlot || '7:00 PM - 9:00 PM';
       const address = match?.address || activeOrder.addressDetails || activeOrder.deliveryAddress || customerAddress;
 
-      // ✅ NEW: Prefer per-schedule coords, fall back to order-level coords.
+      // ✅ Prefer per-schedule coords, fall back to order-level coords.
       const sLat = match?.latitude ?? activeOrder?.latitude;
       const sLng = match?.longitude ?? activeOrder?.longitude;
 
@@ -1072,31 +1072,39 @@ export default function AllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
-  // ✅ NEW: Detect QuickBites homemade flow — this order's slot/date must
-  // be derived LIVE from the persisted `estimatedDeliveryAt` timestamp.
-  const isQuickBitesFlow =
-    isHomemadeFlow &&
-    (activeOrder?.isQuickBites === true ||
-      String(activeOrder?.isQuickBites).toLowerCase() === 'true');
+  // ✅ QuickBites detection — robust: true if either the flag is set OR
+  //    the order carries a persisted estimatedDeliveryAt timestamp.
+  //    Only applies to homemade orders.
+  const isQuickBitesFlow = useMemo(() => {
+    if (!activeOrder) return false;
+    if (!isHomemadeFlow) return false;
+    const flagSet =
+      activeOrder?.isQuickBites === true ||
+      String(activeOrder?.isQuickBites).toLowerCase() === 'true';
+    const hasEstimated = !!activeOrder?.estimatedDeliveryAt;
+    return flagSet || hasEstimated;
+  }, [activeOrder, isHomemadeFlow]);
 
-  // ✅ NEW: Compute dynamic QuickBites date/time from `estimatedDeliveryAt`
+  // ✅ QuickBites window in minutes — defaults to 75
+  const quickBitesWindowMinutes = useMemo(() => {
+    const w = Number(activeOrder?.deliveryWindowMinutes);
+    return Number.isFinite(w) && w > 0 ? w : 75;
+  }, [activeOrder?.deliveryWindowMinutes]);
+
+  // ✅ Compute dynamic QuickBites date/time from MongoDB's `estimatedDeliveryAt`
+  //    For QuickBites the delivery date is ALWAYS "Today" (same-day).
   const quickBitesDateTime = useMemo(() => {
     if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
     const d = new Date(activeOrder.estimatedDeliveryAt);
     if (isNaN(d.getTime())) return null;
 
     const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
-    const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
     const dayNum = d.getDate();
     const monthShort = d.toLocaleDateString('en-US', { month: 'short' });
 
-    const displayDate = sameDay
-      ? `Today, ${dayNum} ${monthShort}`
-      : `${weekday}, ${dayNum} ${monthShort}`;
-
-    // Parse-friendly format for the countdown widget ("Wed, 17 Sep")
-    const timerDate = `${weekday}, ${dayNum} ${monthShort}`;
+    // ✅ QuickBites: force same-day "Today" label
+    const displayDate = `Today, ${dayNum} ${monthShort}`;
+    const timerDate = `Today, ${dayNum} ${monthShort}`;
 
     const timeStr = d.toLocaleTimeString('en-IN', {
       hour: 'numeric',
@@ -1104,11 +1112,15 @@ export default function AllOrdersScreen() {
       hour12: true,
     });
 
-    return { displayDate, timerDate, timeStr };
+    // Remaining minutes until estimated delivery
+    const diffMs = d.getTime() - now.getTime();
+    const remainingMin = Math.max(0, Math.round(diffMs / (60 * 1000)));
+
+    return { displayDate, timerDate, timeStr, remainingMin };
   }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
 
   // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
-  //    • For QuickBites: computed live from `estimatedDeliveryAt`.
+  //    • For QuickBites: computed live from `estimatedDeliveryAt` (same day).
   //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
   //      falls back to legacy `deliveryTimeSlot`.
   const homemadeDeliveryDateResolved = useMemo(() => {
@@ -1127,7 +1139,7 @@ export default function AllOrdersScreen() {
   const homemadeDeliverySlotResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
-      return quickBitesDateTime.timeStr;
+      return `By ${quickBitesDateTime.timeStr}`;
     }
     return String(
       activeOrder?.deliverySlot ||
@@ -1142,7 +1154,8 @@ export default function AllOrdersScreen() {
     quickBitesDateTime,
   ]);
 
-  // ✅ NEW: Human-friendly display date specifically for headers/cards.
+  // ✅ Human-friendly display date specifically for headers/cards.
+  //    For QuickBites it is ALWAYS "Today, <day> <month>".
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
@@ -1161,7 +1174,9 @@ export default function AllOrdersScreen() {
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today, 09:41 AM',
-    // ✅ For homemade: use the resolved persisted values. For mealbox/catering: keep original.
+    // ✅ For homemade QuickBites: always "Today, ..." (same-day).
+    //    For non-QuickBites homemade: use the persisted value.
+    //    For mealbox/catering: keep original behaviour.
     deliveryDate: isHomemadeFlow
       ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
       : (activeOrder?.deliveryDate || (isCateringFlow ? (activeOrder?.eventDate || '18 March') : 'Mon, 17 Jun 2024')),
@@ -1189,14 +1204,16 @@ export default function AllOrdersScreen() {
               : '1 Meal / Day  •  6 Meals / Week'),
       planType:
         isHomemadeFlow
-          ? 'Homemade Kitchen'
+          ? (isQuickBitesFlow ? '⚡ QuickBites' : 'Homemade Kitchen')
           : isCateringFlow
           ? `${activeOrder?.occasion || 'Catering'} Event`
           : activeOrder?.durationType || 'Meal Plan',
-      daysRange: isHomemadeFlow ? 'Today' : activeOrder?.deliveryDate || activeOrder?.eventDate || 'Mon to Fri',
+      daysRange: isHomemadeFlow ? (isQuickBitesFlow ? 'Same Day Delivery' : 'Today') : activeOrder?.deliveryDate || activeOrder?.eventDate || 'Mon to Fri',
       timingDetails:
         isHomemadeFlow
-          ? 'Fast Prep & Delivery • 30–45 min'
+          ? (isQuickBitesFlow
+              ? `Prepared & Delivered within ${quickBitesWindowMinutes} min`
+              : 'Fast Prep & Delivery • 30–45 min')
           : activeOrder?.deliveryTimeSlot || activeOrder?.eventTime || 'Lunch Only  •  1 Meal / Day',
       addonText:
         parsedAddons.length > 0
@@ -1252,7 +1269,8 @@ export default function AllOrdersScreen() {
     triggerSMS(CUSTOMER_SUPPORT_PHONE);
   };
 
-  // ✅ UPDATED: Prefers coordinates for exact pin placement, falls back to address.
+  // ✅ Prefers coordinates for exact pin placement, falls back to address.
+  //    Works for every flow — catering, mealbox, quickbite, homemade.
   const handleOpenMap = (
     addressOverride?: string,
     latOverride?: any,
@@ -1770,6 +1788,29 @@ export default function AllOrdersScreen() {
                 </View>
               )}
 
+              {/* ✅ QUICK BITES SAME-DAY BANNER (only for QuickBites flow) */}
+              {isQuickBitesFlow && isCurrentOrderAccepted && (
+                <View style={styles.quickBitesBannerCard}>
+                  <View style={styles.quickBitesBannerIconBox}>
+                    <Ionicons name="flash" size={18} color="#FFFFFF" />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.quickBitesBannerTitle}>⚡ QuickBites Order</Text>
+                    <Text style={styles.quickBitesBannerSubtitle}>
+                      Same-day delivery • Prepared & Delivered within {quickBitesWindowMinutes} min
+                    </Text>
+                  </View>
+                  {quickBitesDateTime && (
+                    <View style={styles.quickBitesRemainingBox}>
+                      <Text style={styles.quickBitesRemainingNumber}>
+                        {quickBitesDateTime.remainingMin}
+                      </Text>
+                      <Text style={styles.quickBitesRemainingUnit}>min left</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
               {/* ATTRACTIVE SIMPLE TIMER CARD */}
               {isCurrentOrderAccepted && (
                 <DeliverySlotCountdownWidget
@@ -2284,7 +2325,9 @@ export default function AllOrdersScreen() {
               </Text>
               <Text style={styles.previewSubtitle}>
                 {isHomemadeFlow
-                  ? 'All items cooked fresh for this order'
+                  ? (isQuickBitesFlow
+                      ? `⚡ QuickBites • Same-day delivery within ${quickBitesWindowMinutes} min`
+                      : 'All items cooked fresh for this order')
                   : isCateringFlow
                   ? 'Confirmed platter dishes & course selections'
                   : 'Customized meal plan details'}
@@ -2731,6 +2774,75 @@ const styles = StyleSheet.create({
     color: '#166348',
     fontWeight: '800',
   },
+
+  // ✅ NEW: QuickBites banner styles (chef green theme)
+  quickBitesBannerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 18,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: '#FDE68A',
+    shadowColor: '#F59E0B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  quickBitesBannerIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#F59E0B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#F59E0B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  quickBitesBannerTitle: {
+    fontSize: 13.5,
+    fontWeight: '900',
+    color: '#92400E',
+    letterSpacing: -0.2,
+  },
+  quickBitesBannerSubtitle: {
+    fontSize: 11.5,
+    color: '#B45309',
+    fontWeight: '600',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  quickBitesRemainingBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    minWidth: 58,
+  },
+  quickBitesRemainingNumber: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#B45309',
+    letterSpacing: -0.3,
+  },
+  quickBitesRemainingUnit: {
+    fontSize: 8.5,
+    fontWeight: '800',
+    color: '#92400E',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginTop: 1,
+  },
+
   chefStatusSelectorBox: {
     width: '100%',
     backgroundColor: '#F8FAFC',
@@ -3082,7 +3194,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     lineHeight: 16,
   },
-  // ✅ NEW: coordinate label style (green theme)
+  // ✅ coordinate label style (green theme)
   scheduleCoordText: {
     fontSize: 10.5,
     color: '#166348',
@@ -3090,7 +3202,7 @@ const styles = StyleSheet.create({
     marginTop: 3,
     letterSpacing: 0.2,
   },
-  // ✅ NEW: primary-address coordinate label style (green theme)
+  // ✅ primary-address coordinate label style (green theme)
   addressCoordText: {
     fontSize: 11,
     color: '#166348',
@@ -3478,7 +3590,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  /* ✅ NEW: Dynamic Delivery Date & Slot Strip (Chef Green Theme) */
+  /* ✅ Dynamic Delivery Date & Slot Strip (Chef Green Theme) */
   deliveryInfoStripContainer: {
     flexDirection: 'row',
     alignItems: 'center',
