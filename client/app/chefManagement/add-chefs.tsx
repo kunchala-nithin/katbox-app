@@ -12,6 +12,8 @@ import {
   StatusBar,
   Platform,
   Switch,
+  Modal,
+  Pressable,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -41,12 +43,37 @@ interface CouponItem {
   serviceType: CouponServiceType;
 }
 
-// ✅ Service-type options for the coupon form
-const SERVICE_TYPES: { label: string; value: CouponServiceType }[] = [
-  { label: "Catering", value: "catering" },
-  { label: "MealBox", value: "mealbox" },
-  { label: "Homemade", value: "homemade" },
-  { label: "Quick Bites", value: "quickbites" },
+// ✅ Service-type options for the dropdown
+const SERVICE_TYPES: {
+  label: string;
+  value: CouponServiceType;
+  icon: keyof typeof Ionicons.glyphMap;
+  hint: string;
+}[] = [
+  {
+    label: "Catering",
+    value: "catering",
+    icon: "restaurant-outline",
+    hint: "Platters, events, bulk orders",
+  },
+  {
+    label: "MealBox",
+    value: "mealbox",
+    icon: "fast-food-outline",
+    hint: "Weekly / monthly subscription plans",
+  },
+  {
+    label: "Homemade",
+    value: "homemade",
+    icon: "home-outline",
+    hint: "Fresh home-cooked chef orders",
+  },
+  {
+    label: "Quick Bites",
+    value: "quickbites",
+    icon: "flash-outline",
+    hint: "Snacks, fast bites, instant orders",
+  },
 ];
 
 const SERVICE_TYPE_LABEL: Record<CouponServiceType, string> = {
@@ -54,6 +81,13 @@ const SERVICE_TYPE_LABEL: Record<CouponServiceType, string> = {
   mealbox: "MealBox",
   homemade: "Homemade",
   quickbites: "Quick Bites",
+};
+
+const SERVICE_TYPE_ICON: Record<CouponServiceType, keyof typeof Ionicons.glyphMap> = {
+  catering: "restaurant-outline",
+  mealbox: "fast-food-outline",
+  homemade: "home-outline",
+  quickbites: "flash-outline",
 };
 
 const normalizeServiceType = (raw: any): CouponServiceType => {
@@ -99,6 +133,8 @@ const AddChefs = () => {
   const [couponDescription, setCouponDescription] = useState("");
   // ✅ NEW: service type for the coupon being created
   const [couponServiceType, setCouponServiceType] = useState<CouponServiceType>("catering");
+  // ✅ NEW: dropdown visibility
+  const [showServiceDropdown, setShowServiceDropdown] = useState(false);
 
   const safeGoBack = () => {
     if (router.canGoBack()) {
@@ -135,7 +171,6 @@ const AddChefs = () => {
                   type: cp.type || "percent",
                   value: String(cp.value || ""),
                   description: cp.description || "",
-                  // ✅ NEW: hydrate serviceType from server response
                   serviceType: normalizeServiceType(cp.serviceType),
                 }))
               );
@@ -258,8 +293,8 @@ const AddChefs = () => {
     setCouponType("percent");
     setCouponValue("");
     setCouponDescription("");
-    // ✅ reset service type back to default
     setCouponServiceType("catering");
+    setShowServiceDropdown(false);
     setShowCouponForm(false);
   };
 
@@ -294,7 +329,6 @@ const AddChefs = () => {
         description:
           couponDescription.trim() ||
           (couponType === "percent" ? `${value}% off` : `₹${value} off`),
-        // ✅ NEW: attach chosen service type
         serviceType: couponServiceType,
       },
     ]);
@@ -313,9 +347,6 @@ const AddChefs = () => {
     ]);
   };
 
-  // ============================================================
-  // SHARED FORMDATA BUILDER (used by submit + quick availability)
-  // ============================================================
   const buildChefFormData = () => {
     const formData = new FormData();
     formData.append("name", name);
@@ -328,7 +359,6 @@ const AddChefs = () => {
     formData.append("foodType", foodType);
     formData.append("fssaiNo", fssaiNo);
     formData.append("isAvailable", String(isAvailable));
-    // ✅ coupons now carry serviceType
     formData.append("coupons", JSON.stringify(coupons));
 
     if (removeAvatarOnSave && !avatar) {
@@ -523,7 +553,6 @@ const AddChefs = () => {
               type: cp.type || "percent",
               value: String(cp.value || ""),
               description: cp.description || "",
-              // ✅ re-hydrate serviceType from response
               serviceType: normalizeServiceType(cp.serviceType),
             }))
           );
@@ -575,6 +604,9 @@ const AddChefs = () => {
     if (!isEditable) return "Edit profile";
     return "Update profile";
   };
+
+  const currentServiceMeta =
+    SERVICE_TYPES.find((s) => s.value === couponServiceType) || SERVICE_TYPES[0];
 
   return (
     <View style={styles.root}>
@@ -966,46 +998,32 @@ const AddChefs = () => {
                   autoCapitalize="characters"
                 />
 
-                {/* ✅ NEW: SERVICE TYPE PICKER */}
+                {/* ✅ NEW: SERVICE TYPE DROPDOWN */}
                 <Text style={styles.fieldLabel}>Applicable service type</Text>
-                <View style={styles.serviceTypeGrid}>
-                  {SERVICE_TYPES.map((st) => {
-                    const isSelected = couponServiceType === st.value;
-                    return (
-                      <TouchableOpacity
-                        key={st.value}
-                        activeOpacity={0.85}
-                        style={[
-                          styles.serviceTypeButton,
-                          isSelected && styles.serviceTypeButtonSelected,
-                        ]}
-                        onPress={() => setCouponServiceType(st.value)}
-                      >
-                        <Ionicons
-                          name={
-                            st.value === "catering"
-                              ? "restaurant-outline"
-                              : st.value === "mealbox"
-                              ? "fast-food-outline"
-                              : st.value === "homemade"
-                              ? "home-outline"
-                              : "flash-outline"
-                          }
-                          size={13}
-                          color={isSelected ? "#FFFFFF" : "#166534"}
-                        />
-                        <Text
-                          style={[
-                            styles.serviceTypeButtonText,
-                            isSelected && styles.serviceTypeButtonTextSelected,
-                          ]}
-                        >
-                          {st.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                <TouchableOpacity
+                  style={styles.dropdownTrigger}
+                  activeOpacity={0.85}
+                  onPress={() => setShowServiceDropdown(true)}
+                >
+                  <View style={styles.dropdownTriggerLeft}>
+                    <View style={styles.dropdownIconCircle}>
+                      <Ionicons
+                        name={currentServiceMeta.icon}
+                        size={15}
+                        color="#166534"
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.dropdownTriggerValue}>
+                        {currentServiceMeta.label}
+                      </Text>
+                      <Text style={styles.dropdownTriggerHint} numberOfLines={1}>
+                        {currentServiceMeta.hint}
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-down" size={18} color="#166534" />
+                </TouchableOpacity>
 
                 <Text style={styles.fieldLabel}>Discount type</Text>
                 <View style={styles.foodTypeContainer}>
@@ -1110,13 +1128,18 @@ const AddChefs = () => {
                     <Text style={styles.couponValueText}>
                       {c.type === "percent" ? `${c.value}% OFF` : `₹${c.value} OFF`}
                     </Text>
-                    {/* ✅ NEW: service-type chip on the card */}
+
                     <View style={styles.couponServiceChip}>
-                      <Ionicons name="git-branch-outline" size={11} color="#166534" />
+                      <Ionicons
+                        name={SERVICE_TYPE_ICON[c.serviceType]}
+                        size={11}
+                        color="#166534"
+                      />
                       <Text style={styles.couponServiceChipText}>
                         {SERVICE_TYPE_LABEL[c.serviceType] || "Catering"}
                       </Text>
                     </View>
+
                     {!!c.description && (
                       <Text style={styles.couponDescText} numberOfLines={1}>
                         {c.description}
@@ -1168,6 +1191,82 @@ const AddChefs = () => {
           <View style={{ height: Platform.OS === "ios" ? 100 : 88 }} />
         </ScrollView>
       </View>
+
+      {/* ✅ SERVICE TYPE DROPDOWN MODAL */}
+      <Modal
+        visible={showServiceDropdown}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowServiceDropdown(false)}
+      >
+        <Pressable
+          style={styles.dropdownBackdrop}
+          onPress={() => setShowServiceDropdown(false)}
+        >
+          <Pressable style={styles.dropdownSheet} onPress={() => {}}>
+            <View style={styles.dropdownHandle} />
+            <Text style={styles.dropdownSheetTitle}>Select service type</Text>
+            <Text style={styles.dropdownSheetSubtitle}>
+              This coupon will only apply to orders of this service
+            </Text>
+
+            {SERVICE_TYPES.map((opt) => {
+              const isSelected = couponServiceType === opt.value;
+              return (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[
+                    styles.dropdownOption,
+                    isSelected && styles.dropdownOptionSelected,
+                  ]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setCouponServiceType(opt.value);
+                    setShowServiceDropdown(false);
+                  }}
+                >
+                  <View
+                    style={[
+                      styles.dropdownOptionIconCircle,
+                      isSelected && styles.dropdownOptionIconCircleSelected,
+                    ]}
+                  >
+                    <Ionicons
+                      name={opt.icon}
+                      size={16}
+                      color={isSelected ? "#FFFFFF" : "#166534"}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.dropdownOptionLabel,
+                        isSelected && styles.dropdownOptionLabelSelected,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                    <Text style={styles.dropdownOptionHint}>{opt.hint}</Text>
+                  </View>
+                  {isSelected ? (
+                    <Ionicons name="checkmark-circle" size={20} color="#166534" />
+                  ) : (
+                    <Ionicons name="ellipse-outline" size={20} color="#CBD5E1" />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+
+            <TouchableOpacity
+              style={styles.dropdownCancelBtn}
+              activeOpacity={0.85}
+              onPress={() => setShowServiceDropdown(false)}
+            >
+              <Text style={styles.dropdownCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 };
@@ -1509,38 +1608,143 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  // ✅ NEW: service-type grid inside coupon form
-  serviceTypeGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 16,
-  },
-  serviceTypeButton: {
+  // ✅ NEW: dropdown trigger (the button that opens the modal)
+  dropdownTrigger: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    justifyContent: "space-between",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1.5,
+    borderColor: "#BBF7D0",
+    borderRadius: 14,
     paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 12,
-    backgroundColor: "#F8FAFC",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
+    paddingVertical: 11,
+    marginBottom: 16,
   },
-  serviceTypeButtonSelected: {
-    backgroundColor: "#166534",
-    borderColor: "#166534",
+  dropdownTriggerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
   },
-  serviceTypeButtonText: {
-    fontSize: 12.5,
+  dropdownIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#DCFCE7",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  dropdownTriggerValue: {
+    fontSize: 14,
     fontWeight: "800",
-    color: "#166534",
+    color: "#0F172A",
   },
-  serviceTypeButtonTextSelected: {
-    color: "#FFFFFF",
+  dropdownTriggerHint: {
+    fontSize: 11,
+    color: "#64748B",
+    fontWeight: "500",
+    marginTop: 1,
   },
 
-  // ✅ NEW: service-type chip on coupon card
+  // ✅ NEW: dropdown modal styles
+  dropdownBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(11, 20, 15, 0.55)",
+    justifyContent: "flex-end",
+  },
+  dropdownSheet: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 28,
+    borderTopWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.08)",
+    shadowColor: "#0F382A",
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    elevation: 25,
+  },
+  dropdownHandle: {
+    width: 40,
+    height: 4.5,
+    backgroundColor: "#CBD5E1",
+    borderRadius: 3,
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+  dropdownSheetTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: "#0B261D",
+    letterSpacing: -0.3,
+  },
+  dropdownSheetSubtitle: {
+    fontSize: 12,
+    color: "#64748B",
+    fontWeight: "500",
+    marginTop: 3,
+    marginBottom: 14,
+    lineHeight: 17,
+  },
+  dropdownOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  dropdownOptionSelected: {
+    backgroundColor: "#F0FDF4",
+    borderColor: "#166534",
+  },
+  dropdownOptionIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#DCFCE7",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  dropdownOptionIconCircleSelected: {
+    backgroundColor: "#166534",
+  },
+  dropdownOptionLabel: {
+    fontSize: 14.5,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  dropdownOptionLabelSelected: {
+    color: "#166534",
+  },
+  dropdownOptionHint: {
+    fontSize: 11.5,
+    color: "#64748B",
+    fontWeight: "500",
+    marginTop: 2,
+  },
+  dropdownCancelBtn: {
+    marginTop: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: "#F1F5F9",
+  },
+  dropdownCancelText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#475569",
+  },
+
   couponServiceChip: {
     flexDirection: "row",
     alignItems: "center",
