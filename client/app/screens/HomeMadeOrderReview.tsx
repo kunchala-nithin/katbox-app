@@ -1,3 +1,4 @@
+// screens/HomeMadeOrderReview.tsx
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
@@ -154,6 +155,7 @@ const HomeMadeOrderReview = () => {
     return normalized === 'quickbites';
   }, [params.isQuickBites, params.category, pageTitle]);
 
+  // Live calculation of exact delivery time (Current Live Time + 75 minutes)
   const [quickBitesDeadline, setQuickBitesDeadline] = useState<Date | null>(null);
   useEffect(() => {
     if (isQuickBites) {
@@ -224,6 +226,7 @@ const HomeMadeOrderReview = () => {
     return match ? match.time : '';
   }, [selectedDeliverySlotId]);
 
+  // Live Current Date for QuickBites
   const quickBitesDateLabel = useMemo(() => {
     const now = new Date();
     return `Today, ${formatTodayShort(now)}`;
@@ -461,6 +464,7 @@ const HomeMadeOrderReview = () => {
 
       let finalDeliveryDate = effectiveDeliveryDateLabel;
       let finalDeliverySlot = effectiveDeliverySlotLabel;
+      let exactDeliveryMs = quickBitesDeadline ? quickBitesDeadline.getTime() : undefined;
 
       if (isQuickBites) {
         const orderTime = new Date();
@@ -469,6 +473,7 @@ const HomeMadeOrderReview = () => {
         );
         finalDeliveryDate = `Today, ${formatTodayShort(orderTime)}`;
         finalDeliverySlot = formatTimeShort(deadline);
+        exactDeliveryMs = deadline.getTime();
       }
 
       const payload = {
@@ -491,6 +496,9 @@ const HomeMadeOrderReview = () => {
         })),
         deliveryDate: finalDeliveryDate,
         deliverySlot: finalDeliverySlot,
+        estimatedDeliveryAtMs: exactDeliveryMs,
+        isQuickBites: isQuickBites ? 'true' : 'false',
+        deliveryWindowMinutes: QUICK_BITES_WINDOW_MINUTES,
         orderDetails: {
           contactPhone: contactPhoneNumber,
           alternatePhone: alternatePhoneNumber,
@@ -509,6 +517,7 @@ const HomeMadeOrderReview = () => {
           deliverySlot: finalDeliverySlot,
           deliveryTimeSlot: finalDeliverySlot,
           isQuickBites: isQuickBites ? 'true' : 'false',
+          estimatedDeliveryAtMs: exactDeliveryMs,
         },
       };
 
@@ -527,6 +536,7 @@ const HomeMadeOrderReview = () => {
             deliveryDate: finalDeliveryDate,
             deliverySlot: finalDeliverySlot,
             isQuickBites: isQuickBites ? 'true' : 'false',
+            estimatedDeliveryAtMs: exactDeliveryMs ? String(exactDeliveryMs) : '',
           },
         });
       } else {
@@ -802,6 +812,7 @@ const HomeMadeOrderReview = () => {
             </TouchableOpacity>
           </View>
 
+          {/* QuickBites: Shows current live date and exact delivery time based on live time (+75 mins), hiding manual pickers */}
           {isQuickBites ? (
             <View style={styles.deliveryDateSlotOuterContainer}>
               <View style={styles.sectionHeaderFlexContainer}>
@@ -824,7 +835,7 @@ const HomeMadeOrderReview = () => {
                   <View style={styles.quickBitesTimePill}>
                     <Feather name="clock" size={12} color="#166534" />
                     <Text style={styles.quickBitesTimeText}>
-                      Today by {formatTimeShort(quickBitesDeadline) || '—'}
+                      {quickBitesDateLabel} by {formatTimeShort(quickBitesDeadline) || '—'}
                     </Text>
                   </View>
                 </View>
@@ -2547,5 +2558,3 @@ const styles = StyleSheet.create({
     color: '#FAF8F5',
   },
 });
-
-export default HomeMadeOrderReview;
