@@ -1690,6 +1690,32 @@ export default function AdminAllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
+                {/* ✅ NEW: Dynamic Delivery Date & Slot Strip (Admin Blue Theme)
+                    — Mirrors the chef screen exactly, values come from the
+                    same orderData.deliveryDate / orderData.deliveryTimeSlot
+                    already computed dynamically from the order.ts document. */}
+                <View style={styles.deliveryInfoStripContainer}>
+                  <View style={styles.deliveryInfoCell}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.deliveryInfoLabel}>DELIVERY DATE</Text>
+                      <Text style={styles.deliveryInfoValue} numberOfLines={1}>
+                        {orderData.deliveryDate}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.deliveryInfoDivider} />
+
+                  <View style={styles.deliveryInfoCell}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.deliveryInfoLabel}>DELIVERY SLOT</Text>
+                      <Text style={styles.deliveryInfoValue} numberOfLines={1}>
+                        {orderData.deliveryTimeSlot}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
                 {hasAnyItemsToPreview && (
                   <View style={styles.centeredPreviewContainer}>
                     <TouchableOpacity
@@ -2471,6 +2497,43 @@ const styles = StyleSheet.create({
   simplePlanDaysText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
   simplePlanDetailsText: { fontSize: 12, color: '#64748B', fontWeight: '500', marginTop: 2 },
 
+  /* ✅ NEW: Dynamic Delivery Date & Slot Strip (Admin Blue Theme) */
+  deliveryInfoStripContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  deliveryInfoCell: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deliveryInfoLabel: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.4,
+    marginBottom: 1,
+  },
+  deliveryInfoValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.2,
+  },
+  deliveryInfoDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: 'rgba(37, 99, 235, 0.18)',
+    marginHorizontal: 10,
+  },
+
   centeredPreviewContainer: { alignItems: 'center', justifyContent: 'center', marginVertical: 6 },
   previewMenuCenteredCTA: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
   previewMenuCenteredCTAText: { fontSize: 12.5, fontWeight: '800', color: '#2563EB' },
@@ -2516,7 +2579,6 @@ const styles = StyleSheet.create({
 
   scheduleAddressRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, paddingHorizontal: 2, gap: 5 },
   scheduleAddressText: { flex: 1, fontSize: 12, color: '#475569', fontWeight: '500', lineHeight: 16 },
-  // ✅ NEW: coordinate label style (blue theme)
   scheduleCoordText: {
     fontSize: 10.5,
     color: '#2563EB',
@@ -2524,7 +2586,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
     letterSpacing: 0.2,
   },
-  // ✅ NEW: primary-address coordinate label style (blue theme)
   addressCoordText: {
     fontSize: 11,
     color: '#2563EB',

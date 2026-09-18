@@ -25,8 +25,6 @@ import { useNavigationStore } from "@/src/store/navigationStore";
 import { Ionicons } from "@expo/vector-icons";
 import CartScreenSkeleton from "@/src/components/skeletons/CartScreenSkeleton";
 
-// ✅ Skeleton loader (adjust the path below to match your project structure)
-
 // Guarded import implementation to prevent runtime crash stacks if module isn't loaded
 let AudioModule: any = null;
 try {
@@ -36,6 +34,19 @@ try {
 }
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+
+// ✅ Helper: map a serviceType string to a friendly label
+const SERVICE_TYPE_LABELS: Record<string, string> = {
+  catering: "Catering",
+  mealbox: "MealBox",
+  homemade: "Homemade",
+  quickbites: "Quick Bites",
+};
+
+const getServiceLabel = (raw: string) => {
+  const s = String(raw || "").toLowerCase().trim();
+  return SERVICE_TYPE_LABELS[s] || s.toUpperCase();
+};
 
 export default function CartScreen() {
   const params = useLocalSearchParams();
@@ -61,6 +72,15 @@ export default function CartScreen() {
   const [showHurray, setShowHurray] = useState(false);
   const celebrationMasterAnim = useRef(new Animated.Value(0)).current;
 
+  // ✅ NEW: "Katbox" not-applicable popup state
+  const [notApplicable, setNotApplicable] = useState<{
+    code: string;
+    couponServiceType: string;
+    cartServiceType: string;
+    message: string;
+  } | null>(null);
+  const notApplicableAnim = useRef(new Animated.Value(0)).current;
+
   // Track scroll changes for dynamic collapsing of price breakup
   const scrollY = useRef(new Animated.Value(0)).current;
 
@@ -76,6 +96,10 @@ export default function CartScreen() {
   const isHomemadeFlow = params.serviceType === "homemade" || cartData?.serviceType === "homemade";
   const isMealBoxFlow = params.serviceType === "mealbox" || cartData?.serviceType === "mealbox";
   const isFromHome = params.fromHome === "true";
+
+  // ✅ Canonical cart service type used for coupon validation
+  const derivedServiceType: "catering" | "mealbox" | "homemade" | "quickbites" =
+    isHomemadeFlow ? "homemade" : isMealBoxFlow ? "mealbox" : "catering";
 
   const HEADER_HEIGHT = insets.top + 60;
 
@@ -97,6 +121,32 @@ export default function CartScreen() {
       }
     };
   }, [soundInstance]);
+
+  // ✅ NEW: show the "not applicable" Katbox popup
+  const showNotApplicablePopup = (data: {
+    code: string;
+    couponServiceType: string;
+    cartServiceType: string;
+    message: string;
+  }) => {
+    setNotApplicable(data);
+    notApplicableAnim.setValue(0);
+    Animated.spring(notApplicableAnim, {
+      toValue: 1,
+      tension: 65,
+      friction: 9,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const hideNotApplicablePopup = () => {
+    Animated.timing(notApplicableAnim, {
+      toValue: 0,
+      duration: 220,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(() => setNotApplicable(null));
+  };
 
   // Load coupons strictly scoped to the active chef
   const loadCouponsForChef = async (targetChefIdOrName: string) => {
@@ -422,7 +472,6 @@ export default function CartScreen() {
         extraItems: cartData?.extraItems,
         couponCode: code,
         discount: computedDiscount,
-        // ✅ Preserve delivery date & slot for homemade on coupon sync
         deliveryDate: cartData?.deliveryDate || homemadeDeliveryDate || '',
         deliverySlot: cartData?.deliverySlot || homemadeDeliverySlot || '',
       });
@@ -483,7 +532,7 @@ export default function CartScreen() {
     });
   };
 
-  // Apply chef coupon specifically
+  // ✅ UPDATED: Apply chef coupon with service-type guard
   const applyCoupon = async (code: string) => {
     const targetChef =
       cartData?.chefId ||
@@ -497,11 +546,32 @@ export default function CartScreen() {
       return;
     }
 
+    // Client-side pre-check: if the coupon has a serviceType and it doesn't
+    // match the current cart flow, show the Katbox "not applicable" popup.
+    const matchedLocal = (coupons || []).find(
+      (c: any) => String(c.code || "").toUpperCase() === String(code || "").toUpperCase()
+    );
+    const localService = String(matchedLocal?.serviceType || "").toLowerCase().trim();
+
+    if (localService && localService !== derivedServiceType) {
+      showNotApplicablePopup({
+        code,
+        couponServiceType: localService,
+        cartServiceType: derivedServiceType,
+        message: `Coupon '${code.toUpperCase()}' is only applicable for ${getServiceLabel(
+          localService
+        )} orders. Your cart is a ${getServiceLabel(derivedServiceType)} order.`,
+      });
+      return;
+    }
+
     try {
       const res = await api.post("/api/chefs/coupons/apply", {
         code,
         cartTotal: subtotal,
         chefId: targetChef,
+        // ✅ NEW: send the cart's service type so the backend can enforce it too
+        serviceType: derivedServiceType,
       });
 
       if (res.data.success) {
@@ -510,14 +580,38 @@ export default function CartScreen() {
         setAppliedCoupon(res.data.code);
         triggerHurrayAnimation();
         await syncCouponStateWithBackend(res.data.code, computedDiscount);
+      } else if (res.data.notApplicable) {
+        // Server-side guard hit → show the same Katbox popup
+        showNotApplicablePopup({
+          code,
+          couponServiceType: res.data.couponServiceType || localService || "catering",
+          cartServiceType: res.data.cartServiceType || derivedServiceType,
+          message:
+            res.data.message ||
+            `Coupon '${code.toUpperCase()}' is not applicable for this cart.`,
+        });
       } else {
         Alert.alert("Coupon Notice", res.data.message || "Cannot apply this coupon.");
       }
     } catch (e: any) {
-      Alert.alert(
-        "Invalid Coupon",
-        e.response?.data?.message || "This coupon is not valid for this chef's kitchen."
-      );
+      const errData = e.response?.data;
+
+      if (errData?.notApplicable) {
+        // Server-side service-type mismatch → Katbox popup
+        showNotApplicablePopup({
+          code,
+          couponServiceType: errData.couponServiceType || localService || "catering",
+          cartServiceType: errData.cartServiceType || derivedServiceType,
+          message:
+            errData.message ||
+            `Coupon '${code.toUpperCase()}' is not applicable for this cart.`,
+        });
+      } else {
+        Alert.alert(
+          "Invalid Coupon",
+          errData?.message || "This coupon is not valid for this chef's kitchen."
+        );
+      }
     }
   };
 
@@ -591,9 +685,9 @@ export default function CartScreen() {
   const groupedPreviewDayItemsMap = getGroupedMealBoxItemsBySection(currentDaySelectionsArray);
 
   const handlePlaceOrderNavigation = () => {
-    const derivedServiceType = isHomemadeFlow ? "homemade" : isMealBoxFlow ? "mealbox" : "catering";
+    const derivedServiceTypeLocal = isHomemadeFlow ? "homemade" : isMealBoxFlow ? "mealbox" : "catering";
 
-    if (derivedServiceType === "catering") {
+    if (derivedServiceTypeLocal === "catering") {
       router.push({
         pathname: "/screens/CheckOutScreen",
         params: {
@@ -634,8 +728,6 @@ export default function CartScreen() {
       return;
     }
 
-    // ✅ Non-catering (homemade OR mealbox) — preserve original params EXACTLY for mealbox,
-    // and additionally forward deliveryDate/deliverySlot for homemade.
     router.push({
       pathname: "/screens/CheckOutScreen",
       params: {
@@ -656,15 +748,12 @@ export default function CartScreen() {
           (cartData?.items?.[0]?.image) ||
           "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400",
         durationType: menu?.durationType || (isHomemadeFlow ? "On Demand Prep" : "Flexible Days (2 Days Running)"),
-        // ✅ For homemade: prefer top-level cart fields; fall back to orderDetails for legacy
-        // For mealbox: keep the original behavior exactly as it was
         deliveryDate: isHomemadeFlow
           ? (homemadeDeliveryDate || orderDetails?.deliveryDate || "")
           : (orderDetails?.deliveryDate || "Today"),
         deliveryTimeSlot: isHomemadeFlow
           ? (homemadeDeliverySlot || orderDetails?.deliveryTimeSlot || "")
           : (orderDetails?.deliveryTimeSlot || "7:00 PM - 9:00 PM"),
-        // ✅ New top-level param, homemade only, so CheckoutScreen can read it directly
         deliverySlot: isHomemadeFlow
           ? (homemadeDeliverySlot || orderDetails?.deliverySlot || "")
           : "",
@@ -677,7 +766,7 @@ export default function CartScreen() {
           : undefined,
         selections: cartData?.selections ? JSON.stringify(cartData.selections) : undefined,
         items: cartData?.items ? JSON.stringify(cartData.items) : undefined,
-        serviceType: derivedServiceType,
+        serviceType: derivedServiceTypeLocal,
       },
     });
   };
@@ -689,9 +778,6 @@ export default function CartScreen() {
 
   /* -------------------------------------------------------------------------- */
   /*  SKELETON LOADING STATE                                                     */
-  /*  Rendered after ALL hooks to preserve the Rules of Hooks.                   */
-  /*  Provides a full-screen, shimmer-animated placeholder that mirrors the      */
-  /*  final cart layout (header, main card, coupon section, bottom bar).         */
   /* -------------------------------------------------------------------------- */
   if (isCartLoading) {
     return (
@@ -772,7 +858,6 @@ export default function CartScreen() {
                 👨‍🍳 Chef: {cartData?.chefName || "Homemade Chef"}
               </Text>
 
-              {/* ✅ HOMEMADE DELIVERY DATE & SLOT BLOCK (only renders when values exist) */}
               {(homemadeDeliveryDate || homemadeDeliverySlot) ? (
                 <View style={styles.homemadeDeliveryStripContainer}>
                   {!!homemadeDeliveryDate && (
@@ -1196,6 +1281,15 @@ export default function CartScreen() {
                       ? `Flat ₹${coupons[0].value} OFF order`
                       : `${coupons[0].value}% OFF up to ₹${coupons[0].maxDiscount || 500}`}
                   </Text>
+                  {/* ✅ NEW: service-type chip */}
+                  {!!coupons[0].serviceType && (
+                    <View style={styles.couponServiceTypeChipRow}>
+                      <Ionicons name="git-branch-outline" size={11} color="#0F382A" />
+                      <Text style={styles.couponServiceTypeChipText}>
+                        Valid for {getServiceLabel(coupons[0].serviceType)}
+                      </Text>
+                    </View>
+                  )}
                   <View style={styles.daawathPremiumMiniDivider} />
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Ionicons
@@ -1267,6 +1361,15 @@ export default function CartScreen() {
                             ? `Flat ₹${coupon.value} OFF order`
                             : `${coupon.value}% OFF up to ₹${coupon.maxDiscount || 500}`}
                         </Text>
+                        {/* ✅ NEW: service-type chip */}
+                        {!!coupon.serviceType && (
+                          <View style={styles.couponServiceTypeChipRow}>
+                            <Ionicons name="git-branch-outline" size={11} color="#0F382A" />
+                            <Text style={styles.couponServiceTypeChipText}>
+                              Valid for {getServiceLabel(coupon.serviceType)}
+                            </Text>
+                          </View>
+                        )}
                         <View style={styles.daawathPremiumMiniDivider} />
                         <View style={{ flexDirection: "row", alignItems: "center" }}>
                           <Ionicons
@@ -1772,6 +1875,93 @@ export default function CartScreen() {
         </Animated.View>
       </Modal>
 
+      {/* ✅ NEW: Katbox "Not Applicable" popup */}
+      <Modal
+        visible={!!notApplicable}
+        transparent
+        animationType="none"
+        onRequestClose={hideNotApplicablePopup}
+      >
+        <Animated.View style={[styles.modalOverlayAnimated, { opacity: notApplicableAnim }]}>
+          <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFillObject} />
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={hideNotApplicablePopup}
+          />
+          {notApplicable && (
+            <Animated.View
+              style={[
+                styles.katboxPopupCard,
+                {
+                  transform: [
+                    {
+                      scale: notApplicableAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.85, 1],
+                      }),
+                    },
+                  ],
+                  opacity: notApplicableAnim,
+                },
+              ]}
+            >
+              <View style={styles.katboxIconRing}>
+                <View style={styles.katboxIconInner}>
+                  <Ionicons name="alert-circle" size={34} color="#FFFFFF" />
+                </View>
+              </View>
+
+              <Text style={styles.katboxTitle}>Coupon Not Applicable</Text>
+              <Text style={styles.katboxSubtitle}>
+                This coupon belongs to a different service flow.
+              </Text>
+
+              <View style={styles.katboxCouponCodeBox}>
+                <Ionicons name="ticket-outline" size={16} color="#B45309" />
+                <Text style={styles.katboxCouponCode}>{notApplicable.code.toUpperCase()}</Text>
+              </View>
+
+              <View style={styles.katboxInfoGrid}>
+                <View style={styles.katboxInfoCell}>
+                  <Text style={styles.katboxInfoLabel}>Coupon applies to</Text>
+                  <View style={styles.katboxTagRow}>
+                    <Ionicons name="pricetag" size={11} color="#166534" />
+                    <Text style={styles.katboxInfoValue}>
+                      {getServiceLabel(notApplicable.couponServiceType)}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.katboxInfoSep} />
+
+                <View style={styles.katboxInfoCell}>
+                  <Text style={styles.katboxInfoLabel}>Your cart is</Text>
+                  <View style={styles.katboxTagRow}>
+                    <Ionicons name="basket" size={11} color="#166534" />
+                    <Text style={styles.katboxInfoValue}>
+                      {getServiceLabel(notApplicable.cartServiceType)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <Text style={styles.katboxMessage}>
+                {notApplicable.message}
+              </Text>
+
+              <TouchableOpacity
+                style={styles.katboxCta}
+                activeOpacity={0.88}
+                onPress={hideNotApplicablePopup}
+              >
+                <Text style={styles.katboxCtaText}>Got it</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+        </Animated.View>
+      </Modal>
+
       {showHurray && (
         <Animated.View style={[styles.hurrayOverlay, { opacity: overallOpacity }]}>
           <Animated.View
@@ -2106,7 +2296,6 @@ const styles = StyleSheet.create({
   itemTitle: { fontSize: 17, fontWeight: "800", color: "#0B261D", letterSpacing: -0.2 },
   restaurantName: { fontSize: 13, fontWeight: "700", color: "#5B756C", marginBottom: 4 },
 
-  /* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP */
   homemadeDeliveryStripContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -2654,6 +2843,27 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
+  // ✅ NEW: service-type chip inside coupon cards
+  couponServiceTypeChipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(22, 101, 52, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(22, 101, 52, 0.15)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  couponServiceTypeChipText: {
+    fontSize: 10.5,
+    fontWeight: "800",
+    color: "#0F382A",
+    letterSpacing: 0.2,
+  },
+
   daawathAppliedBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -2791,6 +3001,155 @@ const styles = StyleSheet.create({
   b2: { backgroundColor: "#107C41" },
   b3: { backgroundColor: "rgba(22, 101, 52, 0.3)" },
   b4: { backgroundColor: "#5B756C" },
+
+  // ✅ NEW: Katbox not-applicable popup styles
+  katboxPopupCard: {
+    position: "absolute",
+    alignSelf: "center",
+    top: "22%",
+    left: 20,
+    right: 20,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 26,
+    paddingHorizontal: 22,
+    paddingTop: 26,
+    paddingBottom: 22,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.10)",
+    shadowColor: "#0F382A",
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.28,
+    shadowRadius: 22,
+    elevation: 30,
+  },
+  katboxIconRing: {
+    padding: 5,
+    borderRadius: 50,
+    backgroundColor: "rgba(217, 119, 6, 0.10)",
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(217, 119, 6, 0.22)",
+  },
+  katboxIconInner: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#D97706",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#D97706",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  katboxTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#0B261D",
+    letterSpacing: -0.3,
+    marginBottom: 4,
+  },
+  katboxSubtitle: {
+    fontSize: 12.5,
+    color: "#5B756C",
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: 14,
+  },
+  katboxCouponCodeBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+    marginBottom: 14,
+  },
+  katboxCouponCode: {
+    fontSize: 14.5,
+    fontWeight: "900",
+    color: "#B45309",
+    letterSpacing: 0.8,
+  },
+  katboxInfoGrid: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAF5",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.08)",
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    width: "100%",
+    marginBottom: 12,
+  },
+  katboxInfoCell: {
+    flex: 1,
+    alignItems: "center",
+  },
+  katboxInfoSep: {
+    width: 1,
+    height: 34,
+    backgroundColor: "rgba(15, 56, 42, 0.12)",
+    marginHorizontal: 6,
+  },
+  katboxInfoLabel: {
+    fontSize: 9.5,
+    fontWeight: "800",
+    color: "#5B756C",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 5,
+  },
+  katboxTagRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(22, 101, 52, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(22, 101, 52, 0.15)",
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  katboxInfoValue: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#166534",
+  },
+  katboxMessage: {
+    fontSize: 12,
+    color: "#4F6B61",
+    fontWeight: "600",
+    textAlign: "center",
+    lineHeight: 17,
+    paddingHorizontal: 4,
+    marginBottom: 16,
+  },
+  katboxCta: {
+    width: "100%",
+    backgroundColor: "#166534",
+    paddingVertical: 13,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#166534",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  katboxCtaText: {
+    color: "#FAF8F5",
+    fontSize: 14.5,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
 
   pillTabsWrapperBlock: {
     flexDirection: "row",

@@ -43,6 +43,17 @@ const UPLOAD_PRESETS: Record<UploadKind, any> = {
   },
 };
 
+// ✅ Allowed coupon service types (lowercase canonical form)
+const COUPON_SERVICE_TYPES = ["catering", "mealbox", "homemade", "quickbites"] as const;
+type CouponServiceType = (typeof COUPON_SERVICE_TYPES)[number];
+
+const normalizeCouponServiceType = (raw: any): CouponServiceType => {
+  const s = String(raw || "").toLowerCase().trim();
+  return (COUPON_SERVICE_TYPES as readonly string[]).includes(s)
+    ? (s as CouponServiceType)
+    : "catering";
+};
+
 // ================= SHARED CLEANUP FUNCTION =================
 export const cleanupChefData = async (chefId: string, userId: string) => {
   try {
@@ -249,6 +260,8 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
             description: String(c.description || "").trim(),
             minOrder: Number(c.minOrder) || 0,
             maxDiscount: Number(c.maxDiscount) || 500,
+            // ✅ NEW: normalize service type (accepts "Catering", "CATERING", "catering" etc.)
+            serviceType: normalizeCouponServiceType(c.serviceType),
           }));
         }
       } catch (e) {
@@ -473,6 +486,8 @@ export const getChefCoupons = async (req: Request, res: Response) => {
       description: cp.description || (cp.type === "flat" ? `Flat ₹${cp.value} OFF` : `${cp.value}% OFF`),
       minOrder: Number(cp.minOrder) || 0,
       maxDiscount: Number(cp.maxDiscount) || 500,
+      // ✅ NEW: expose the service type (always lowercase, e.g. "catering")
+      serviceType: normalizeCouponServiceType(cp.serviceType),
     }));
 
     return res.json({
@@ -580,10 +595,10 @@ export const getChefReviews = async (req: Request, res: Response) => {
   }
 };
 
-// APPLY SPECIFIC CHEF'S COUPON STRICTLY
+// APPLY SPECIFIC CHEF'S COUPON STRICTLY (with service-type guard)
 export const applyChefCoupon = async (req: Request, res: Response) => {
   try {
-    const { code, cartTotal, chefId } = req.body;
+    const { code, cartTotal, chefId, serviceType } = req.body;
 
     if (!code || !chefId) {
       return res.status(400).json({ success: false, message: "Coupon code and Chef ID are required" });
@@ -608,6 +623,21 @@ export const applyChefCoupon = async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         message: `Coupon '${cleanCode}' is not valid for Chef ${chef.name}`,
+      });
+    }
+
+    // ✅ SERVICE-TYPE GUARD (case-insensitive)
+    const cartService = String(serviceType || "").toLowerCase().trim();
+    const couponService = normalizeCouponServiceType(matchedCoupon.serviceType);
+
+    if (cartService && couponService !== cartService) {
+      return res.status(400).json({
+        success: false,
+        notApplicable: true,
+        couponCode: cleanCode,
+        couponServiceType: couponService,   // e.g. "catering"
+        cartServiceType: cartService,       // e.g. "mealbox"
+        message: `Coupon '${cleanCode}' is only applicable for ${couponService.toUpperCase()} orders. Your cart is a ${cartService.toUpperCase()} order.`,
       });
     }
 
@@ -644,6 +674,7 @@ export const applyChefCoupon = async (req: Request, res: Response) => {
       discount,
       chefId: chef._id,
       chefName: chef.name,
+      serviceType: couponService,
     });
   } catch (error: any) {
     console.error("Apply chef coupon error:", error);

@@ -23,6 +23,8 @@ import { getToken } from "@/src/lib/authStorage";
 
 const { width } = Dimensions.get("window");
 
+type CouponServiceType = "catering" | "mealbox" | "homemade" | "quickbites";
+
 interface BannerItem {
   id: string;
   uri: string;
@@ -36,7 +38,31 @@ interface CouponItem {
   type: "percent" | "flat";
   value: string;
   description: string;
+  serviceType: CouponServiceType;
 }
+
+// ✅ Service-type options for the coupon form
+const SERVICE_TYPES: { label: string; value: CouponServiceType }[] = [
+  { label: "Catering", value: "catering" },
+  { label: "MealBox", value: "mealbox" },
+  { label: "Homemade", value: "homemade" },
+  { label: "Quick Bites", value: "quickbites" },
+];
+
+const SERVICE_TYPE_LABEL: Record<CouponServiceType, string> = {
+  catering: "Catering",
+  mealbox: "MealBox",
+  homemade: "Homemade",
+  quickbites: "Quick Bites",
+};
+
+const normalizeServiceType = (raw: any): CouponServiceType => {
+  const s = String(raw || "").toLowerCase().trim();
+  if (s === "mealbox" || s === "homemade" || s === "quickbites" || s === "catering") {
+    return s as CouponServiceType;
+  }
+  return "catering";
+};
 
 const AddChefs = () => {
   const router = useRouter();
@@ -71,6 +97,8 @@ const AddChefs = () => {
   const [couponType, setCouponType] = useState<"percent" | "flat">("percent");
   const [couponValue, setCouponValue] = useState("");
   const [couponDescription, setCouponDescription] = useState("");
+  // ✅ NEW: service type for the coupon being created
+  const [couponServiceType, setCouponServiceType] = useState<CouponServiceType>("catering");
 
   const safeGoBack = () => {
     if (router.canGoBack()) {
@@ -107,6 +135,8 @@ const AddChefs = () => {
                   type: cp.type || "percent",
                   value: String(cp.value || ""),
                   description: cp.description || "",
+                  // ✅ NEW: hydrate serviceType from server response
+                  serviceType: normalizeServiceType(cp.serviceType),
                 }))
               );
             } else {
@@ -181,17 +211,10 @@ const AddChefs = () => {
     });
     if (!result.canceled) {
       setAvatar(result.assets[0].uri);
-      // User picked a fresh avatar → they don't want to remove anymore.
       setRemoveAvatarOnSave(false);
     }
   };
 
-  /**
-   * NOTE: We intentionally do NOT destroy the Cloudinary image here.
-   * We only clear local state and set a flag. The backend will destroy the
-   * old Cloudinary asset on the next successful save — this keeps the DB and
-   * Cloudinary in sync even if the user cancels/navigates away.
-   */
   const removeAvatar = () => {
     if (!isEditable) return;
     setAvatar(null);
@@ -220,11 +243,6 @@ const AddChefs = () => {
     }
   };
 
-  /**
-   * NOTE: We only queue the cloudinaryId into deletedBannerIds.
-   * The backend destroys them on save. No direct Cloudinary call here,
-   * so cancelling the edit leaves both Cloudinary and DB untouched.
-   */
   const removeBanner = (id: string, cloudinaryId?: string) => {
     if (!isEditable) return;
     if (cloudinaryId) {
@@ -240,6 +258,8 @@ const AddChefs = () => {
     setCouponType("percent");
     setCouponValue("");
     setCouponDescription("");
+    // ✅ reset service type back to default
+    setCouponServiceType("catering");
     setShowCouponForm(false);
   };
 
@@ -274,6 +294,8 @@ const AddChefs = () => {
         description:
           couponDescription.trim() ||
           (couponType === "percent" ? `${value}% off` : `₹${value} off`),
+        // ✅ NEW: attach chosen service type
+        serviceType: couponServiceType,
       },
     ]);
     resetCouponForm();
@@ -306,15 +328,13 @@ const AddChefs = () => {
     formData.append("foodType", foodType);
     formData.append("fssaiNo", fssaiNo);
     formData.append("isAvailable", String(isAvailable));
+    // ✅ coupons now carry serviceType
     formData.append("coupons", JSON.stringify(coupons));
 
-    // Send removeAvatarOnSave flag so backend knows to wipe the old avatar
-    // when the user explicitly removed it without uploading a replacement.
     if (removeAvatarOnSave && !avatar) {
       formData.append("removeAvatarOnSave", "true");
     }
 
-    // Only attach the avatar if it's a freshly-picked local file
     if (avatar && (avatar.startsWith("file") || avatar.startsWith("ph:"))) {
       const avatarType = avatar.split(".").pop() || "jpg";
       formData.append("avatar", {
@@ -503,6 +523,8 @@ const AddChefs = () => {
               type: cp.type || "percent",
               value: String(cp.value || ""),
               description: cp.description || "",
+              // ✅ re-hydrate serviceType from response
+              serviceType: normalizeServiceType(cp.serviceType),
             }))
           );
         }
@@ -944,6 +966,47 @@ const AddChefs = () => {
                   autoCapitalize="characters"
                 />
 
+                {/* ✅ NEW: SERVICE TYPE PICKER */}
+                <Text style={styles.fieldLabel}>Applicable service type</Text>
+                <View style={styles.serviceTypeGrid}>
+                  {SERVICE_TYPES.map((st) => {
+                    const isSelected = couponServiceType === st.value;
+                    return (
+                      <TouchableOpacity
+                        key={st.value}
+                        activeOpacity={0.85}
+                        style={[
+                          styles.serviceTypeButton,
+                          isSelected && styles.serviceTypeButtonSelected,
+                        ]}
+                        onPress={() => setCouponServiceType(st.value)}
+                      >
+                        <Ionicons
+                          name={
+                            st.value === "catering"
+                              ? "restaurant-outline"
+                              : st.value === "mealbox"
+                              ? "fast-food-outline"
+                              : st.value === "homemade"
+                              ? "home-outline"
+                              : "flash-outline"
+                          }
+                          size={13}
+                          color={isSelected ? "#FFFFFF" : "#166534"}
+                        />
+                        <Text
+                          style={[
+                            styles.serviceTypeButtonText,
+                            isSelected && styles.serviceTypeButtonTextSelected,
+                          ]}
+                        >
+                          {st.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
                 <Text style={styles.fieldLabel}>Discount type</Text>
                 <View style={styles.foodTypeContainer}>
                   <TouchableOpacity
@@ -1047,6 +1110,13 @@ const AddChefs = () => {
                     <Text style={styles.couponValueText}>
                       {c.type === "percent" ? `${c.value}% OFF` : `₹${c.value} OFF`}
                     </Text>
+                    {/* ✅ NEW: service-type chip on the card */}
+                    <View style={styles.couponServiceChip}>
+                      <Ionicons name="git-branch-outline" size={11} color="#166534" />
+                      <Text style={styles.couponServiceChipText}>
+                        {SERVICE_TYPE_LABEL[c.serviceType] || "Catering"}
+                      </Text>
+                    </View>
                     {!!c.description && (
                       <Text style={styles.couponDescText} numberOfLines={1}>
                         {c.description}
@@ -1438,6 +1508,59 @@ const styles = StyleSheet.create({
     borderColor: "#E2E8F0",
     marginBottom: 12,
   },
+
+  // ✅ NEW: service-type grid inside coupon form
+  serviceTypeGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+  },
+  serviceTypeButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  serviceTypeButtonSelected: {
+    backgroundColor: "#166534",
+    borderColor: "#166534",
+  },
+  serviceTypeButtonText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#166534",
+  },
+  serviceTypeButtonTextSelected: {
+    color: "#FFFFFF",
+  },
+
+  // ✅ NEW: service-type chip on coupon card
+  couponServiceChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginTop: 6,
+  },
+  couponServiceChipText: {
+    fontSize: 10.5,
+    fontWeight: "800",
+    color: "#166534",
+    letterSpacing: 0.2,
+  },
+
   saveCouponBtn: {
     flexDirection: "row",
     alignItems: "center",

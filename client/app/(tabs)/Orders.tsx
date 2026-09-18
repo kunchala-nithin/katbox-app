@@ -17,6 +17,7 @@ import {
   TextInput,
   Share,
   RefreshControl,
+  Linking,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -34,6 +35,10 @@ import { socket } from "@/src/lib/socket";
 import { getUser } from "@/src/lib/authStorage";
 
 const BOTTOM_TAB_BAR_HEIGHT = 60;
+
+// ✅ Static customer support phone number used by the Support card.
+const SUPPORT_PHONE_NUMBER = "+919133450555";
+const SUPPORT_PHONE_DISPLAY = "+91-9133450555";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -103,20 +108,40 @@ const generateFutureDateOptions = () => {
   return dates;
 };
 
-// ─── COMPACT DELIVERY COUNTDOWN PILL WITH TICKING CLOCK ANIMATION ───
+const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
+  if (!order) return undefined;
+
+  if (order.estimatedDeliveryAt) {
+    const ms = new Date(order.estimatedDeliveryAt).getTime();
+    if (Number.isFinite(ms)) return order.estimatedDeliveryAt;
+  }
+
+  const sType = (order.serviceType || "").toLowerCase();
+  if (sType === "homemade" && order.createdAt) {
+    const windowMin = Number(order.deliveryWindowMinutes) || 55;
+    const createdMs = new Date(order.createdAt).getTime();
+    if (Number.isFinite(createdMs)) {
+      return new Date(createdMs + windowMin * 60 * 1000).toISOString();
+    }
+  }
+
+  return undefined;
+};
+
 function DeliverySlotCountdownWidget({
   deliveryDate,
   timeSlot,
   isDelivered,
   isHomemade = false,
+  estimatedDeliveryAt,
 }: {
   deliveryDate: string;
   timeSlot: string;
   isDelivered: boolean;
   isHomemade?: boolean;
+  estimatedDeliveryAt?: string;
 }) {
   const [secondsRemaining, setSecondsRemaining] = useState<number>(isHomemade ? 55 * 60 : 0);
-  const [isExtended, setIsExtended] = useState<boolean>(false);
 
   const tickAnim = useRef(new Animated.Value(0)).current;
   const tickLoopRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -152,9 +177,21 @@ function DeliverySlotCountdownWidget({
   });
 
   const calculateRemainingSeconds = useCallback(() => {
-    if (isHomemade) {
-      return 55 * 60; // Exactly 55 minutes for homemade food type
+    if (estimatedDeliveryAt) {
+      const targetMs = new Date(estimatedDeliveryAt).getTime();
+      if (Number.isFinite(targetMs)) {
+        const diffSecs = Math.floor((targetMs - Date.now()) / 1000);
+        if (diffSecs > 0) {
+          return diffSecs;
+        }
+        return 10 * 60;
+      }
     }
+
+    if (isHomemade) {
+      return 55 * 60;
+    }
+
     try {
       const now = new Date();
       let targetYear = now.getFullYear();
@@ -209,16 +246,14 @@ function DeliverySlotCountdownWidget({
       const diffSecs = Math.floor((targetDate.getTime() - now.getTime()) / 1000);
 
       if (diffSecs > 0) {
-        setIsExtended(false);
         return diffSecs;
       } else {
-        setIsExtended(true);
-        return 300;
+        return 10 * 60;
       }
     } catch {
       return 1800;
     }
-  }, [deliveryDate, timeSlot, isHomemade]);
+  }, [deliveryDate, timeSlot, isHomemade, estimatedDeliveryAt]);
 
   useEffect(() => {
     if (isDelivered) return;
@@ -231,8 +266,7 @@ function DeliverySlotCountdownWidget({
     const interval = setInterval(() => {
       setSecondsRemaining((prev) => {
         if (prev <= 1) {
-          setIsExtended(true);
-          return 300;
+          return 10 * 60;
         }
         return prev - 1;
       });
@@ -268,14 +302,12 @@ function DeliverySlotCountdownWidget({
         <Ionicons name="time-outline" size={13} color="#15803D" />
       </Animated.View>
       <Text style={styles.compactTimerText} numberOfLines={1}>
-        {isExtended ? "Extended • " : ""}
         Arriving in <Text style={styles.compactTimerBold}>{formatTimerDisplay(secondsRemaining)}</Text>
       </Text>
     </View>
   );
 }
 
-// ─── DYNAMIC STEPPER CARD ───
 function WhatsNextStepperCard({
   order,
   targetStatus,
@@ -496,7 +528,8 @@ export default function MyOrdersScreen() {
   const [isDetailScreenOpen, setIsDetailScreenOpen] = useState(false);
   const [isInvoiceScreenOpen, setIsInvoiceScreenOpen] = useState(false);
 
-  // FEEDBACK & RATING STATES (STAR RATING STARTS EMPTY = 0)
+  const [showSupportCard, setShowSupportCard] = useState(false);
+
   const [feedbackRatings, setFeedbackRatings] = useState<{ [orderId: string]: number }>({});
   const [feedbackComments, setFeedbackComments] = useState<{ [orderId: string]: string }>({});
   const [feedbackImages, setFeedbackImages] = useState<{ [orderId: string]: string[] }>({});
@@ -526,7 +559,20 @@ export default function MyOrdersScreen() {
 
   const availableDateOptions = useMemo(() => generateFutureDateOptions(), []);
 
-  // FEEDBACK IMAGE PICKER HANDLER
+  const handleCallSupport = () => {
+    const cleanNumber = SUPPORT_PHONE_NUMBER.replace(/[^0-9+]/g, "");
+    const url = `tel:${cleanNumber}`;
+    Linking.canOpenURL(url)
+      .then((supported) => {
+        if (supported) {
+          Linking.openURL(url);
+        } else {
+          Alert.alert("Dialer Error", `Cannot dial ${SUPPORT_PHONE_DISPLAY} from this device.`);
+        }
+      })
+      .catch((err) => Alert.alert("Error", err.message || "Unable to open dialer."));
+  };
+
   const handlePickFeedbackImages = async (orderId: string) => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -681,7 +727,6 @@ export default function MyOrdersScreen() {
     let isMounted = true;
     fetchMyOrders(isMounted);
 
-    // ⭐ JOIN USER ROOM ON SOCKET CONNECTION FOR REAL-TIME UPDATES
     getUser().then((user) => {
       const uId = user?.id || user?._id;
       if (socket && uId) {
@@ -769,7 +814,6 @@ export default function MyOrdersScreen() {
       });
     };
 
-    // ─── LISTENER FOR CASH COLLECTED / FEEDBACK PROMPT NOTIFICATIONS ───
     const handleCashCollectedPrompt = (data: any) => {
       Alert.alert(
         "Give Feedback",
@@ -841,7 +885,6 @@ export default function MyOrdersScreen() {
         paymentStatus === "cash collected" ||
         order.paymentCaptured === true;
 
-      // ⭐ Treat delivered / completed / cash-collected / paid orders as "Completed"
       const isCompletedState =
         status === "completed" ||
         status === "delivered" ||
@@ -1481,7 +1524,7 @@ export default function MyOrdersScreen() {
 
     const detailTimeSlot = matchedSchedule?.timeSlot
       || (isCatering ? (selectedOrderDetails.eventTime || selectedOrderDetails.deliveryTimeSlot || "08:30 PM")
-      : isHomemade ? (selectedOrderDetails.deliveryTimeSlot || "45-60 min")
+      : isHomemade ? (selectedOrderDetails.deliverySlot || selectedOrderDetails.deliveryTimeSlot || "45-60 min")
       : (selectedOrderDetails.deliveryTimeSlot || "7:00 PM - 9:00 PM"));
 
     const detailAddress = matchedSchedule?.address
@@ -1510,7 +1553,7 @@ export default function MyOrdersScreen() {
           <Text style={styles.detailsHeaderTitle}>
             {isCatering ? "Catering Event Details" : isHomemade ? "Homemade Order Details" : "Delivery Schedule Details"}
           </Text>
-          <TouchableOpacity style={styles.headerIconBtn}>
+          <TouchableOpacity style={styles.headerIconBtn} onPress={() => setShowSupportCard(true)}>
             <Ionicons name="headset-outline" size={22} color="#0F172A" />
           </TouchableOpacity>
         </View>
@@ -1573,6 +1616,7 @@ export default function MyOrdersScreen() {
             timeSlot={detailTimeSlot}
             isDelivered={isDeliveredCurrent}
             isHomemade={isHomemade}
+            estimatedDeliveryAt={resolveEffectiveDeliveryTime(selectedOrderDetails)}
           />
 
           {!isHomemade && (
@@ -1661,7 +1705,6 @@ export default function MyOrdersScreen() {
             </View>
           )}
 
-          {/* FEEDBACK & RATING UI CARD (STARS INITIALLY EMPTY, FILLS WITH KATBOX GREEN #2D4A22) */}
           {isDeliveredCurrent && (
             <View style={styles.feedbackCardContainer}>
               <View style={styles.feedbackHeaderRow}>
@@ -1702,7 +1745,7 @@ export default function MyOrdersScreen() {
                   <Text style={styles.feedbackInstructionText}>Rate your experience with Chef {detailChefName}:</Text>
                   <View style={styles.starPickerRow}>
                     {[1, 2, 3, 4, 5].map((starNum) => {
-                      const currentRating = feedbackRatings[detailOrderId] || 0; // Starts empty (0)
+                      const currentRating = feedbackRatings[detailOrderId] || 0;
                       const isFilled = starNum <= currentRating;
                       return (
                         <TouchableOpacity
@@ -1713,7 +1756,7 @@ export default function MyOrdersScreen() {
                           <Ionicons
                             name={isFilled ? "star" : "star-outline"}
                             size={28}
-                            color={isFilled ? "#2D4A22" : "#CBD5E1"} // Katbox Green when filled, empty gray when not
+                            color={isFilled ? "#2D4A22" : "#CBD5E1"}
                             style={{ marginHorizontal: 4 }}
                           />
                         </TouchableOpacity>
@@ -1895,6 +1938,65 @@ export default function MyOrdersScreen() {
             </Animated.View>
           </BlurView>
         </Modal>
+
+        <Modal
+          visible={showSupportCard}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowSupportCard(false)}
+        >
+          <View style={styles.supportCardOverlay}>
+            <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFillObject} />
+            <TouchableOpacity
+              style={StyleSheet.absoluteFillObject}
+              activeOpacity={1}
+              onPress={() => setShowSupportCard(false)}
+            />
+            <View style={styles.supportCardBox}>
+              <View style={styles.supportCardHeader}>
+                <View style={styles.supportCardIconCircle}>
+                  <Ionicons name="headset" size={24} color="#FFFFFF" />
+                </View>
+                <Text style={styles.supportCardTitle}>Customer Support</Text>
+                <Text style={styles.supportCardSub}>
+                  We are here to help you with your order
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.supportPhoneRow}
+                activeOpacity={0.85}
+                onPress={handleCallSupport}
+              >
+                <View style={styles.supportPhoneIconCircle}>
+                  <Ionicons name="call" size={18} color="#FFFFFF" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.supportPhoneNumber}>{SUPPORT_PHONE_DISPLAY}</Text>
+                  <Text style={styles.supportPhoneSub}>Tap to call our support team</Text>
+                </View>
+                <Feather name="chevron-right" size={20} color="#94A3B8" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.supportCallBtn}
+                activeOpacity={0.88}
+                onPress={handleCallSupport}
+              >
+                <Ionicons name="call-outline" size={17} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.supportCallBtnText}>Call Now</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.supportCancelBtn}
+                activeOpacity={0.8}
+                onPress={() => setShowSupportCard(false)}
+              >
+                <Text style={styles.supportCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -2010,7 +2112,6 @@ export default function MyOrdersScreen() {
               order.paymentCaptured === true;
             const dynamicChefName = order.chefName || order.restaurantName || "Partner Chef";
 
-            // ⭐ Normalized display status for the floating top-right pill
             const displayBadgeStatus = isDeliveredState
               ? (orderStatusString.toLowerCase() === "cash collected" ||
                  orderPaymentStatusString === "collected"
@@ -2020,13 +2121,44 @@ export default function MyOrdersScreen() {
                   : "Completed")
               : orderStatusString;
 
-            // ─── 1. HOMEMADE ITEMS ORDER CARD ───
             if (isHomemade) {
               const homemadeItems = Array.isArray(order.items) ? order.items : [];
               const firstDishImage = homemadeItems[0]?.image || order.menuImage || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400";
               const homemadeTotal = order.totalAmount || 0;
               const deliveryAddressString = order.deliveryAddress || order.addressDetails || "Doorstep Delivery";
               const isHomemadeStepperOpen = !!expandedSteppers[orderId];
+
+              const homemadeIsQuickBites =
+                order?.isQuickBites === true ||
+                String(order?.isQuickBites).toLowerCase() === "true" ||
+                !!order?.estimatedDeliveryAt;
+
+              let homemadeDateDisplay = order?.deliveryDate || "Today";
+              let homemadeSlotDisplay =
+                order?.deliverySlot ||
+                order?.deliveryTimeSlot ||
+                "within 45-60 min";
+
+              const homemadeEstimatedIso = resolveEffectiveDeliveryTime(order);
+              if (homemadeEstimatedIso) {
+                const d = new Date(homemadeEstimatedIso);
+                if (!isNaN(d.getTime())) {
+                  const dayNum = d.getDate();
+                  const monthShort = d.toLocaleDateString("en-US", { month: "short" });
+                  const timeStr = d.toLocaleTimeString("en-IN", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                    hour12: true,
+                  });
+                  if (homemadeIsQuickBites) {
+                    homemadeDateDisplay = `Today, ${dayNum} ${monthShort}`;
+                    homemadeSlotDisplay = `By ${timeStr}`;
+                  } else {
+                    if (!order?.deliveryDate) homemadeDateDisplay = `Today, ${dayNum} ${monthShort}`;
+                    if (!order?.deliverySlot && !order?.deliveryTimeSlot) homemadeSlotDisplay = timeStr;
+                  }
+                }
+              }
 
               return (
                 <View key={`homemade-order-${orderId || orderIndex}`}>
@@ -2041,7 +2173,7 @@ export default function MyOrdersScreen() {
                         </View>
 
                         <Text style={styles.nextDeliveryDateText}>
-                          Today • within 45-60 min
+                          {homemadeDateDisplay} <Text style={styles.bulletDot}>•</Text> {homemadeSlotDisplay}
                         </Text>
                         <Text style={styles.nextDeliveryMenuTitle}>
                           Chef: <Text style={{ color: "#166538", fontWeight: "800" }}>{dynamicChefName}</Text>
@@ -2062,13 +2194,13 @@ export default function MyOrdersScreen() {
                     </View>
 
                     <DeliverySlotCountdownWidget
-                      deliveryDate={order?.deliveryDate || "Today"}
-                      timeSlot={order?.deliveryTimeSlot || "45-60 min"}
+                      deliveryDate={homemadeDateDisplay || order?.deliveryDate || "Today"}
+                      timeSlot={homemadeSlotDisplay || order?.deliveryTimeSlot || "45-60 min"}
                       isDelivered={isDeliveredState}
                       isHomemade={true}
+                      estimatedDeliveryAt={homemadeEstimatedIso}
                     />
 
-                    {/* FEEDBACK WIDGET FOR HOMEMADE CARD (STARS INITIALLY EMPTY) */}
                     {isDeliveredState && (
                       <View style={styles.feedbackCardContainer}>
                         <View style={styles.feedbackHeaderRow}>
@@ -2259,7 +2391,6 @@ export default function MyOrdersScreen() {
               );
             }
 
-            // ─── 2. CATERING EVENT ORDER CARD ───
             if (isCatering) {
               const cateringOccasion = order.occasion || "Celebration";
               const cateringMenuName = order.menuName || "Royal Catering Platter";
@@ -2306,9 +2437,9 @@ export default function MyOrdersScreen() {
                       deliveryDate={cateringDate}
                       timeSlot={cateringTime}
                       isDelivered={isDeliveredState}
+                      estimatedDeliveryAt={resolveEffectiveDeliveryTime(order)}
                     />
 
-                    {/* FEEDBACK WIDGET FOR CATERING (STARS INITIALLY EMPTY) */}
                     {isDeliveredState && (
                       <View style={styles.feedbackCardContainer}>
                         <View style={styles.feedbackHeaderRow}>
@@ -2453,19 +2584,52 @@ export default function MyOrdersScreen() {
 
                         <View style={styles.deliveryInfoCol}>
                           <Text style={styles.deliveryMenuTitle}>{cateringMenuName}</Text>
-                          <Text style={styles.deliveryTimeText}>
-                            {cateringDate} • {cateringTime}
-                          </Text>
 
-                          <View style={styles.cardBadgesRowSimplified}>
-                            <Text style={styles.simplifiedBadgeText}>{cateringGuests} Guests</Text>
-                            <Text style={styles.simplifiedBadgeText}>Chef: {dynamicChefName}</Text>
+                          {/* 🔄 SWAPPED POSITION 1: Total Amount / Price Strip is now placed up top (reduced size/emphasis) */}
+                          <View style={styles.cateringPriceStrip}>
+                            <View style={styles.cateringPriceLabelCol}>
+                              <Text style={styles.cateringPriceLabelText}>Total Amount</Text>
+                              <Text style={styles.cateringPriceSubText}>{cateringDelivery} setup included</Text>
+                            </View>
+                            <Text style={styles.cateringPriceValueText}>₹{cateringTotal}</Text>
                           </View>
                         </View>
+                      </View>
 
-                        <View style={styles.deliveryCardPriceRight}>
-                          <Text style={styles.cateringPriceBigTotal}>₹{cateringTotal}</Text>
-                          <Text style={styles.cateringPriceTotalLabel}>{cateringDelivery} setup</Text>
+                      {/* 🔄 SWAPPED POSITION 2: Catering Details / Meta Card is now placed below, expanded for detailed information, and uses "Guests" text instead of an icon */}
+                      <View style={styles.cateringMetaCombinedCard}>
+                        <View style={styles.cateringMetaItem}>
+                          <Ionicons name="calendar-outline" size={13} color="#166538" />
+                          <Text style={styles.cateringMetaText} numberOfLines={1}>
+                            {cateringDate}
+                          </Text>
+                        </View>
+
+                        <View style={styles.cateringMetaDottedSep} />
+
+                        <View style={styles.cateringMetaItem}>
+                          <Ionicons name="time-outline" size={13} color="#166538" />
+                          <Text style={styles.cateringMetaText} numberOfLines={1}>
+                            {cateringTime}
+                          </Text>
+                        </View>
+
+                        <View style={styles.cateringMetaDottedSep} />
+
+                        <View style={styles.cateringMetaItem}>
+                          <Text style={styles.cateringMetaGuestTextLabel}>Guests:</Text>
+                          <Text style={styles.cateringMetaText} numberOfLines={1}>
+                            {cateringGuests}
+                          </Text>
+                        </View>
+
+                        <View style={styles.cateringMetaDottedSep} />
+
+                        <View style={styles.cateringMetaItem}>
+                          <Ionicons name="person-outline" size={13} color="#166538" />
+                          <Text style={styles.cateringMetaText} numberOfLines={1}>
+                            {dynamicChefName}
+                          </Text>
                         </View>
                       </View>
 
@@ -2515,7 +2679,6 @@ export default function MyOrdersScreen() {
               );
             }
 
-            // ─── 3. MEALBOX SUBSCRIPTION ORDER CARD ───
             const rawScheduledDates: string[] = Array.isArray(order.upcomingDeliveries) && order.upcomingDeliveries.length > 0
               ? order.upcomingDeliveries
               : [order.deliveryDate || "Mon, 17 Jun"];
@@ -2576,9 +2739,9 @@ export default function MyOrdersScreen() {
                     deliveryDate={currentSelectedDate}
                     timeSlot={timeSlot}
                     isDelivered={isDeliveredState}
+                    estimatedDeliveryAt={resolveEffectiveDeliveryTime(order)}
                   />
 
-                  {/* FEEDBACK WIDGET FOR MEALBOX IF DELIVERED (STARS INITIALLY EMPTY) */}
                   {isDeliveredState && (
                     <View style={styles.feedbackCardContainer}>
                       <View style={styles.feedbackHeaderRow}>
@@ -3371,6 +3534,81 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 6,
   },
+
+  cateringMetaCombinedCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 10,
+    rowGap: 6,
+  },
+  cateringMetaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 4,
+  },
+  cateringMetaText: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#334155",
+    letterSpacing: 0.1,
+  },
+  cateringMetaGuestTextLabel: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#166538",
+  },
+  cateringMetaDottedSep: {
+    width: 1,
+    height: 14,
+    borderStyle: "dotted",
+    borderLeftWidth: 1,
+    borderColor: "#94A3B8",
+    marginHorizontal: 4,
+  },
+
+  cateringPriceStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#F0FDF4",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#DCFCE7",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 4,
+  },
+  cateringPriceLabelCol: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  cateringPriceLabelText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#0F172A",
+    letterSpacing: 0.1,
+  },
+  cateringPriceSubText: {
+    fontSize: 9.5,
+    fontWeight: "500",
+    color: "#64748B",
+    marginTop: 1,
+  },
+  cateringPriceValueText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#166534",
+    letterSpacing: -0.3,
+  },
+
   deliveryCardPriceRight: {
     alignItems: "flex-end",
     marginLeft: 8,
@@ -3507,7 +3745,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 
-  /* FEEDBACK & RATING STYLES */
   feedbackCardContainer: {
     backgroundColor: "#F0FDF4",
     borderRadius: 18,
@@ -4719,6 +4956,122 @@ const styles = StyleSheet.create({
     fontSize: 14.5,
     fontWeight: "800",
   },
+
+  supportCardOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(11, 38, 29, 0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  supportCardBox: {
+    width: "100%",
+    maxWidth: 380,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: "#EAE8E3",
+    shadowColor: "#0F382A",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    elevation: 15,
+  },
+  supportCardHeader: {
+    alignItems: "center",
+    marginBottom: 18,
+  },
+  supportCardIconCircle: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: "#2D4A22",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+    shadowColor: "#2D4A22",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  supportCardTitle: {
+    fontSize: 19,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: -0.3,
+    marginBottom: 4,
+  },
+  supportCardSub: {
+    fontSize: 12.5,
+    color: "#64748B",
+    fontWeight: "500",
+    textAlign: "center",
+    paddingHorizontal: 10,
+  },
+  supportPhoneRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F2F7F2",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: "#DCFCE7",
+    marginBottom: 14,
+  },
+  supportPhoneIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#2D4A22",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  supportPhoneNumber: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: 0.3,
+  },
+  supportPhoneSub: {
+    fontSize: 11.5,
+    color: "#64748B",
+    fontWeight: "500",
+    marginTop: 2,
+  },
+  supportCallBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#2D4A22",
+    paddingVertical: 14,
+    borderRadius: 16,
+    shadowColor: "#2D4A22",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 5,
+    marginBottom: 10,
+  },
+  supportCallBtnText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  supportCancelBtn: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+  },
+  supportCancelBtnText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#64748B",
+  },
+
   previewModalContent: {
     width: "100%",
     backgroundColor: "#FBFBFA",

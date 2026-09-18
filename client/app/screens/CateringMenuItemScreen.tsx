@@ -76,6 +76,8 @@ export default function CateringMenuItemScreen() {
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [selections, setSelections] = useState<Record<number, Set<string>>>({});
   const [triggeredItemPrice, setTriggeredItemPrice] = useState(0);
+  // ✅ NEW: Track the exact item that triggered the limit modal so we can activate it immediately
+  const [triggeredItemId, setTriggeredItemId] = useState<string | null>(null);
   const [editingAddonId, setEditingAddonId] = useState<string | null>(null);
   const [showSkeleton, setShowSkeleton] = useState(false);
 
@@ -314,7 +316,10 @@ export default function CateringMenuItemScreen() {
     });
   };
 
-  const toggleAdded = (catIndex: number, itemId: string) => {
+  // ✅ UPDATED: Accepts an optional `forceAck` flag.
+  //    When true, the acknowledgment gate is bypassed so the item is added
+  //    immediately (used by the "Continue Adding" button in the limit modal).
+  const toggleAdded = (catIndex: number, itemId: string, forceAck: boolean = false) => {
     const scaleAnim = getItemScaleAnim(itemId);
     Animated.sequence([
       Animated.timing(scaleAnim, { toValue: 0.85, duration: 90, useNativeDriver: true }),
@@ -329,10 +334,13 @@ export default function CateringMenuItemScreen() {
     const items = cat.items || [];
 
     if (!currentSet.has(itemId) && currentSet.size >= max) {
-      if (!limitAcknowledged[catIndex]) {
+      const isAcked = forceAck || !!limitAcknowledged[catIndex];
+      if (!isAcked) {
         const item = items.find((p: any, i: number) => (p.id || i.toString()) === itemId);
         const itemPrice = safeParsePrice(item?.price || extraPrice);
         setTriggeredItemPrice(itemPrice);
+        // ✅ Store the exact item that needs to be activated on Continue
+        setTriggeredItemId(itemId);
         setSelectedCategoryIndex(catIndex);
         setShowLimitModal(true);
         return;
@@ -378,6 +386,13 @@ export default function CateringMenuItemScreen() {
       }
       return { ...prev, [catIndex]: newSet };
     });
+  };
+
+  // ✅ NEW: Centralised dismiss handler that also clears the trigger state.
+  const dismissLimitModal = () => {
+    setShowLimitModal(false);
+    setTriggeredItemPrice(0);
+    setTriggeredItemId(null);
   };
 
   const handleAddonClick = (itemId: string, action: 'inc' | 'dec', price: number) => {
@@ -927,11 +942,11 @@ export default function CateringMenuItemScreen() {
         visible={showLimitModal}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowLimitModal(false)}
+        onRequestClose={dismissLimitModal}
       >
         <View style={styles.modalRootOverlay}>
           <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFillObject} />
-          <TouchableWithoutFeedback onPress={() => setShowLimitModal(false)}>
+          <TouchableWithoutFeedback onPress={dismissLimitModal}>
             <View style={styles.modalCenteredContainer}>
               <TouchableWithoutFeedback>
                 <View style={styles.modalContent}>
@@ -949,9 +964,18 @@ export default function CateringMenuItemScreen() {
                     style={styles.modalButton}
                     activeOpacity={0.85}
                     onPress={() => {
+                      // ✅ 1. Close modal & acknowledge the category
                       setShowLimitModal(false);
                       setLimitAcknowledged((prev) => ({ ...prev, [selectedCategoryIndex]: true }));
+
+                      // ✅ 2. Immediately activate the triggered item as an extra
+                      if (triggeredItemId) {
+                        toggleAdded(selectedCategoryIndex, triggeredItemId, true);
+                      }
+
+                      // ✅ 3. Reset trigger state
                       setTriggeredItemPrice(0);
+                      setTriggeredItemId(null);
                     }}
                   >
                     <Text style={styles.modalButtonText}>Continue Adding</Text>

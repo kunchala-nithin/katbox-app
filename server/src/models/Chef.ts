@@ -6,6 +6,8 @@ export interface IBannerImage {
   cloudinaryId: string;
 }
 
+export type CouponServiceType = "catering" | "mealbox" | "homemade" | "quickbites";
+
 export interface ICouponItem {
   _id?: string;
   code: string;
@@ -14,6 +16,7 @@ export interface ICouponItem {
   description: string;
   minOrder?: number;
   maxDiscount?: number;
+  serviceType: CouponServiceType;
 }
 
 export interface IReviewItem {
@@ -80,6 +83,14 @@ const couponItemSchema = new Schema<ICouponItem>(
     description: { type: String, default: "", trim: true },
     minOrder: { type: Number, default: 0 },
     maxDiscount: { type: Number, default: 500 },
+    // ✅ NEW: which service flow this coupon applies to
+    serviceType: {
+      type: String,
+      enum: ["catering", "mealbox", "homemade", "quickbites"],
+      default: "catering",
+      lowercase: true,
+      trim: true,
+    },
   },
   { _id: true, timestamps: true }
 );
