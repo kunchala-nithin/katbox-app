@@ -25,9 +25,6 @@ import { useNavigationStore } from "@/src/store/navigationStore";
 import { Ionicons } from "@expo/vector-icons";
 import CartScreenSkeleton from "@/src/components/skeletons/CartScreenSkeleton";
 
-// ✅ Skeleton loader (adjust the path below to match your project structure)
-
-// Guarded import implementation to prevent runtime crash stacks if module isn't loaded
 let AudioModule: any = null;
 try {
   AudioModule = require("expo-av").Audio;
@@ -50,21 +47,16 @@ export default function CartScreen() {
   const [coupons, setCoupons] = useState<any[]>([]);
   const [soundInstance, setSoundInstance] = useState<any>(null);
 
-  // Active state tab parameter for managing selections preview layout
   const [previewActiveDay, setPreviewActiveDay] = useState<string>("");
 
-  // Dynamic inline coupon expansion state variables
   const [expandedCoupons, setExpandedCoupons] = useState(false);
   const inlineCouponExpandAnim = useRef(new Animated.Value(0)).current;
 
-  // Smooth Interpolated Hardware Animation States for the Daawath Success Pop-up
   const [showHurray, setShowHurray] = useState(false);
   const celebrationMasterAnim = useRef(new Animated.Value(0)).current;
 
-  // Track scroll changes for dynamic collapsing of price breakup
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  // Track the scroll movement direction to conditionally collapse/expand the breakup box
   const diffClamp = Animated.diffClamp(scrollY, 0, 120);
   const breakupHeight = diffClamp.interpolate({
     inputRange: [0, 120],
@@ -72,14 +64,12 @@ export default function CartScreen() {
     extrapolate: "clamp",
   });
 
-  // CHECK IF CURRENT SERVICE FLOW CONTEXT IS HOMEMADE OR MEALBOX
   const isHomemadeFlow = params.serviceType === "homemade" || cartData?.serviceType === "homemade";
   const isMealBoxFlow = params.serviceType === "mealbox" || cartData?.serviceType === "mealbox";
   const isFromHome = params.fromHome === "true";
 
   const HEADER_HEIGHT = insets.top + 60;
 
-  // Animation values for modal sheets
   const sheetAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const previewBackdropAnim = useRef(new Animated.Value(0)).current;
 
@@ -87,7 +77,6 @@ export default function CartScreen() {
   const priceBackdropAnim = useRef(new Animated.Value(0)).current;
   const viewDetailsChevronAnim = useRef(new Animated.Value(0)).current;
 
-  // Zustand Navigation Context
   const { currentContext, clearNavigationContext } = useNavigationStore();
 
   useEffect(() => {
@@ -98,7 +87,6 @@ export default function CartScreen() {
     };
   }, [soundInstance]);
 
-  // Load coupons strictly scoped to the active chef
   const loadCouponsForChef = async (targetChefIdOrName: string) => {
     if (!targetChefIdOrName) {
       setCoupons([]);
@@ -127,7 +115,6 @@ export default function CartScreen() {
         setCartData(activeCart);
         setCartHasItem(true);
 
-        // Dynamically extract and query this specific chef's coupons
         const resolvedChefIdentifier =
           activeCart.chefId ||
           activeCart.restaurant?._id ||
@@ -214,7 +201,6 @@ export default function CartScreen() {
     return [];
   }, [orderDetails]);
 
-  // ✅ HOMEMADE ONLY: resolve the persisted delivery date & slot for display + downstream params
   const homemadeDeliveryDate: string = React.useMemo(() => {
     return String(
       cartData?.deliveryDate ||
@@ -422,7 +408,6 @@ export default function CartScreen() {
         extraItems: cartData?.extraItems,
         couponCode: code,
         discount: computedDiscount,
-        // ✅ Preserve delivery date & slot for homemade on coupon sync
         deliveryDate: cartData?.deliveryDate || homemadeDeliveryDate || '',
         deliverySlot: cartData?.deliverySlot || homemadeDeliverySlot || '',
       });
@@ -483,7 +468,6 @@ export default function CartScreen() {
     });
   };
 
-  // Apply chef coupon specifically
   const applyCoupon = async (code: string) => {
     const targetChef =
       cartData?.chefId ||
@@ -634,8 +618,6 @@ export default function CartScreen() {
       return;
     }
 
-    // ✅ Non-catering (homemade OR mealbox) — preserve original params EXACTLY for mealbox,
-    // and additionally forward deliveryDate/deliverySlot for homemade.
     router.push({
       pathname: "/screens/CheckOutScreen",
       params: {
@@ -656,15 +638,12 @@ export default function CartScreen() {
           (cartData?.items?.[0]?.image) ||
           "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400",
         durationType: menu?.durationType || (isHomemadeFlow ? "On Demand Prep" : "Flexible Days (2 Days Running)"),
-        // ✅ For homemade: prefer top-level cart fields; fall back to orderDetails for legacy
-        // For mealbox: keep the original behavior exactly as it was
         deliveryDate: isHomemadeFlow
           ? (homemadeDeliveryDate || orderDetails?.deliveryDate || "")
           : (orderDetails?.deliveryDate || "Today"),
         deliveryTimeSlot: isHomemadeFlow
           ? (homemadeDeliverySlot || orderDetails?.deliveryTimeSlot || "")
           : (orderDetails?.deliveryTimeSlot || "7:00 PM - 9:00 PM"),
-        // ✅ New top-level param, homemade only, so CheckoutScreen can read it directly
         deliverySlot: isHomemadeFlow
           ? (homemadeDeliverySlot || orderDetails?.deliverySlot || "")
           : "",
@@ -678,6 +657,7 @@ export default function CartScreen() {
         selections: cartData?.selections ? JSON.stringify(cartData.selections) : undefined,
         items: cartData?.items ? JSON.stringify(cartData.items) : undefined,
         serviceType: derivedServiceType,
+        isQuickBites: orderDetails?.isQuickBites || params.isQuickBites || "false",
       },
     });
   };
@@ -687,12 +667,6 @@ export default function CartScreen() {
     outputRange: ["0deg", "180deg"],
   });
 
-  /* -------------------------------------------------------------------------- */
-  /*  SKELETON LOADING STATE                                                     */
-  /*  Rendered after ALL hooks to preserve the Rules of Hooks.                   */
-  /*  Provides a full-screen, shimmer-animated placeholder that mirrors the      */
-  /*  final cart layout (header, main card, coupon section, bottom bar).         */
-  /* -------------------------------------------------------------------------- */
   if (isCartLoading) {
     return (
       <CartScreenSkeleton
@@ -772,7 +746,6 @@ export default function CartScreen() {
                 👨‍🍳 Chef: {cartData?.chefName || "Homemade Chef"}
               </Text>
 
-              {/* ✅ HOMEMADE DELIVERY DATE & SLOT BLOCK (only renders when values exist) */}
               {(homemadeDeliveryDate || homemadeDeliverySlot) ? (
                 <View style={styles.homemadeDeliveryStripContainer}>
                   {!!homemadeDeliveryDate && (
@@ -1124,7 +1097,6 @@ export default function CartScreen() {
           </View>
         )}
 
-        {/* Dynamic Chef Coupons Section */}
         <View style={styles.premiumSectionCard}>
           <View style={styles.premiumSectionHeaderContainer}>
             <View style={styles.premiumHeaderTitleRow}>
@@ -1333,7 +1305,6 @@ export default function CartScreen() {
         <View style={{ height: 160 }} />
       </ScrollView>
 
-      {/* Bottom Summary Bar */}
       <View style={styles.bottomContainer}>
         {cartHasItem && (
           <View style={styles.bottomBarRow}>
@@ -1369,7 +1340,6 @@ export default function CartScreen() {
         )}
       </View>
 
-      {/* Price Modal Sheet */}
       <Modal
         visible={showPriceModal}
         transparent
@@ -1511,7 +1481,6 @@ export default function CartScreen() {
         </Animated.View>
       </Modal>
 
-      {/* Preview Modal */}
       <Modal
         visible={showPreviewModal}
         transparent
@@ -2094,7 +2063,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 0.2,
   },
-
   removeFromCartBtn: {
     position: "absolute",
     top: 16,
@@ -2105,8 +2073,6 @@ const styles = StyleSheet.create({
   itemImage: { width: 80, height: 100, borderRadius: 16, backgroundColor: "#E5ECE8" },
   itemTitle: { fontSize: 17, fontWeight: "800", color: "#0B261D", letterSpacing: -0.2 },
   restaurantName: { fontSize: 13, fontWeight: "700", color: "#5B756C", marginBottom: 4 },
-
-  /* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP */
   homemadeDeliveryStripContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -2150,7 +2116,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(22, 101, 52, 0.15)",
     marginHorizontal: 10,
   },
-
   upcomingDeliveriesContainer: {
     marginTop: 16,
     paddingTop: 14,
@@ -2188,12 +2153,10 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0F382A",
   },
-
   divider: { height: 1, backgroundColor: "rgba(15, 56, 42, 0.08)", marginVertical: 16 },
   priceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   priceLabel: { color: "#5B756C", fontSize: 13.5, fontWeight: "600" },
   priceValue: { fontSize: 20, fontWeight: "900", color: "#0B261D", letterSpacing: -0.4 },
-
   emptyStateContainer: {
     marginHorizontal: 20,
     backgroundColor: "#FFFFFF",
@@ -2250,7 +2213,6 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   goHomeText: { color: "#FAF8F5", fontSize: 14.5, fontWeight: "800", letterSpacing: 0.2 },
-
   breakupRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   breakupLabel: { fontSize: 13.5, color: "#4F6B61", fontWeight: "600" },
   breakupValue: { fontSize: 14.5, fontWeight: "800", color: "#0B261D" },
@@ -2283,7 +2245,6 @@ const styles = StyleSheet.create({
   },
   totalText: { fontSize: 15, fontWeight: "900", color: "#0B261D" },
   totalAmount: { fontSize: 22, fontWeight: "900", color: "#0F382A", letterSpacing: -0.4 },
-
   bottomContainer: {
     position: "absolute",
     bottom: 0,
@@ -2338,7 +2299,6 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   placeOrderText: { color: "#FAF8F5", fontWeight: "800", fontSize: 15.5, letterSpacing: 0.2 },
-
   modalOverlayAnimated: {
     flex: 1,
     backgroundColor: "rgba(11, 38, 29, 0.45)",
@@ -2431,7 +2391,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.2,
   },
-
   drawerHandle: {
     width: 40,
     height: 4.5,
@@ -2498,7 +2457,6 @@ const styles = StyleSheet.create({
   previewCategoryTitle: { fontSize: 14.5, fontWeight: "800", color: "#0B261D", letterSpacing: -0.2 },
   previewItemImage: { width: 40, height: 40, borderRadius: 10, marginRight: 12, backgroundColor: "#E5ECE8" },
   previewItemName: { fontSize: 13.5, fontWeight: "700", color: "#0B261D", flex: 1 },
-
   extraSectionTitle: {
     fontSize: 12,
     fontWeight: "800",
@@ -2517,7 +2475,6 @@ const styles = StyleSheet.create({
     borderColor: "rgba(22, 101, 52, 0.15)",
   },
   extraTagText: { fontSize: 10.5, fontWeight: "800", color: "#0F382A" },
-
   premiumSectionCard: {
     backgroundColor: "#FFFFFF",
     marginHorizontal: 20,
@@ -2586,7 +2543,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   daawathPremiumCouponCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 18,
@@ -2653,7 +2609,6 @@ const styles = StyleSheet.create({
     color: "#5B756C",
     fontWeight: "600",
   },
-
   daawathAppliedBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -2704,7 +2659,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     fontSize: 11.5,
   },
-
   hurrayOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(11, 38, 29, 0.55)",
@@ -2791,7 +2745,6 @@ const styles = StyleSheet.create({
   b2: { backgroundColor: "#107C41" },
   b3: { backgroundColor: "rgba(22, 101, 52, 0.3)" },
   b4: { backgroundColor: "#5B756C" },
-
   pillTabsWrapperBlock: {
     flexDirection: "row",
     justifyContent: "space-between",

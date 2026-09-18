@@ -22,12 +22,10 @@ import ChefInfoSkeleton from "@/src/components/skeletons/ChefInfoSkeleton";
 
 const { width } = Dimensions.get("window");
 
-// Scroll thresholds for staged premium animation
 const HERO_HEIGHT = 320;
 const HEADER_START = 130;
 const HEADER_END = 200;
 
-// ─── KATBOX REFINED PALETTE (Elite Boutique Standard) ───
 const KATBOX = {
   bg: "#F9F6F0",
   card: "#FFFFFF",
@@ -51,7 +49,6 @@ const KATBOX = {
   shadow: "#111827",
 };
 
-// ─── HELPER: format a review date into a friendly string ───
 const formatReviewDate = (value: any): string => {
   if (!value) return "";
   try {
@@ -67,7 +64,6 @@ const formatReviewDate = (value: any): string => {
   }
 };
 
-// Reusable Auto-Scrolling Hero Banner Carousel with Smooth Pagination
 const ChefHeaderBannerCarousel = ({
   banners,
   fallbackImage,
@@ -166,20 +162,14 @@ export default function ChefInfoScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
 
-  // Category & Menu States
   const [chefCategories, setChefCategories] = useState<any[]>([]);
   const [chefMenus, setChefMenus] = useState<any[]>([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [dynamicBanners, setDynamicBanners] = useState<any[]>([]);
   const [hasAutoNavigated, setHasAutoNavigated] = useState(false);
-
-  // Dynamic chef profile state
   const [chefProfile, setChefProfile] = useState<any>(null);
-
-  // ─── SKELETON STATE (200 ms delay threshold) ─────────────────────────
   const [showSkeleton, setShowSkeleton] = useState(false);
 
-  // ─── REVIEWS STATE ────────────────────────────────────────────────────
   const [showReviewsModal, setShowReviewsModal] = useState(false);
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [chefReviews, setChefReviews] = useState<any[]>([]);
@@ -193,7 +183,6 @@ export default function ChefInfoScreen() {
     breakdown: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
   });
 
-  // Animated scroll tracker
   const scrollY = useRef(new Animated.Value(0)).current;
 
   const {
@@ -245,10 +234,6 @@ export default function ChefInfoScreen() {
     }
   }, [effectiveChefId, filterMealBox, filterFoodAndCravings, fromCategory]);
 
-  // ─── 200 ms skeleton delay threshold ──────────────────────────────────
-  // Only show the skeleton if the initial load exceeds 200 ms. This avoids
-  // a flash of skeleton on fast responses while still providing a graceful
-  // loading state on slow networks. Skeleton only applies to the first load.
   useEffect(() => {
     const isLoading = categoriesLoading && chefCategories.length === 0 && !isMealBoxFlow;
     if (!isLoading) {
@@ -308,7 +293,6 @@ export default function ChefInfoScreen() {
     }
   };
 
-  // ─── FETCH CHEF REVIEWS ───────────────────────────────────────────────
   const fetchChefReviews = async () => {
     if (!effectiveChefId) return;
     setReviewsLoading(true);
@@ -357,8 +341,6 @@ export default function ChefInfoScreen() {
     }
   }, [isMealBoxFlow, chefCategories, categoriesLoading, hasAutoNavigated, effectiveChefId]);
 
-  // ─── ANIMATION INTERPOLATIONS ───────────────────────────────────────────────
-
   const stickyHeaderOpacity = scrollY.interpolate({
     inputRange: [HEADER_START, HEADER_END],
     outputRange: [0, 1],
@@ -405,23 +387,19 @@ export default function ChefInfoScreen() {
     (coverImage as string) ||
     "https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=800";
 
-  // ─── RESOLVED VALUES & DYNAMIC STARTING PRICE COMPUTATION ────────────────────
   const resolvedName = effectiveChefName || chefProfile?.name || "Master Chef";
   const resolvedAvatar = (avatar as string) || chefProfile?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200";
 
-  // ⭐ Rating now prefers LIVE averageRating from backend (comes via getChefReviews)
   const resolvedRating = useMemo(() => {
     const live = reviewsSummary?.averageRating;
     if (live && Number.isFinite(Number(live)) && Number(live) > 0) {
       return Number(live).toFixed(1);
     }
-
     const profileAvg = chefProfile?.averageRating;
     if (profileAvg !== undefined && profileAvg !== null && profileAvg !== "") {
       const n = Number(profileAvg);
       if (Number.isFinite(n) && n > 0) return n.toFixed(1);
     }
-
     const r = rating ?? chefProfile?.rating;
     if (r === undefined || r === null || r === "") return "4.9";
     const num = Number(r);
@@ -440,10 +418,8 @@ export default function ChefInfoScreen() {
   const resolvedSpecialty = (specialty as string) || chefProfile?.specialty || "Royal Awadh Biryani, Andhra Meals, Tandoori";
   const resolvedExpText = (expText as string) || (chefProfile?.exp ? `${chefProfile.exp} yrs experience` : "14+ yrs experience");
 
-  // Dynamically compute the minimum starting price from fetched chef menus and categories
   const resolvedPrice = useMemo(() => {
     let minPrice = Infinity;
-
     if (chefMenus && chefMenus.length > 0) {
       chefMenus.forEach((m: any) => {
         const p = Number(String(m.price || m.basePrice || "").replace(/[^0-9.]/g, ""));
@@ -452,7 +428,6 @@ export default function ChefInfoScreen() {
         }
       });
     }
-
     if (chefCategories && chefCategories.length > 0) {
       chefCategories.forEach((c: any) => {
         const p = Number(String(c.price || c.startingPrice || "").replace(/[^0-9.]/g, ""));
@@ -461,11 +436,9 @@ export default function ChefInfoScreen() {
         }
       });
     }
-
     if (minPrice !== Infinity) {
       return `₹${minPrice}`;
     }
-
     const raw = price ?? chefProfile?.price;
     if (!raw) return "₹149";
     if (typeof raw === "string" && raw.includes("@")) {
@@ -499,7 +472,6 @@ export default function ChefInfoScreen() {
     return { label: "Veg & Non-Veg", bg: KATBOX.cardSoft, border: KATBOX.border, fg: KATBOX.textSecondary };
   })();
 
-  // Open reviews modal & refresh (in case there are new reviews since mount)
   const openReviewsModal = () => {
     setShowReviewsModal(true);
     fetchChefReviews();
@@ -525,7 +497,6 @@ export default function ChefInfoScreen() {
 
   return (
     <View style={styles.container}>
-      {/* ── STICKY GLASS HEADER ────────────────────────────────────────── */}
       <Animated.View
         style={[
           styles.stickyHeaderWrapper,
@@ -576,7 +547,6 @@ export default function ChefInfoScreen() {
         </View>
       </Animated.View>
 
-      {/* ── SCROLLABLE CONTENT CANVAS ──────────────────────────────────── */}
       <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -591,7 +561,6 @@ export default function ChefInfoScreen() {
         </Animated.View>
 
         <View style={styles.mainDetailsCard}>
-          {/* Top Edge Veg / Non-Veg Icon Badge */}
           <View
             style={[
               styles.topEdgeMergedBadge,
@@ -604,7 +573,6 @@ export default function ChefInfoScreen() {
             <Text style={[styles.topChefText, { color: dietTag.fg }]}>{dietTag.label}</Text>
           </View>
 
-          {/* Identity Header */}
           <View style={styles.titleRow}>
             <View style={styles.nameBadgeContainer}>
               <View style={styles.profileAvatarWrapper}>
@@ -613,14 +581,12 @@ export default function ChefInfoScreen() {
               </View>
 
               <View style={{ flex: 1, justifyContent: "center" }}>
-                {/* Chef name + rating badge + view reviews (stacked on right) */}
                 <View style={styles.nameWithRatingRow}>
                   <Text style={styles.chefNameText} numberOfLines={1}>
                     {resolvedName}
                   </Text>
 
                   <View style={styles.ratingAndReviewsColumn}>
-                    {/* ⭐ Rating badge */}
                     <TouchableOpacity
                       style={styles.ratingBadgeBox}
                       activeOpacity={0.85}
@@ -636,7 +602,6 @@ export default function ChefInfoScreen() {
                       )}
                     </TouchableOpacity>
 
-                    {/* ⭐ "View Reviews" link — underlined text, directly below the rating badge */}
                     <TouchableOpacity
                       style={styles.viewReviewsLinkRow}
                       onPress={openReviewsModal}
@@ -662,7 +627,6 @@ export default function ChefInfoScreen() {
             {resolvedSpecialty}
           </Text>
 
-          {/* Metrics Grid */}
           <View style={styles.metricGridContainer}>
             <View style={styles.metricItemColumn}>
               <View style={styles.metricIconLabelRow}>
@@ -703,7 +667,6 @@ export default function ChefInfoScreen() {
             </View>
           </View>
 
-          {/* Popular Dishes / Categories Section */}
           <View style={styles.sectionDividerBlock} />
           <View style={styles.popularSectionTitleRow}>
             <Text style={styles.sectionLabelHeading}>Signature Categories & Dishes</Text>
@@ -726,6 +689,8 @@ export default function ChefInfoScreen() {
                 );
                 const isMealBox = cat.name?.trim().toLowerCase().replace(/\s+/g, "") === "mealbox";
                 const isCatering = cat.name?.trim().toLowerCase().includes("catering");
+                // Check if this category is Quick Bites
+                const isQuickBites = cat.name?.trim().toLowerCase().replace(/\s+/g, "") === "quickbites";
 
                 return (
                   <TouchableOpacity
@@ -783,6 +748,8 @@ export default function ChefInfoScreen() {
                             hasCatering: "false",
                             fromCategory: fromCategory,
                             filterFoodAndCravings: filterFoodAndCravings,
+                            // ⭐ Forward QuickBites flag so HomeMadeItemScreen / Review triggers fast delivery logic
+                            isQuickBites: isQuickBites ? "true" : "false",
                           },
                         });
                       }
@@ -803,7 +770,6 @@ export default function ChefInfoScreen() {
             <Text style={styles.emptyTextContainer}>No specialty items currently listed.</Text>
           )}
 
-          {/* About Section */}
           <View style={styles.sectionDividerBlock} />
           <Text style={styles.sectionLabelHeading}>About The Chef</Text>
           <Text style={styles.aboutDescriptionText}>
@@ -814,7 +780,6 @@ export default function ChefInfoScreen() {
             <Text style={styles.aboutLocationSubText}>{resolvedLocation}</Text>
           </View>
 
-          {/* Specialties Chips */}
           <View style={styles.sectionDividerBlock} />
           <Text style={styles.sectionLabelHeading}>Culinary Expertise</Text>
           <View style={styles.specialtiesChipsWrapper}>
@@ -826,7 +791,6 @@ export default function ChefInfoScreen() {
             ))}
           </View>
 
-          {/* Trust Highlights */}
           <View style={styles.sectionDividerBlock} />
           <Text style={styles.sectionLabelHeading}>Katbox Quality Promise</Text>
           <View style={styles.highlightsWrap}>
@@ -855,7 +819,6 @@ export default function ChefInfoScreen() {
         </View>
       </Animated.ScrollView>
 
-      {/* ── FLOATING BACK BUTTON ───────────────────────────────────────── */}
       <Animated.View
         style={[styles.floatingBackButtonWrapper, { opacity: floatingButtonsOpacity }]}
         pointerEvents="box-none"
@@ -870,7 +833,6 @@ export default function ChefInfoScreen() {
         </TouchableOpacity>
       </Animated.View>
 
-      {/* ── REVIEWS MODAL ──────────────────────────────────────────────── */}
       <Modal
         visible={showReviewsModal}
         transparent
@@ -903,7 +865,6 @@ export default function ChefInfoScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Summary Block */}
             <View style={styles.reviewsSummaryCard}>
               <View style={styles.reviewsSummaryLeft}>
                 <Text style={styles.reviewsSummaryAvg}>
@@ -950,7 +911,6 @@ export default function ChefInfoScreen() {
               </View>
             </View>
 
-            {/* Reviews List */}
             <ScrollView
               style={styles.reviewsListScroll}
               contentContainerStyle={{ paddingBottom: 32 }}
@@ -1061,8 +1021,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-
-  // ─── STICKY HEADER ────────────────────────────────────────────────────────
   stickyHeaderWrapper: {
     position: "absolute",
     top: 0,
@@ -1177,8 +1135,6 @@ const styles = StyleSheet.create({
     color: KATBOX.primary,
     fontWeight: "700",
   },
-
-  // ─── HERO CAROUSEL ────────────────────────────────────────────────────────
   scrollContent: {
     paddingBottom: 48,
   },
@@ -1234,8 +1190,6 @@ const styles = StyleSheet.create({
     borderRadius: 2.5,
     backgroundColor: "#FFFFFF",
   },
-
-  // ─── FLOATING BACK BUTTON ─────────────────────────────────────────────────
   floatingBackButtonWrapper: {
     position: "absolute",
     top: 48,
@@ -1257,8 +1211,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: KATBOX.border,
   },
-
-  // ─── MAIN CARD CONTENT ────────────────────────────────────────────────────
   mainDetailsCard: {
     flex: 1,
     backgroundColor: KATBOX.bg,
@@ -1365,8 +1317,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.1,
   },
-
-  // Diet Tag
   dietTagRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1400,8 +1350,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.2,
   },
-
-  // Rating & Meta Row
   ratingRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1440,8 +1388,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     lineHeight: 20,
   },
-
-  // Metric Grid
   metricGridContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1485,8 +1431,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginTop: 3,
   },
-
-  // Section Headers & Dividers
   sectionDividerBlock: {
     height: 1,
     backgroundColor: KATBOX.borderSoft,
@@ -1507,8 +1451,6 @@ const styles = StyleSheet.create({
     marginTop: -10,
     marginBottom: 16,
   },
-
-  // About Section
   aboutDescriptionText: {
     fontSize: 14.5,
     color: KATBOX.textSecondary,
@@ -1526,8 +1468,6 @@ const styles = StyleSheet.create({
     color: KATBOX.textTertiary,
     fontWeight: "600",
   },
-
-  // Popular Dishes Grid
   popularSectionTitleRow: {
     marginBottom: 4,
   },
@@ -1566,7 +1506,6 @@ const styles = StyleSheet.create({
     color: KATBOX.textPrimary,
     letterSpacing: -0.1,
   },
-
   loadingRowContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -1584,8 +1523,6 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     fontSize: 13.5,
   },
-
-  // Specialties Chips
   specialtiesChipsWrapper: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1607,8 +1544,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: -0.1,
   },
-
-  // Quality Highlights
   highlightsWrap: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1652,8 +1587,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 2,
   },
-
-  // ─── RATING + VIEW REVIEWS COLUMN ────────────────────────────────────────
   ratingAndReviewsColumn: {
     alignItems: "flex-end",
     gap: 4,
@@ -1669,8 +1602,6 @@ const styles = StyleSheet.create({
     textDecorationLine: "underline",
     letterSpacing: -0.1,
   },
-
-  // ─── REVIEWS MODAL ──────────────────────────────────────────────────────
   reviewsModalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",

@@ -86,7 +86,6 @@ const parseDateParts = (dateStr: string) => {
   return { dayName: "DAY", dayNumber: "1", month: "JUN", fullString: cleanedStr };
 };
 
-// ✅ NEW HELPER — Validate coordinates coming from the order document
 const hasValidCoords = (lat: any, lng: any): boolean => {
   const nLat = Number(lat);
   const nLng = Number(lng);
@@ -97,13 +96,11 @@ const hasValidCoords = (lat: any, lng: any): boolean => {
   );
 };
 
-// ✅ NEW HELPER — Compact coordinate label (e.g. "12.97160, 77.59460")
 const formatCoordLabel = (lat: any, lng: any): string => {
   if (!hasValidCoords(lat, lng)) return '';
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 };
 
-/* ─── COUNTDOWN TIMER WIDGET (ADMIN BLUE THEME) ─── */
 function DeliverySlotCountdownWidget({
   deliveryDate,
   timeSlot,
@@ -259,7 +256,6 @@ function DeliverySlotCountdownWidget({
   );
 }
 
-/* ─── MAIN ADMIN SCREEN ─── */
 export default function AdminAllOrdersScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -270,23 +266,18 @@ export default function AdminAllOrdersScreen() {
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(0);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
 
-  // Filter tabs
   const [statusFilter, setStatusFilter] = useState<'All' | 'Placed' | 'Accepted' | 'Preparing' | 'Delivered' | 'Cancelled'>('All');
 
-  // Status dropdowns
   const [showStatusDropdown, setShowStatusDropdown] = useState<boolean>(false);
   const [activeScheduleDropdownDate, setActiveScheduleDropdownDate] = useState<string | null>(null);
 
-  // Price breakdown expander
   const [isPriceExpanded, setIsPriceExpanded] = useState<boolean>(false);
   const chevronAnim = useRef(new Animated.Value(0)).current;
 
-  // Preview modal
   const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>('');
   const sheetAnim = useRef(new Animated.Value(400)).current;
 
-  // Alarm refs
   const soundRef = useRef<Audio.Sound | null>(null);
   const alarmIntervalRef = useRef<any>(null);
   const alarmStopTimeoutRef = useRef<any>(null);
@@ -444,7 +435,6 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  // ─── Real-time socket listeners ───
   useEffect(() => {
     fetchAllOrders();
 
@@ -520,7 +510,6 @@ export default function AdminAllOrdersScreen() {
     fetchAllOrders();
   }, []);
 
-  // ─── Filtered orders ───
   const filteredOrders = useMemo(() => {
     if (statusFilter === 'All') return orders;
     return orders.filter(
@@ -710,7 +699,6 @@ export default function AdminAllOrdersScreen() {
       const timeSlot = match?.timeSlot || activeOrder.deliveryTimeSlot || '7:00 PM - 9:00 PM';
       const address = match?.address || activeOrder.addressDetails || activeOrder.deliveryAddress || customerAddress;
 
-      // ✅ Prefer per-schedule coords, fall back to order-level coords.
       const sLat = match?.latitude ?? activeOrder?.latitude;
       const sLng = match?.longitude ?? activeOrder?.longitude;
 
@@ -751,9 +739,6 @@ export default function AdminAllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
-  // ✅ QuickBites detection — robust: true if either the flag is set OR
-  //    the order carries a persisted estimatedDeliveryAt timestamp.
-  //    Only applies to homemade orders.
   const isQuickBitesFlow = useMemo(() => {
     if (!activeOrder) return false;
     if (!isHomemadeFlow) return false;
@@ -764,14 +749,11 @@ export default function AdminAllOrdersScreen() {
     return flagSet || hasEstimated;
   }, [activeOrder, isHomemadeFlow]);
 
-  // ✅ QuickBites window in minutes — defaults to 75
   const quickBitesWindowMinutes = useMemo(() => {
     const w = Number(activeOrder?.deliveryWindowMinutes);
     return Number.isFinite(w) && w > 0 ? w : 75;
   }, [activeOrder?.deliveryWindowMinutes]);
 
-  // ✅ Compute dynamic QuickBites date/time from MongoDB's `estimatedDeliveryAt`
-  //    For QuickBites the delivery date is ALWAYS "Today" (same-day).
   const quickBitesDateTime = useMemo(() => {
     if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
     const d = new Date(activeOrder.estimatedDeliveryAt);
@@ -781,7 +763,6 @@ export default function AdminAllOrdersScreen() {
     const dayNum = d.getDate();
     const monthShort = d.toLocaleDateString('en-US', { month: 'short' });
 
-    // ✅ QuickBites: force same-day "Today" label
     const displayDate = `Today, ${dayNum} ${monthShort}`;
     const timerDate = `Today, ${dayNum} ${monthShort}`;
 
@@ -791,17 +772,12 @@ export default function AdminAllOrdersScreen() {
       hour12: true,
     });
 
-    // Remaining minutes until estimated delivery
     const diffMs = d.getTime() - now.getTime();
     const remainingMin = Math.max(0, Math.round(diffMs / (60 * 1000)));
 
     return { displayDate, timerDate, timeStr, remainingMin };
   }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
 
-  // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
-  //    • For QuickBites: computed live from `estimatedDeliveryAt` (same day).
-  //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
-  //      falls back to legacy `deliveryTimeSlot`.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
@@ -833,8 +809,6 @@ export default function AdminAllOrdersScreen() {
     quickBitesDateTime,
   ]);
 
-  // ✅ Human-friendly display date specifically for headers/cards.
-  //    For QuickBites it is ALWAYS "Today, <day> <month>".
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
@@ -853,18 +827,18 @@ export default function AdminAllOrdersScreen() {
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today',
-    // ✅ For homemade QuickBites: always "Today, ..." (same-day).
-    //    For non-QuickBites homemade: use the persisted value.
-    //    For mealbox/catering: keep original behaviour.
     deliveryDate:
       isHomemadeFlow
         ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
         : (activeOrder?.deliveryDate ||
            activeOrder?.eventDate ||
            'Mon, 17 Jun 2024'),
+    // ✅ Replaced static text with dynamic timing for QuickBites / homemade orders in admin
     deliveryTimeSlot:
       isHomemadeFlow
-        ? (homemadeDeliverySlotResolved || '30–45 min')
+        ? (isQuickBitesFlow
+            ? `By ${quickBitesDateTime?.timeStr || 'soon'} • Fast Delivery`
+            : (homemadeDeliverySlotResolved || '30–45 min'))
         : (activeOrder?.deliveryTimeSlot ||
            activeOrder?.eventTime ||
            '7:00 PM - 9:00 PM'),
@@ -903,7 +877,7 @@ export default function AdminAllOrdersScreen() {
       timingDetails: isHomemadeFlow
         ? (isQuickBitesFlow
             ? `Prepared & Delivered within ${quickBitesWindowMinutes} min`
-            : 'Fast Prep & Delivery • 30–45 min')
+            : `Fast Prep & Delivery • ${homemadeDeliverySlotResolved || '30–45 min'}`)
         : activeOrder?.deliveryTimeSlot || activeOrder?.eventTime || 'Lunch Only  •  1 Meal / Day',
       totalAmount: `₹${totalAmountNum}`,
       image: defaultDishImage,
@@ -1024,8 +998,6 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  // ✅ Prefers coordinates for exact pin placement, falls back to address.
-  //    Works for every flow — catering, mealbox, quickbite, homemade.
   const handleOpenMap = (
     addressOverride?: string,
     latOverride?: any,
@@ -1112,7 +1084,6 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  // ─── ADMIN VERIFY ADVANCE / PAYMENT RECEIVED ACTION ───
   const handleVerifyAdvancePayment = async () => {
     if (!activeOrder) return;
 
@@ -1210,7 +1181,6 @@ export default function AdminAllOrdersScreen() {
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
 
-      {/* ─── ADMIN HEADER ─── */}
       <LinearGradient colors={['#0F172A', '#1E293B', '#0F172A']} style={styles.darkHeader}>
         <SafeAreaView edges={['top']}>
           <View style={styles.headerInner}>
@@ -1236,7 +1206,6 @@ export default function AdminAllOrdersScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Filter Tabs */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -1261,7 +1230,6 @@ export default function AdminAllOrdersScreen() {
               })}
             </ScrollView>
 
-            {/* Order Pill Strip */}
             {filteredOrders.length > 1 && (
               <ScrollView
                 horizontal
@@ -1327,7 +1295,6 @@ export default function AdminAllOrdersScreen() {
         </SafeAreaView>
       </LinearGradient>
 
-      {/* ─── BODY CONTAINER ─── */}
       <View style={styles.bodyCard}>
         <ScrollView
           style={styles.scrollView}
@@ -1350,7 +1317,6 @@ export default function AdminAllOrdersScreen() {
             </View>
           ) : (
             <>
-              {/* ─── ADVANCE PAYMENT VERIFICATION BANNER ─── */}
               {activeOrder && (
                 <View style={styles.card}>
                   <Text style={styles.cardSectionHeading}>Advance Payment Verification</Text>
@@ -1384,7 +1350,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* ✅ QUICK BITES SAME-DAY BANNER (only for QuickBites flow) */}
               {isQuickBitesFlow && (
                 <View style={styles.quickBitesBannerCard}>
                   <View style={styles.quickBitesBannerIconBox}>
@@ -1407,7 +1372,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* ─── STEPPER HERO (if accepted) ─── */}
               {isCurrentOrderAccepted && (
                 <View style={styles.successHeroCard}>
                   <View style={styles.successOuterGlowCircle}>
@@ -1421,7 +1385,6 @@ export default function AdminAllOrdersScreen() {
                     Order <Text style={styles.successHeroOrderId}>{orderData.orderId}</Text> is currently under live platform fulfillment.
                   </Text>
 
-                  {/* Admin Status Override Dropdown */}
                   <View style={styles.adminStatusSelectorBox}>
                     <Text style={styles.adminSelectorTitle}>Admin Status Override:</Text>
                     {isCashCollected ? (
@@ -1489,7 +1452,6 @@ export default function AdminAllOrdersScreen() {
                     )}
                   </View>
 
-                  {/* 5-Stage Horizontal Stepper */}
                   <View style={styles.horizontalStepperContainer}>
                     {stepperStages.map((stage, idx) => {
                       const isPast = stepperActiveIndex > idx;
@@ -1539,7 +1501,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* Timer */}
               {isCurrentOrderAccepted && (
                 <DeliverySlotCountdownWidget
                   deliveryDate={orderData.deliveryDate}
@@ -1549,7 +1510,6 @@ export default function AdminAllOrdersScreen() {
                 />
               )}
 
-              {/* 1. ORDER IDENTIFIER */}
               <View style={styles.card}>
                 <View style={styles.orderIdTopRow}>
                   <View style={{ flex: 1, paddingRight: 8 }}>
@@ -1626,7 +1586,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 2. CUSTOMER + CHEF PROFILE */}
               <View style={styles.card}>
                 <Text style={styles.cardSectionHeading}>Customer & Chef</Text>
 
@@ -1701,7 +1660,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 3. ORDER SUMMARY */}
               <View style={styles.card}>
                 <Text style={styles.cardSectionHeading}>Order Summary</Text>
 
@@ -1790,7 +1748,7 @@ export default function AdminAllOrdersScreen() {
                     <View style={styles.priceDescriptionRow}>
                       <Text style={styles.priceDescriptionLabel}>Delivery & Kitchen</Text>
                       <Text style={[styles.priceDescriptionValue, deliveryPriceNum === 0 && styles.freeTextHighlight]}>
-                        {deliveryPriceNum === 0 ? 'FREE' : `+₹${deliveryPriceNum}`}
+                        {deliveryPriceNum === 0 ? 'FREE' : `+₹{deliveryPriceNum}`}
                       </Text>
                     </View>
                     {discountNum > 0 && (
@@ -1827,7 +1785,6 @@ export default function AdminAllOrdersScreen() {
                 )}
               </View>
 
-              {/* ─── MEALBOX SCHEDULES ─── */}
               {isMealBoxFlow && allMealboxSchedules.length > 0 && (
                 <View style={styles.card}>
                   <View style={styles.scheduleHeaderRow}>
@@ -1985,7 +1942,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* 4. DELIVERY ADDRESS */}
               <View style={styles.card}>
                 <View style={styles.addressRow}>
                   <View style={styles.addressLeftCol}>
@@ -2040,7 +1996,6 @@ export default function AdminAllOrdersScreen() {
         </ScrollView>
       </View>
 
-      {/* ─── PREVIEW MODAL ─── */}
       <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closePreviewSheet}>
         <BlurView intensity={35} tint="dark" style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closePreviewSheet} />
@@ -2270,7 +2225,7 @@ export default function AdminAllOrdersScreen() {
                                       styles.includedBadgePillBoxText,
                                       isExtraItemAddon
                                         ? styles.includedBadgePillBoxTextExtra
-                                        : styles.includedBadgePillBoxTextStandard,
+                                        : styles.includedBadgePillBoxStandard,
                                     ]}
                                   >
                                     {isExtraItemAddon
@@ -2314,7 +2269,7 @@ export default function AdminAllOrdersScreen() {
                 onPress={closePreviewSheet}
                 style={styles.modalAbsoluteFooterCTAButtonSolid}
               >
-                <Text style={styles.modalAbsoluteFooterCTAButtonSolidText}>Close Summary</Text>
+                <Text style={styles.modalAbsoluteFooterButtonSolidText}>Close Summary</Text>
               </TouchableOpacity>
             </View>
           </Animated.View>
@@ -2324,7 +2279,6 @@ export default function AdminAllOrdersScreen() {
   );
 }
 
-/* ─── ADMIN BLUE THEME STYLES ─── */
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0F172A' },
   darkHeader: { paddingBottom: 16 },
@@ -2400,10 +2354,9 @@ const styles = StyleSheet.create({
   advanceStatusBadge: { fontSize: 10.5, fontWeight: '800', alignSelf: 'flex-start', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
   statusPending: { backgroundColor: '#FEF3C7', color: '#B45309' },
   statusVerified: { backgroundColor: '#DCFCE7', color: '#166534' },
-  verifyPaymentBtn: { backgroundColor: '#166534', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
+  verifyPaymentBtn: { backgroundColor: '#166348', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
   verifyPaymentBtnText: { color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' },
 
-  // ✅ NEW: QuickBites banner styles (admin blue theme)
   quickBitesBannerCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2620,22 +2573,8 @@ const styles = StyleSheet.create({
 
   scheduleAddressRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, paddingHorizontal: 2, gap: 5 },
   scheduleAddressText: { flex: 1, fontSize: 12, color: '#475569', fontWeight: '500', lineHeight: 16 },
-  // ✅ coordinate label style (blue theme)
-  scheduleCoordText: {
-    fontSize: 10.5,
-    color: '#2563EB',
-    fontWeight: '700',
-    marginTop: 3,
-    letterSpacing: 0.2,
-  },
-  // ✅ primary-address coordinate label style (blue theme)
-  addressCoordText: {
-    fontSize: 11,
-    color: '#2563EB',
-    fontWeight: '700',
-    marginTop: 4,
-    letterSpacing: 0.2,
-  },
+  scheduleCoordText: { fontSize: 10.5, color: '#2563EB', fontWeight: '700', marginTop: 3, letterSpacing: 0.2 },
+  addressCoordText: { fontSize: 11, color: '#2563EB', fontWeight: '700', marginTop: 4, letterSpacing: 0.2 },
   scheduleMapBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1' },
   scheduleMapBtnText: { fontSize: 11, fontWeight: '800', color: '#2563EB' },
   schedulePreviewRow: { marginTop: 8, flexDirection: 'row', justifyContent: 'flex-start' },

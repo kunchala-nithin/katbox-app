@@ -36,10 +36,7 @@ import { socket } from '@/src/lib/socket';
 
 const { width, height } = Dimensions.get('window');
 
-// ✅ Static Customer Support number used for call/message actions
 const CUSTOMER_SUPPORT_PHONE = '9133450555';
-
-// Check if running in Expo Go client
 const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
 
 let Notifications: any = null;
@@ -314,7 +311,6 @@ const MONTHS_MAP: { [key: string]: number } = {
   JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11
 };
 
-// ─── parseDateParts helper ──────────────────────────────────────────
 const parseDateParts = (dateStr: string) => {
   if (!dateStr) return { dayName: "MON", dayNumber: "17", month: "JUN", fullString: "Mon, 17 Jun" };
 
@@ -331,7 +327,6 @@ const parseDateParts = (dateStr: string) => {
   return { dayName: "DAY", dayNumber: "1", month: "JUN", fullString: cleanedStr };
 };
 
-// ✅ NEW HELPER — Validate coordinates coming from the order document
 const hasValidCoords = (lat: any, lng: any): boolean => {
   const nLat = Number(lat);
   const nLng = Number(lng);
@@ -342,13 +337,11 @@ const hasValidCoords = (lat: any, lng: any): boolean => {
   );
 };
 
-// ✅ NEW HELPER — Compact coordinate label (e.g. "12.97160, 77.59460")
 const formatCoordLabel = (lat: any, lng: any): string => {
   if (!hasValidCoords(lat, lng)) return '';
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 };
 
-// ─── DeliverySlotCountdownWidget ──────────────────────────────────
 function DeliverySlotCountdownWidget({
   deliveryDate,
   timeSlot,
@@ -528,7 +521,7 @@ function DeliverySlotCountdownWidget({
   );
 }
 
-export default function AllOrdersScreen() {
+export default function ChefAllOrdersScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -538,32 +531,21 @@ export default function AllOrdersScreen() {
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(0);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
 
-  // Status Dropdown Management State for parent order
   const [showStatusDropdown, setShowStatusDropdown] = useState<boolean>(false);
-
-  // Per-schedule inline dropdown tracker for mealbox orders
   const [activeScheduleDropdownDate, setActiveScheduleDropdownDate] = useState<string | null>(null);
-
-  // Ribbon blast animation trigger state
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
 
-  // Success animation states
   const successScaleAnim = useRef(new Animated.Value(1)).current;
   const successFadeAnim = useRef(new Animated.Value(1)).current;
-
-  // Heartbeat pulsing animation for active horizontal stepper icon
   const heartbeatAnim = useRef(new Animated.Value(1)).current;
 
-  // Price Description Expand/Collapse State
   const [isPriceExpanded, setIsPriceExpanded] = useState<boolean>(false);
   const chevronAnim = useRef(new Animated.Value(0)).current;
 
-  // Preview Modal States
   const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>('');
   const sheetAnim = useRef(new Animated.Value(400)).current;
 
-  // Audio sound & snooze scheduler refs
   const soundRef = useRef<Audio.Sound | null>(null);
   const alarmIntervalRef = useRef<any>(null);
   const alarmStopTimeoutRef = useRef<any>(null);
@@ -706,7 +688,6 @@ export default function AllOrdersScreen() {
     try {
       const res = await api.get('/api/orders/chef-orders');
       if (res.data && res.data.success) {
-        // Only show orders where advance payment has been verified by Admin ("Payment Received" / isAdvanceVerified: true)
         const allFetched = res.data.orders || [];
         const fetched = allFetched.filter((o: any) => o.isAdvanceVerified === true);
         setOrders(fetched);
@@ -729,7 +710,6 @@ export default function AllOrdersScreen() {
     }
   };
 
-  // Real-time Socket.io listeners for instantaneous order updates
   useEffect(() => {
     fetchChefOrders();
 
@@ -966,7 +946,6 @@ export default function AllOrdersScreen() {
     currentStatus.toLowerCase().includes('cash collected') ||
     currentStatus.toLowerCase().includes('amount collected');
 
-  // Resolved list of all upcoming delivery dates for mealbox
   const allMealboxSchedules: Array<{
     date: string;
     status: string;
@@ -982,7 +961,6 @@ export default function AllOrdersScreen() {
     const upcomingList = Array.isArray(activeOrder.upcomingDeliveries) ? activeOrder.upcomingDeliveries : [];
     const pausedList = Array.isArray(activeOrder.pausedDates) ? activeOrder.pausedDates : [];
 
-    // Form combined list preserving all dates
     const dateKeys = Array.from(new Set([
       ...explicitSchedules.map((s: any) => s.date),
       ...upcomingList,
@@ -995,7 +973,6 @@ export default function AllOrdersScreen() {
       const timeSlot = match?.timeSlot || activeOrder.deliveryTimeSlot || '7:00 PM - 9:00 PM';
       const address = match?.address || activeOrder.addressDetails || activeOrder.deliveryAddress || customerAddress;
 
-      // ✅ Prefer per-schedule coords, fall back to order-level coords.
       const sLat = match?.latitude ?? activeOrder?.latitude;
       const sLng = match?.longitude ?? activeOrder?.longitude;
 
@@ -1011,7 +988,6 @@ export default function AllOrdersScreen() {
     });
   }, [isMealBoxFlow, activeOrder, customerAddress]);
 
-  // Dynamic delivered schedule determination for meal box widget
   const deliveredScheduleInfo = useMemo(() => {
     if (!isMealBoxFlow) return null;
     const deliveredItem = allMealboxSchedules.find((s) => s.status.toLowerCase() === 'delivered');
@@ -1072,9 +1048,6 @@ export default function AllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
-  // ✅ QuickBites detection — robust: true if either the flag is set OR
-  //    the order carries a persisted estimatedDeliveryAt timestamp.
-  //    Only applies to homemade orders.
   const isQuickBitesFlow = useMemo(() => {
     if (!activeOrder) return false;
     if (!isHomemadeFlow) return false;
@@ -1085,14 +1058,11 @@ export default function AllOrdersScreen() {
     return flagSet || hasEstimated;
   }, [activeOrder, isHomemadeFlow]);
 
-  // ✅ QuickBites window in minutes — defaults to 75
   const quickBitesWindowMinutes = useMemo(() => {
     const w = Number(activeOrder?.deliveryWindowMinutes);
     return Number.isFinite(w) && w > 0 ? w : 75;
   }, [activeOrder?.deliveryWindowMinutes]);
 
-  // ✅ Compute dynamic QuickBites date/time from MongoDB's `estimatedDeliveryAt`
-  //    For QuickBites the delivery date is ALWAYS "Today" (same-day).
   const quickBitesDateTime = useMemo(() => {
     if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
     const d = new Date(activeOrder.estimatedDeliveryAt);
@@ -1102,7 +1072,6 @@ export default function AllOrdersScreen() {
     const dayNum = d.getDate();
     const monthShort = d.toLocaleDateString('en-US', { month: 'short' });
 
-    // ✅ QuickBites: force same-day "Today" label
     const displayDate = `Today, ${dayNum} ${monthShort}`;
     const timerDate = `Today, ${dayNum} ${monthShort}`;
 
@@ -1112,21 +1081,16 @@ export default function AllOrdersScreen() {
       hour12: true,
     });
 
-    // Remaining minutes until estimated delivery
     const diffMs = d.getTime() - now.getTime();
     const remainingMin = Math.max(0, Math.round(diffMs / (60 * 1000)));
 
     return { displayDate, timerDate, timeStr, remainingMin };
   }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
 
-  // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
-  //    • For QuickBites: computed live from `estimatedDeliveryAt` (same day).
-  //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
-  //      falls back to legacy `deliveryTimeSlot`.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
-      return quickBitesDateTime.timerDate; // parse-friendly for timer widget
+      return quickBitesDateTime.timerDate;
     }
     return String(activeOrder?.deliveryDate || '').trim();
   }, [
@@ -1154,8 +1118,6 @@ export default function AllOrdersScreen() {
     quickBitesDateTime,
   ]);
 
-  // ✅ Human-friendly display date specifically for headers/cards.
-  //    For QuickBites it is ALWAYS "Today, <day> <month>".
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
@@ -1174,14 +1136,14 @@ export default function AllOrdersScreen() {
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today, 09:41 AM',
-    // ✅ For homemade QuickBites: always "Today, ..." (same-day).
-    //    For non-QuickBites homemade: use the persisted value.
-    //    For mealbox/catering: keep original behaviour.
     deliveryDate: isHomemadeFlow
       ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
       : (activeOrder?.deliveryDate || (isCateringFlow ? (activeOrder?.eventDate || '18 March') : 'Mon, 17 Jun 2024')),
+    // ✅ Replaced static text with dynamic timing for QuickBites / homemade orders
     deliveryTimeSlot: isHomemadeFlow
-      ? (homemadeDeliverySlotResolved || '30–45 min')
+      ? (isQuickBitesFlow
+          ? `By ${quickBitesDateTime?.timeStr || 'soon'} • Fast Delivery`
+          : (homemadeDeliverySlotResolved || '30–45 min'))
       : (activeOrder?.deliveryTimeSlot || (isCateringFlow ? (activeOrder?.eventTime || '08:30 PM') : '7:00 PM - 9:00 PM')),
     customer: {
       name: activeOrder?.userName || 'Customer',
@@ -1213,7 +1175,7 @@ export default function AllOrdersScreen() {
         isHomemadeFlow
           ? (isQuickBitesFlow
               ? `Prepared & Delivered within ${quickBitesWindowMinutes} min`
-              : 'Fast Prep & Delivery • 30–45 min')
+              : `Fast Prep & Delivery • ${homemadeDeliverySlotResolved || '30–45 min'}`)
           : activeOrder?.deliveryTimeSlot || activeOrder?.eventTime || 'Lunch Only  •  1 Meal / Day',
       addonText:
         parsedAddons.length > 0
@@ -1260,7 +1222,6 @@ export default function AllOrdersScreen() {
       .catch((err) => Alert.alert('Error', err.message));
   };
 
-  // ✅ Customer numbers are hidden — actions route through the static Customer Support number
   const handleCallCustomer = () => {
     triggerCall(CUSTOMER_SUPPORT_PHONE);
   };
@@ -1269,8 +1230,6 @@ export default function AllOrdersScreen() {
     triggerSMS(CUSTOMER_SUPPORT_PHONE);
   };
 
-  // ✅ Prefers coordinates for exact pin placement, falls back to address.
-  //    Works for every flow — catering, mealbox, quickbite, homemade.
   const handleOpenMap = (
     addressOverride?: string,
     latOverride?: any,
@@ -1433,7 +1392,6 @@ export default function AllOrdersScreen() {
     }
   };
 
-  // Dedicated handler to update live status of an individual scheduled date
   const handleUpdateIndividualScheduleStatus = async (dateStr: string, newStatus: string) => {
     if (!activeOrder || isCashCollected) return;
     setActiveScheduleDropdownDate(null);
@@ -1512,7 +1470,6 @@ export default function AllOrdersScreen() {
 
       <RibbonConfettiBlast visible={showConfetti} />
 
-      {/* ─── PREMIUM HEADER ─── */}
       <LinearGradient colors={["#0B140F", "#132117", "#1A241D"]} style={styles.darkHeader}>
         <SafeAreaView edges={["top"]}>
           <View style={styles.headerInner}>
@@ -1584,16 +1541,16 @@ export default function AllOrdersScreen() {
 
                   const isPendingUnaccepted = status === 'placed';
 
-                  let pillStyle = styles.orderTabPillPending; // Red
+                  let pillStyle = styles.orderTabPillPending;
                   let dotStyle = styles.tabIndicatorDotPending;
                   let textStyle = styles.orderTabPillTextPending;
 
                   if (isOrderDeliveredOrCollected) {
-                    pillStyle = styles.orderTabPillDelivered; // Green
+                    pillStyle = styles.orderTabPillDelivered;
                     dotStyle = styles.tabIndicatorDotDelivered;
                     textStyle = styles.orderTabPillTextDelivered;
                   } else if (!isPendingUnaccepted && status !== 'cancelled') {
-                    pillStyle = styles.orderTabPillAccepted; // Yellow
+                    pillStyle = styles.orderTabPillAccepted;
                     dotStyle = styles.tabIndicatorDotAccepted;
                     textStyle = styles.orderTabPillTextAccepted;
                   } else if (status === 'cancelled') {
@@ -1629,7 +1586,6 @@ export default function AllOrdersScreen() {
         </SafeAreaView>
       </LinearGradient>
 
-      {/* ─── BODY CONTAINER ─── */}
       <View style={styles.bodyCard}>
         <ScrollView
           style={styles.scrollView}
@@ -1652,7 +1608,6 @@ export default function AllOrdersScreen() {
             </View>
           ) : (
             <>
-              {/* PERMANENT TICK MARK HERO BANNER & FULL LIVE HORIZONTAL STEPPER */}
               {isCurrentOrderAccepted && (
                 <View style={styles.successHeroCard}>
                   <Animated.View
@@ -1674,7 +1629,6 @@ export default function AllOrdersScreen() {
                     Order <Text style={styles.successHeroOrderId}>{orderData.orderId}</Text> is currently under live fulfillment.
                   </Text>
 
-                  {/* Top-level Status Switch for non-mealbox or overall status */}
                   {!isMealBoxFlow && (
                     <View style={styles.chefStatusSelectorBox}>
                       <Text style={styles.chefSelectorTitle}>Live Order Status:</Text>
@@ -1738,7 +1692,6 @@ export default function AllOrdersScreen() {
                     </View>
                   )}
 
-                  {/* ─── FULL 5-STAGE HORIZONTAL STEPPER ─── */}
                   <View style={styles.horizontalStepperContainer}>
                     {stepperStages.map((stage, idx) => {
                       const isPast = stepperActiveIndex > idx;
@@ -1788,7 +1741,6 @@ export default function AllOrdersScreen() {
                 </View>
               )}
 
-              {/* ✅ QUICK BITES SAME-DAY BANNER (only for QuickBites flow) */}
               {isQuickBitesFlow && isCurrentOrderAccepted && (
                 <View style={styles.quickBitesBannerCard}>
                   <View style={styles.quickBitesBannerIconBox}>
@@ -1811,7 +1763,6 @@ export default function AllOrdersScreen() {
                 </View>
               )}
 
-              {/* ATTRACTIVE SIMPLE TIMER CARD */}
               {isCurrentOrderAccepted && (
                 <DeliverySlotCountdownWidget
                   deliveryDate={orderData.deliveryDate}
@@ -1821,7 +1772,6 @@ export default function AllOrdersScreen() {
                 />
               )}
 
-              {/* 1. ORDER IDENTIFIER CARD */}
               <View style={styles.card}>
                 <View style={styles.orderIdTopRow}>
                   <View style={{ flex: 1, paddingRight: 8 }}>
@@ -1866,7 +1816,6 @@ export default function AllOrdersScreen() {
                 <View style={styles.orderMetaGridRow}>
                   <View style={styles.orderMetaColumn}>
                     <View style={styles.metaLabelRow}>
-                      {/* Calendar/time icons removed */}
                       <Text style={styles.metaLabelText}>ORDER TIME</Text>
                     </View>
                     <Text style={styles.metaValueText}>{orderData.orderTime}</Text>
@@ -1876,7 +1825,6 @@ export default function AllOrdersScreen() {
 
                   <View style={[styles.orderMetaColumn, { paddingLeft: 12 }]}>
                     <View style={styles.metaLabelRow}>
-                      {/* Calendar/time icons removed */}
                       <Text style={styles.metaLabelText}>SCHEDULED SLOT</Text>
                     </View>
                     <Text style={styles.metaValueTextBold}>{orderData.deliveryDate}</Text>
@@ -1885,7 +1833,6 @@ export default function AllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 2. CUSTOMER PROFILE CARD */}
               <View style={styles.card}>
                 <Text style={styles.cardSectionHeading}>Customer Profile</Text>
 
@@ -1920,7 +1867,6 @@ export default function AllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 3. ORDER SUMMARY CARD */}
               <View style={styles.card}>
                 <Text style={styles.cardSectionHeading}>Order Summary</Text>
 
@@ -1943,7 +1889,6 @@ export default function AllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
-                {/* ✅ Dynamic Delivery Date & Slot Strip (Chef) — calendar/time icons removed */}
                 <View style={styles.deliveryInfoStripContainer}>
                   <View style={styles.deliveryInfoCell}>
                     <View style={{ flex: 1 }}>
@@ -2032,7 +1977,7 @@ export default function AllOrdersScreen() {
                     <View style={styles.priceDescriptionRow}>
                       <Text style={styles.priceDescriptionLabel}>Delivery & Kitchen</Text>
                       <Text style={[styles.priceDescriptionValue, deliveryPriceNum === 0 && styles.freeTextHighlight]}>
-                        {deliveryPriceNum === 0 ? 'FREE' : `+₹${deliveryPriceNum}`}
+                        {deliveryPriceNum === 0 ? 'FREE' : `+₹{deliveryPriceNum}`}
                       </Text>
                     </View>
 
@@ -2061,7 +2006,6 @@ export default function AllOrdersScreen() {
                 )}
               </View>
 
-              {/* ─── MEALBOX ALL UPCOMING DELIVERIES SCHEDULER & STATUS CONTROLLER ─── */}
               {isMealBoxFlow && allMealboxSchedules.length > 0 && (
                 <View style={styles.card}>
                   <View style={styles.scheduleHeaderRow}>
@@ -2086,7 +2030,6 @@ export default function AllOrdersScreen() {
                         <View key={`sched-${scheduleItem.date}-${sIdx}`} style={styles.scheduleCardBlock}>
                           <View style={styles.scheduleTopRow}>
                             <View style={styles.scheduleDateBadge}>
-                              {/* Calendar icon removed */}
                               <Text style={styles.scheduleDateBadgeText}>{scheduleItem.date}</Text>
                             </View>
 
@@ -2107,7 +2050,6 @@ export default function AllOrdersScreen() {
                             </View>
                           </View>
 
-                          {/* Dynamic Location and Map Button on Every Delivery Card */}
                           <View style={styles.scheduleAddressRow}>
                             <Ionicons name="location-sharp" size={14} color="#166348" style={{ marginTop: 2 }} />
                             <View style={{ flex: 1, paddingRight: 6 }}>
@@ -2145,7 +2087,6 @@ export default function AllOrdersScreen() {
                             </TouchableOpacity>
                           </View>
 
-                          {/* Menu Preview Button for Chef */}
                           <View style={styles.schedulePreviewRow}>
                             <TouchableOpacity
                               style={styles.schedulePreviewBtn}
@@ -2158,7 +2099,6 @@ export default function AllOrdersScreen() {
                             </TouchableOpacity>
                           </View>
 
-                          {/* Individual Live Status Dropdown Trigger for Chef */}
                           {isCurrentOrderAccepted && !isItemPaused && !isCashCollected && (
                             <View style={{ marginTop: 10 }}>
                               <TouchableOpacity
@@ -2223,7 +2163,6 @@ export default function AllOrdersScreen() {
                 </View>
               )}
 
-              {/* 4. PRIMARY DELIVERY ADDRESS CARD */}
               <View style={styles.card}>
                 <View style={styles.addressRow}>
                   <View style={styles.addressLeftCol}>
@@ -2259,7 +2198,6 @@ export default function AllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 5. RESPONSE TIMER BANNER */}
               {!isCurrentOrderAccepted && (
                 <View style={styles.timerBannerCard}>
                   <View style={styles.timerIconCircle}>
@@ -2274,7 +2212,6 @@ export default function AllOrdersScreen() {
                 </View>
               )}
 
-              {/* 6. BOTTOM ACTIONS */}
               {!isCurrentOrderAccepted && (
                 <View style={styles.bottomButtonsRow}>
                   <TouchableOpacity
@@ -2303,7 +2240,6 @@ export default function AllOrdersScreen() {
         </ScrollView>
       </View>
 
-      {/* SELECTIONS PREVIEW MODAL */}
       <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closePreviewSheet}>
         <BlurView intensity={35} tint="dark" style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closePreviewSheet} />
@@ -2554,1632 +2490,283 @@ export default function AllOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#0B140F',
-  },
-  darkHeader: {
-    paddingBottom: 20,
-  },
-  headerInner: {
-    paddingHorizontal: 18,
-    paddingTop: 6,
-  },
-  headerTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
+  root: { flex: 1, backgroundColor: '#0B140F' },
+  darkHeader: { paddingBottom: 20 },
+  headerInner: { paddingHorizontal: 18, paddingTop: 6 },
+  headerTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerIconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 40, height: 40, borderRadius: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center', justifyContent: 'center', position: 'relative',
+    borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.1)',
   },
-  headerBrandCol: {
-    flex: 1,
-    paddingHorizontal: 12,
-  },
-  eyebrowRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  liveDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#4ADE80',
-    marginRight: 6,
-  },
-  headerEyebrow: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#86EFAC',
-    letterSpacing: 1.4,
-  },
-  headerTitle: {
-    fontSize: 23,
-    fontWeight: '900',
-    color: '#F9FAFB',
-    letterSpacing: -0.5,
-  },
-  headerSubtitle: {
-    fontSize: 12.5,
-    color: '#A3A3A3',
-    marginTop: 5,
-    fontWeight: '500',
-    lineHeight: 18,
-  },
-  headerSubtitleBold: {
-    color: '#4ADE80',
-    fontWeight: '800',
-  },
+  headerBrandCol: { flex: 1, paddingHorizontal: 12 },
+  eyebrowRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#4ADE80', marginRight: 6 },
+  headerEyebrow: { fontSize: 10, fontWeight: '800', color: '#86EFAC', letterSpacing: 1.4 },
+  headerTitle: { fontSize: 23, fontWeight: '900', color: '#F9FAFB', letterSpacing: -0.5 },
+  headerSubtitle: { fontSize: 12.5, color: '#A3A3A3', marginTop: 5, fontWeight: '500', lineHeight: 18 },
+  headerSubtitleBold: { color: '#4ADE80', fontWeight: '800' },
   notificationBadge: {
-    position: 'absolute',
-    top: 3,
-    right: 3,
-    backgroundColor: '#166348',
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#0B140F',
-    paddingHorizontal: 2,
+    position: 'absolute', top: 3, right: 3,
+    backgroundColor: '#166348', minWidth: 16, height: 16, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: '#0B140F', paddingHorizontal: 2,
   },
-  notificationBadgeText: {
-    color: '#FAF8F5',
-    fontSize: 8.5,
-    fontWeight: '900',
-  },
-  tabStripScroll: {
-    marginTop: 14,
-  },
-  orderTabPillBase: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  orderTabPillSelectedBorder: {
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
-  },
-  orderTabPillPending: {
-    backgroundColor: 'rgba(239, 68, 68, 0.22)',
-    borderColor: '#DC2626',
-  },
-  tabIndicatorDotPending: {
-    backgroundColor: '#EF4444',
-  },
-  orderTabPillTextPending: {
-    color: '#F87171',
-  },
-  orderTabPillAccepted: {
-    backgroundColor: 'rgba(234, 179, 8, 0.22)',
-    borderColor: '#EAB308',
-  },
-  tabIndicatorDotAccepted: {
-    backgroundColor: '#EAB308',
-  },
-  orderTabPillTextAccepted: {
-    color: '#FDE047',
-  },
-  orderTabPillDelivered: {
-    backgroundColor: 'rgba(22, 163, 74, 0.24)',
-    borderColor: '#16A34A',
-  },
-  tabIndicatorDotDelivered: {
-    backgroundColor: '#22C55E',
-  },
-  orderTabPillTextDelivered: {
-    color: '#86EFAC',
-  },
-  orderTabPillCancelled: {
-    backgroundColor: 'rgba(100, 116, 139, 0.2)',
-    borderColor: '#64748B',
-  },
-  tabIndicatorDotCancelled: {
-    backgroundColor: '#94A3B8',
-  },
-  orderTabPillTextCancelled: {
-    color: '#94A3B8',
-  },
-  tabIndicatorDotBase: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  orderTabPillTextBase: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  confettiOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 9999,
-    elevation: 9999,
-  },
-  ribbonParticle: {
-    position: 'absolute',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3,
-    elevation: 4,
-  },
+  notificationBadgeText: { color: '#FAF8F5', fontSize: 8.5, fontWeight: '900' },
+  tabStripScroll: { marginTop: 14 },
+  orderTabPillBase: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 12, borderWidth: 1 },
+  orderTabPillSelectedBorder: { borderWidth: 1.5, borderColor: '#FFFFFF' },
+  orderTabPillPending: { backgroundColor: 'rgba(239, 68, 68, 0.22)', borderColor: '#DC2626' },
+  tabIndicatorDotPending: { backgroundColor: '#EF4444' },
+  orderTabPillTextPending: { color: '#F87171' },
+  orderTabPillAccepted: { backgroundColor: 'rgba(234, 179, 8, 0.22)', borderColor: '#EAB308' },
+  tabIndicatorDotAccepted: { backgroundColor: '#EAB308' },
+  orderTabPillTextAccepted: { color: '#FDE047' },
+  orderTabPillDelivered: { backgroundColor: 'rgba(22, 163, 74, 0.24)', borderColor: '#16A34A' },
+  tabIndicatorDotDelivered: { backgroundColor: '#22C55E' },
+  orderTabPillTextDelivered: { color: '#86EFAC' },
+  orderTabPillCancelled: { backgroundColor: 'rgba(100, 116, 139, 0.2)', borderColor: '#64748B' },
+  tabIndicatorDotCancelled: { backgroundColor: '#94A3B8' },
+  orderTabPillTextCancelled: { color: '#94A3B8' },
+  tabIndicatorDotBase: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
+  orderTabPillTextBase: { fontSize: 12, fontWeight: '700' },
+  confettiOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', zIndex: 9999, elevation: 9999 },
+  ribbonParticle: { position: 'absolute', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3, elevation: 4 },
   successHeroCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 20,
-    alignItems: 'center',
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
-    shadowColor: '#166348',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 3,
+    backgroundColor: '#FFFFFF', borderRadius: 22, padding: 20, alignItems: 'center', marginBottom: 14,
+    borderWidth: 1, borderColor: '#DCFCE7',
+    shadowColor: '#166348', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 3,
   },
-  successOuterGlowCircle: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: '#DCFCE7',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-  },
-  successInnerCircle: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: '#166348',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#166348',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  successHeroTitle: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: '#0F172A',
-    marginBottom: 6,
-    letterSpacing: -0.3,
-  },
-  successHeroSubtitle: {
-    fontSize: 13,
-    color: '#64748B',
-    textAlign: 'center',
-    lineHeight: 19,
-    paddingHorizontal: 10,
-    fontWeight: '500',
-  },
-  successHeroOrderId: {
-    color: '#166348',
-    fontWeight: '800',
-  },
-
-  // ✅ NEW: QuickBites banner styles (chef green theme)
+  successOuterGlowCircle: { width: 76, height: 76, borderRadius: 38, backgroundColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  successInnerCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#166348', alignItems: 'center', justifyContent: 'center', shadowColor: '#166348', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8, elevation: 5 },
+  successHeroTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 6, letterSpacing: -0.3 },
+  successHeroSubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center', lineHeight: 19, paddingHorizontal: 10, fontWeight: '500' },
+  successHeroOrderId: { color: '#166348', fontWeight: '800' },
   quickBitesBannerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF3C7',
-    borderRadius: 18,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1.5,
-    borderColor: '#FDE68A',
-    shadowColor: '#F59E0B',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 3,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF3C7', borderRadius: 18, padding: 12, marginBottom: 12,
+    borderWidth: 1.5, borderColor: '#FDE68A', shadowColor: '#F59E0B', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 3,
   },
-  quickBitesBannerIconBox: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#F59E0B',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#F59E0B',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  quickBitesBannerTitle: {
-    fontSize: 13.5,
-    fontWeight: '900',
-    color: '#92400E',
-    letterSpacing: -0.2,
-  },
-  quickBitesBannerSubtitle: {
-    fontSize: 11.5,
-    color: '#B45309',
-    fontWeight: '600',
-    marginTop: 2,
-    lineHeight: 15,
-  },
-  quickBitesRemainingBox: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FCD34D',
-    minWidth: 58,
-  },
-  quickBitesRemainingNumber: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#B45309',
-    letterSpacing: -0.3,
-  },
-  quickBitesRemainingUnit: {
-    fontSize: 8.5,
-    fontWeight: '800',
-    color: '#92400E',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    marginTop: 1,
-  },
-
-  chefStatusSelectorBox: {
-    width: '100%',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 14,
-    marginTop: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  chefSelectorTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#334155',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  cashCollectedLockedCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1.5,
-    borderColor: '#166348',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  cashCollectedLockedText: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: '#166348',
-  },
-  chefDropdownButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1.5,
-    borderColor: '#166348',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  dropdownStatusIndicatorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  dropdownActiveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#166348',
-    marginRight: 8,
-  },
-  dropdownCurrentText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  dropdownMenuCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    overflow: 'hidden',
-  },
-  dropdownMenuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  dropdownMenuItemSelected: {
-    backgroundColor: '#F0FDF4',
-  },
-  dropdownMenuItemText: {
-    fontSize: 13,
-    color: '#334155',
-    fontWeight: '600',
-  },
-  dropdownMenuItemTextSelected: {
-    color: '#166348',
-    fontWeight: '800',
-  },
-  horizontalStepperContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginTop: 18,
-    paddingHorizontal: 4,
-  },
-  horizStepNode: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 52,
-  },
-  horizStepCircle: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
-  },
-  horizStepCircleDone: {
-    backgroundColor: '#166348',
-  },
-  horizStepCircleActive: {
-    backgroundColor: '#166348',
-    shadowColor: '#166348',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.45,
-    shadowRadius: 5,
-    elevation: 4,
-  },
-  horizStepCircleInactive: {
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  horizConnectorBar: {
-    flex: 1,
-    height: 2.5,
-    marginBottom: 14,
-    marginHorizontal: -2,
-    borderRadius: 2,
-    zIndex: 1,
-  },
-  horizConnectorDone: {
-    backgroundColor: '#166348',
-  },
-  horizConnectorInactive: {
-    backgroundColor: '#E2E8F0',
-  },
-  horizStepLabel: {
-    fontSize: 9.5,
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  horizStepLabelDone: {
-    color: '#166348',
-    fontWeight: '700',
-  },
-  horizStepLabelActive: {
-    color: '#0F172A',
-    fontWeight: '900',
-  },
-  horizStepLabelInactive: {
-    color: '#94A3B8',
-    fontWeight: '500',
-  },
+  quickBitesBannerIconBox: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#F59E0B', alignItems: 'center', justifyContent: 'center', shadowColor: '#F59E0B', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.35, shadowRadius: 5, elevation: 3 },
+  quickBitesBannerTitle: { fontSize: 13.5, fontWeight: '900', color: '#92400E', letterSpacing: -0.2 },
+  quickBitesBannerSubtitle: { fontSize: 11.5, color: '#B45309', fontWeight: '600', marginTop: 2, lineHeight: 15 },
+  quickBitesRemainingBox: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: '#FCD34D', minWidth: 58 },
+  quickBitesRemainingNumber: { fontSize: 16, fontWeight: '900', color: '#B45309', letterSpacing: -0.3 },
+  quickBitesRemainingUnit: { fontSize: 8.5, fontWeight: '800', color: '#92400E', textTransform: 'uppercase', letterSpacing: 0.4, marginTop: 1 },
+  chefStatusSelectorBox: { width: '100%', backgroundColor: '#F8FAFC', borderRadius: 16, padding: 14, marginTop: 14, borderWidth: 1, borderColor: '#E2E8F0' },
+  chefSelectorTitle: { fontSize: 12, fontWeight: '800', color: '#334155', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
+  cashCollectedLockedCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', borderWidth: 1.5, borderColor: '#166348', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14 },
+  cashCollectedLockedText: { fontSize: 13.5, fontWeight: '800', color: '#166348' },
+  chefDropdownButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFFFFF', borderWidth: 1.5, borderColor: '#166348', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  dropdownStatusIndicatorRow: { flexDirection: 'row', alignItems: 'center' },
+  dropdownActiveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#166348', marginRight: 8 },
+  dropdownCurrentText: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
+  dropdownMenuCard: { backgroundColor: '#FFFFFF', borderRadius: 14, marginTop: 8, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden' },
+  dropdownMenuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  dropdownMenuItemSelected: { backgroundColor: '#F0FDF4' },
+  dropdownMenuItemText: { fontSize: 13, color: '#334155', fontWeight: '600' },
+  dropdownMenuItemTextSelected: { color: '#166348', fontWeight: '800' },
+  horizontalStepperContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginTop: 18, paddingHorizontal: 4 },
+  horizStepNode: { alignItems: 'center', justifyContent: 'center', width: 52 },
+  horizStepCircle: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', zIndex: 2 },
+  horizStepCircleDone: { backgroundColor: '#166348' },
+  horizStepCircleActive: { backgroundColor: '#166348', shadowColor: '#166348', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.45, shadowRadius: 5, elevation: 4 },
+  horizStepCircleInactive: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1' },
+  horizConnectorBar: { flex: 1, height: 2.5, marginBottom: 14, marginHorizontal: -2, borderRadius: 2, zIndex: 1 },
+  horizConnectorDone: { backgroundColor: '#166348' },
+  horizConnectorInactive: { backgroundColor: '#E2E8F0' },
+  horizStepLabel: { fontSize: 9.5, marginTop: 4, textAlign: 'center' },
+  horizStepLabelDone: { color: '#166348', fontWeight: '700' },
+  horizStepLabelActive: { color: '#0F172A', fontWeight: '900' },
+  horizStepLabelInactive: { color: '#94A3B8', fontWeight: '500' },
   timerSimpleCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
-    shadowColor: '#166348',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 20, padding: 14, marginBottom: 14,
+    borderWidth: 1, borderColor: '#DCFCE7', shadowColor: '#166348', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
   },
-  timerSimpleIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#DCFCE7',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  timerSimpleSuccessCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#166348',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  timerSimpleTitle: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  timerSimpleSubtitle: {
-    fontSize: 11.5,
-    color: '#64748B',
-    fontWeight: '500',
-    marginTop: 1,
-  },
-  timerSimpleDisplayBox: {
-    alignItems: 'flex-end',
-    backgroundColor: '#166348',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  timerSimpleDigits: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: 0.4,
-  },
-  timerSimpleUnit: {
-    fontSize: 8.5,
-    fontWeight: '700',
-    color: '#DCFCE7',
-    textTransform: 'uppercase',
-    marginTop: 1,
-  },
-  extendedBadge: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 6,
-    paddingVertical: 1.5,
-    borderRadius: 6,
-  },
-  extendedBadgeText: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#B45309',
-  },
-  onTimeBadgePill: {
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-  },
-  onTimeBadgePillText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#166348',
-  },
-  scheduleHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 10,
-    marginBottom: 4,
-    position: 'relative',
-  },
-  scheduleHeaderSubtitle: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-    fontWeight: '500',
-  },
-  mergedCountBadge: {
-    position: 'absolute',
-    top: -16,
-    right: -16,
-    backgroundColor: '#F0FDF4',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderBottomLeftRadius: 14,
-    borderTopRightRadius: 22,
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
-    borderTopWidth: 0,
-    borderRightWidth: 0,
-    zIndex: 10,
-  },
-  mergedCountBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#166348',
-    letterSpacing: 0.2,
-  },
-  scheduleCardBlock: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  scheduleTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  scheduleDateBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
-    gap: 6,
-  },
-  scheduleDateBadgeText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  scheduleStatusTag: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 3.5,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  scheduleStatusTagText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#475569',
-  },
-  tagPaused: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FDE68A',
-  },
-  tagTextPaused: {
-    color: '#B45309',
-  },
-  tagDelivered: {
-    backgroundColor: '#DCFCE7',
-    borderColor: '#BBF7D0',
-  },
-  tagTextDelivered: {
-    color: '#15803D',
-  },
-  tagPreparing: {
-    backgroundColor: '#DCFCE7',
-    borderColor: '#86EFAC',
-  },
-  tagTextPreparing: {
-    color: '#166348',
-  },
-  scheduleAddressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    paddingHorizontal: 2,
-    gap: 5,
-  },
-  scheduleAddressText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#475569',
-    fontWeight: '500',
-    lineHeight: 16,
-  },
-  // ✅ coordinate label style (green theme)
-  scheduleCoordText: {
-    fontSize: 10.5,
-    color: '#166348',
-    fontWeight: '700',
-    marginTop: 3,
-    letterSpacing: 0.2,
-  },
-  // ✅ primary-address coordinate label style (green theme)
-  addressCoordText: {
-    fontSize: 11,
-    color: '#166348',
-    fontWeight: '700',
-    marginTop: 4,
-    letterSpacing: 0.2,
-  },
-  scheduleMapBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-  },
-  scheduleMapBtnText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#166348',
-  },
-  schedulePreviewRow: {
-    marginTop: 8,
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-  },
-  schedulePreviewBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
-    borderRadius: 12,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    alignSelf: 'flex-start',
-  },
-  schedulePreviewBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#166348',
-  },
-  individualStatusTrigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginTop: 6,
-  },
-  individualStatusTriggerLabel: {
-    fontSize: 11.5,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  individualStatusTriggerValue: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#166348',
-  },
-  individualDropdownMenu: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    overflow: 'hidden',
-  },
-  individualDropdownOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F8FAFC',
-  },
-  individualDropdownOptionActive: {
-    backgroundColor: '#F0FDF4',
-  },
-  individualDropdownOptionText: {
-    fontSize: 12,
-    color: '#334155',
-    fontWeight: '600',
-  },
-  individualDropdownOptionTextActive: {
-    color: '#166348',
-    fontWeight: '800',
-  },
-  bodyCard: {
-    flex: 1,
-    backgroundColor: '#F4F7F5',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    overflow: 'hidden',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 18,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 90,
-    paddingHorizontal: 20,
-  },
-  emptyIconCircle: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: '#DCFCE7',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0F172A',
-    marginBottom: 6,
-  },
-  emptySubtitle: {
-    fontSize: 13,
-    color: '#64748B',
-    textAlign: 'center',
-    lineHeight: 18,
-    fontWeight: '500',
-  },
+  timerSimpleIconCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center' },
+  timerSimpleSuccessCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#166348', alignItems: 'center', justifyContent: 'center' },
+  timerSimpleTitle: { fontSize: 13.5, fontWeight: '800', color: '#0F172A' },
+  timerSimpleSubtitle: { fontSize: 11.5, color: '#64748B', fontWeight: '500', marginTop: 1 },
+  timerSimpleDisplayBox: { alignItems: 'flex-end', backgroundColor: '#166348', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
+  timerSimpleDigits: { fontSize: 15, fontWeight: '900', color: '#FFFFFF', letterSpacing: 0.4 },
+  timerSimpleUnit: { fontSize: 8.5, fontWeight: '700', color: '#DCFCE7', textTransform: 'uppercase', marginTop: 1 },
+  extendedBadge: { backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 6 },
+  extendedBadgeText: { fontSize: 9.5, fontWeight: '800', color: '#B45309' },
+  onTimeBadgePill: { backgroundColor: '#DCFCE7', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+  onTimeBadgePillText: { fontSize: 11, fontWeight: '800', color: '#166348' },
+  scheduleHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 10, marginBottom: 4, position: 'relative' },
+  scheduleHeaderSubtitle: { fontSize: 12, color: '#64748B', marginTop: 2, fontWeight: '500' },
+  mergedCountBadge: { position: 'absolute', top: -16, right: -16, backgroundColor: '#F0FDF4', paddingHorizontal: 12, paddingVertical: 5, borderBottomLeftRadius: 14, borderTopRightRadius: 22, borderWidth: 1, borderColor: '#DCFCE7', borderTopWidth: 0, borderRightWidth: 0, zIndex: 10 },
+  mergedCountBadgeText: { fontSize: 11, fontWeight: '800', color: '#166348', letterSpacing: 0.2 },
+  scheduleCardBlock: { backgroundColor: '#F8FAFC', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  scheduleTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  scheduleDateBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, borderWidth: 1, borderColor: '#DCFCE7', gap: 6 },
+  scheduleDateBadgeText: { fontSize: 13, fontWeight: '800', color: '#0F172A' },
+  scheduleStatusTag: { backgroundColor: '#F1F5F9', paddingHorizontal: 8, paddingVertical: 3.5, borderRadius: 8, borderWidth: 1, borderColor: '#E2E8F0' },
+  scheduleStatusTagText: { fontSize: 11, fontWeight: '800', color: '#475569' },
+  tagPaused: { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' },
+  tagTextPaused: { color: '#B45309' },
+  tagDelivered: { backgroundColor: '#DCFCE7', borderColor: '#BBF7D0' },
+  tagTextDelivered: { color: '#15803D' },
+  tagPreparing: { backgroundColor: '#DCFCE7', borderColor: '#86EFAC' },
+  tagTextPreparing: { color: '#166348' },
+  scheduleAddressRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8, paddingHorizontal: 2, gap: 5 },
+  scheduleAddressText: { flex: 1, fontSize: 12, color: '#475569', fontWeight: '500', lineHeight: 16 },
+  scheduleCoordText: { fontSize: 10.5, color: '#166348', fontWeight: '700', marginTop: 3, letterSpacing: 0.2 },
+  addressCoordText: { fontSize: 11, color: '#166348', fontWeight: '700', marginTop: 4, letterSpacing: 0.2 },
+  scheduleMapBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: '#CBD5E1' },
+  scheduleMapBtnText: { fontSize: 11, fontWeight: '800', color: '#166348' },
+  schedulePreviewRow: { marginTop: 8, flexDirection: 'row', justifyContent: 'flex-start' },
+  schedulePreviewBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#DCFCE7', borderRadius: 12, paddingVertical: 6, paddingHorizontal: 14, alignSelf: 'flex-start' },
+  schedulePreviewBtnText: { fontSize: 12, fontWeight: '700', color: '#166348' },
+  individualStatusTrigger: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginTop: 6 },
+  individualStatusTriggerLabel: { fontSize: 11.5, color: '#64748B', fontWeight: '600' },
+  individualStatusTriggerValue: { fontSize: 12, fontWeight: '800', color: '#166348' },
+  individualDropdownMenu: { backgroundColor: '#FFFFFF', borderRadius: 10, marginTop: 6, borderWidth: 1, borderColor: '#E2E8F0', overflow: 'hidden' },
+  individualDropdownOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 9, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#F8FAFC' },
+  individualDropdownOptionActive: { backgroundColor: '#F0FDF4' },
+  individualDropdownOptionText: { fontSize: 12, color: '#334155', fontWeight: '600' },
+  individualDropdownOptionTextActive: { color: '#166348', fontWeight: '800' },
+  bodyCard: { flex: 1, backgroundColor: '#F4F7F5', borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: 'hidden' },
+  scrollView: { flex: 1 },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 18 },
+  emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 90, paddingHorizontal: 20 },
+  emptyIconCircle: { width: 76, height: 76, borderRadius: 38, backgroundColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center', marginBottom: 16, borderWidth: 1, borderColor: '#BBF7D0' },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
+  emptySubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center', lineHeight: 18, fontWeight: '500' },
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E8EEE9',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
-    elevation: 2,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  orderIdTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  smallSectionLabel: {
-    fontSize: 9.5,
-    color: '#64748B',
-    fontWeight: '800',
-    letterSpacing: 0.6,
-  },
-  orderIdCodeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 3,
-  },
-  orderIdCodeText: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: -0.3,
-  },
-  copyIconHitbox: {
-    marginLeft: 8,
-    padding: 4,
-  },
-  statusBadgePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  statusBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  dividerLine: {
-    height: 1,
-    backgroundColor: '#F1F5F9',
-    marginVertical: 14,
-  },
-  orderMetaGridRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  orderMetaColumn: {
-    flex: 1,
-  },
-  verticalSplitter: {
-    width: 1,
-    height: 40,
-    backgroundColor: '#E2E8F0',
-  },
-  metaLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 3,
-  },
-  metaLabelText: {
-    fontSize: 9.5,
-    color: '#64748B',
-    fontWeight: '800',
-    letterSpacing: 0.4,
-  },
-  metaValueText: {
-    fontSize: 12.5,
-    color: '#0F172A',
-    fontWeight: '700',
-  },
-  metaValueTextBold: {
-    fontSize: 12.5,
-    color: '#0F172A',
-    fontWeight: '800',
-  },
-  metaSubValueText: {
-    fontSize: 11.5,
-    color: '#475569',
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  cardSectionHeading: {
-    fontSize: 15.5,
-    fontWeight: '800',
-    color: '#0F172A',
-    marginBottom: 12,
-    letterSpacing: -0.2,
-  },
-  customerInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  customerAvatarIconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  customerDetailsCol: {
-    flex: 1,
-  },
-  customerName: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#0F172A',
-    marginBottom: 2,
-  },
-  customerMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  customerMetaText: {
-    fontSize: 12,
-    color: '#475569',
-    fontWeight: '600',
-  },
-  customerMetaAltText: {
-    fontSize: 12,
-    color: '#B45309',
-    fontWeight: '700',
-  },
-  viewProfileBtn: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: '#F8FAFC',
-  },
-  viewProfileBtnText: {
-    color: '#166348',
-    fontSize: 10.5,
-    fontWeight: '800',
-  },
-  customerActionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 14,
-    gap: 10,
-  },
-  actionOutlineBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 14,
-    paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.02,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  actionOutlineBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#166348',
-  },
-  mealHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  mealThumbnail: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
-    marginRight: 12,
-    backgroundColor: '#F1F5F9',
-  },
-  mealHeaderDetailsCol: {
-    flex: 1,
-  },
-  mealTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  mealTitleName: {
-    fontSize: 15.5,
-    fontWeight: '800',
-    color: '#0F172A',
-    lineHeight: 20,
-    flexShrink: 1,
-  },
-  mealPackageSubtitle: {
-    fontSize: 11.5,
-    color: '#64748B',
-    fontWeight: '600',
-    marginTop: 2,
-    lineHeight: 16,
-  },
-  simplePlanInfoContainer: {
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    marginBottom: 10,
-  },
-  simplePlanTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  simplePlanTitleText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  simplePlanDaysText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  simplePlanDetailsText: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '500',
-    marginTop: 2,
-  },
-
-  /* ✅ Dynamic Delivery Date & Slot Strip (Chef Green Theme) */
-  deliveryInfoStripContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0FDF4',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#DCFCE7',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 10,
-  },
-  deliveryInfoCell: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  deliveryInfoIconCircle: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: 'rgba(22, 99, 72, 0.10)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  deliveryInfoLabel: {
-    fontSize: 9.5,
-    fontWeight: '800',
-    color: '#64748B',
-    letterSpacing: 0.4,
-    marginBottom: 1,
-  },
-  deliveryInfoValue: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.2,
-  },
-  deliveryInfoDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: 'rgba(22, 99, 72, 0.15)',
-    marginHorizontal: 10,
-  },
-
-  centeredPreviewContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 6,
-  },
-  previewMenuCenteredCTA: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F8FAFC',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  previewMenuCenteredCTAText: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: '#166348',
-  },
-  totalAmountRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  totalAmountLabel: {
-    fontSize: 14.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  taxInclusiveSubtext: {
-    fontSize: 11,
-    color: '#94A3B8',
-    fontWeight: '500',
-    marginTop: 1,
-  },
-  totalAmountValue: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: '#166348',
-  },
-  simpleInlineToggleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    marginTop: 6,
-    paddingVertical: 4,
-  },
-  simpleInlineToggleText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#166348',
-  },
-  priceBreakdownFrame: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    marginTop: 10,
-  },
-  priceDescriptionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 3.5,
-  },
-  priceDescriptionLabel: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '500',
-  },
-  priceDescriptionValue: {
-    fontSize: 12.5,
-    color: '#0F172A',
-    fontWeight: '700',
-  },
-  freeTextHighlight: {
-    color: '#166348',
-    fontWeight: '800',
-  },
-  discountValueText: {
-    fontSize: 12.5,
-    color: '#166348',
-    fontWeight: '800',
-  },
-  paymentModeStrip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  paymentModeLabel: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  paymentMethodPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 2.5,
-    borderRadius: 6,
-  },
-  paymentCodPill: {
-    backgroundColor: '#FEF3C7',
-  },
-  paymentOnlinePill: {
-    backgroundColor: '#DCFCE7',
-  },
-  paymentMethodPillText: {
-    fontSize: 10.5,
-    fontWeight: '800',
-  },
-  paymentCodPillText: {
-    color: '#B45309',
-  },
-  paymentOnlinePillText: {
-    color: '#166348',
-  },
-  addressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  addressLeftCol: {
-    flex: 1,
-    marginRight: 10,
-  },
-  addressTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 5,
-  },
-  addressHeaderTitle: {
-    fontSize: 12.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  addressBodyText: {
-    fontSize: 12,
-    color: '#475569',
-    lineHeight: 18,
-    fontWeight: '500',
-  },
-  viewOnMapBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#FFFFFF',
-  },
-  viewOnMapBtnText: {
-    color: '#166348',
-    fontSize: 11.5,
-    fontWeight: '800',
-  },
-  timerBannerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFBEB',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#FEF3C7',
-    marginBottom: 16,
-  },
-  timerIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#FEF3C7',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  timerTextContainer: {
-    flex: 1,
-  },
-  timerMainHeading: {
-    fontSize: 12.5,
-    color: '#1E293B',
-    fontWeight: '700',
-    lineHeight: 17,
-  },
-  timerHighlightBold: {
-    color: '#D97706',
-    fontWeight: '900',
-  },
-  timerSubHeading: {
-    fontSize: 11.5,
-    color: '#64748B',
-    marginTop: 2,
-    fontWeight: '500',
-  },
-  bottomButtonsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginTop: 10,
-    marginBottom: 12,
-  },
-  rejectBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    borderRadius: 16,
-    paddingVertical: 15,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  rejectBtnText: {
-    color: '#DC2626',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  acceptBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 16,
-    paddingVertical: 15,
-    backgroundColor: '#166348',
-    shadowColor: '#166348',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  acceptBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'flex-end',
-  },
-  previewModalContent: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -10 },
-    shadowOpacity: 0.12,
-    shadowRadius: 24,
-    elevation: 25,
-  },
-  drawerHandle: {
-    width: 44,
-    height: 5,
-    backgroundColor: '#CBD5E1',
-    borderRadius: 10,
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  previewCloseBtn: {
-    position: 'absolute',
-    top: 18,
-    right: 20,
-    backgroundColor: '#0F172A',
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 20,
-  },
-  previewHeaderCentered: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-    paddingHorizontal: 30,
-  },
-  previewTitle: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: -0.4,
-    textAlign: 'center',
-  },
-  previewSubtitle: {
-    fontSize: 12.5,
-    color: '#64748B',
-    marginTop: 3,
-    fontWeight: '500',
-    textAlign: 'center',
-    lineHeight: 17,
-  },
-  pillTabsWrapperBlock: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    backgroundColor: '#F1F5F9',
-    padding: 6,
-    borderRadius: 16,
-    marginBottom: 14,
-    marginTop: 8,
-  },
-  tabPillContainerItem: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 12,
-    gap: 6,
-  },
-  tabPillContainerItemActive: {
-    backgroundColor: '#166348',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  tabPillContainerItemInactive: {
-    backgroundColor: 'transparent',
-  },
-  tabPillTextString: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  tabPillTextStringActive: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  tabPillTextStringInactive: {
-    color: '#64748B',
-  },
-  tabPillCounterBadgeGlow: {
-    borderRadius: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    minWidth: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabPillCounterBadgeGlowActive: {
-    backgroundColor: '#FFFFFF',
-  },
-  tabPillCounterBadgeGlowInactive: {
-    backgroundColor: '#E2E8F0',
-  },
-  tabPillCounterBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  tabPillCounterBadgeTextActive: {
-    color: '#166348',
-  },
-  tabPillCounterBadgeTextInactive: {
-    color: '#475569',
-  },
-  premiumMealBoxContentCardFrame: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: 16,
-    marginBottom: 90,
-  },
-  subCardHeaderStripLabel: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    paddingBottom: 10,
-    marginBottom: 8,
-  },
-  subCardHeaderStripLabelText: {
-    fontSize: 13.5,
-    fontWeight: '900',
-    color: '#0F172A',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    textAlign: 'center',
-  },
-  emptyItemsText: {
-    textAlign: 'center',
-    color: '#94A3B8',
-    fontStyle: 'italic',
-    paddingVertical: 30,
-  },
-  sectionHeaderLabelContainerTag: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-    marginTop: 14,
-    marginBottom: 8,
-  },
-  sectionHeaderLabelContainerTagText: {
-    fontSize: 11,
-    fontWeight: '900',
-    color: '#D97706',
-    letterSpacing: 0.8,
-  },
-  previewSelectionRowItemBlock: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  modalCircularFoodThumbGraphic: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: '#F1F5F9',
-  },
-  modalItemNameTextString: {
-    fontSize: 14.5,
-    fontWeight: '800',
-    color: '#0F172A',
-    flexShrink: 1,
-  },
-  includedBadgePillBox: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  includedBadgePillBoxStandard: {
-    backgroundColor: '#F1F5F9',
-  },
-  includedBadgePillBoxExtra: {
-    backgroundColor: '#FFEDD5',
-  },
-  includedBadgePillBoxText: {
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  includedBadgePillBoxTextStandard: {
-    color: '#334155',
-  },
-  includedBadgePillBoxTextExtra: {
-    color: '#C2410C',
-  },
-  previewCategoryCard: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  previewCategoryHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  previewCategoryTitle: {
-    fontSize: 15.5,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  previewItemCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
-  },
-  previewItemImage: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    marginRight: 12,
-  },
-  previewItemName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0F172A',
-    flexShrink: 1,
-  },
-  extraTag: {
-    backgroundColor: '#FFEDD5',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 10,
-    marginLeft: 8,
-  },
-  extraTagText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#C2410C',
-  },
-  modalAbsoluteFooterCTAWrapper: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 32,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 20,
-    zIndex: 99,
-  },
-  modalAbsoluteFooterCTAButtonSolid: {
-    backgroundColor: '#166348',
-    paddingVertical: 18,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#166348',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  modalAbsoluteFooterCTAButtonSolidText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-  },
+    backgroundColor: '#FFFFFF', borderRadius: 22, padding: 16, marginBottom: 14,
+    borderWidth: 1, borderColor: '#E8EEE9', shadowColor: '#0F172A', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.04, shadowRadius: 12, elevation: 2, position: 'relative', overflow: 'hidden',
+  },
+  orderIdTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  smallSectionLabel: { fontSize: 9.5, color: '#64748B', fontWeight: '800', letterSpacing: 0.6 },
+  orderIdCodeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+  orderIdCodeText: { fontSize: 17, fontWeight: '900', color: '#0F172A', letterSpacing: -0.3 },
+  copyIconHitbox: { marginLeft: 8, padding: 4 },
+  statusBadgePill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', paddingHorizontal: 11, paddingVertical: 5, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  statusBadgeText: { fontSize: 11, fontWeight: '800' },
+  dividerLine: { height: 1, backgroundColor: '#F1F5F9', marginVertical: 14 },
+  orderMetaGridRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  orderMetaColumn: { flex: 1 },
+  verticalSplitter: { width: 1, height: 40, backgroundColor: '#E2E8F0' },
+  metaLabelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 3 },
+  metaLabelText: { fontSize: 9.5, color: '#64748B', fontWeight: '800', letterSpacing: 0.4 },
+  metaValueText: { fontSize: 12.5, color: '#0F172A', fontWeight: '700' },
+  metaValueTextBold: { fontSize: 12.5, color: '#0F172A', fontWeight: '800' },
+  metaSubValueText: { fontSize: 11.5, color: '#475569', fontWeight: '600', marginTop: 1 },
+  cardSectionHeading: { fontSize: 15.5, fontWeight: '800', color: '#0F172A', marginBottom: 12, letterSpacing: -0.2 },
+  customerInfoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  customerAvatarIconBox: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#F0FDF4', borderWidth: 1, borderColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  customerDetailsCol: { flex: 1 },
+  customerName: { fontSize: 15, fontWeight: '800', color: '#0F172A', marginBottom: 2 },
+  customerMetaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+  customerMetaText: { fontSize: 12, color: '#475569', fontWeight: '600' },
+  viewProfileBtn: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: '#F8FAFC' },
+  viewProfileBtnText: { color: '#166348', fontSize: 10.5, fontWeight: '800' },
+  customerActionsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, gap: 10 },
+  actionOutlineBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 14, paddingVertical: 10, backgroundColor: '#FFFFFF' },
+  actionOutlineBtnText: { fontSize: 13, fontWeight: '700', color: '#166348' },
+  mealHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  mealThumbnail: { width: 52, height: 52, borderRadius: 14, marginRight: 12, backgroundColor: '#F1F5F9' },
+  mealHeaderDetailsCol: { flex: 1 },
+  mealTitleRow: { flexDirection: 'row', alignItems: 'center' },
+  mealTitleName: { fontSize: 15.5, fontWeight: '800', color: '#0F172A', lineHeight: 20, flexShrink: 1 },
+  mealPackageSubtitle: { fontSize: 11.5, color: '#64748B', fontWeight: '600', marginTop: 2, lineHeight: 16 },
+  simplePlanInfoContainer: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9', marginBottom: 10 },
+  simplePlanTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  simplePlanTitleText: { fontSize: 13, fontWeight: '800', color: '#0F172A' },
+  simplePlanDaysText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
+  simplePlanDetailsText: { fontSize: 12, color: '#64748B', fontWeight: '500', marginTop: 2 },
+  deliveryInfoStripContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FDF4', borderRadius: 14, borderWidth: 1, borderColor: '#DCFCE7', paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10 },
+  deliveryInfoCell: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  deliveryInfoLabel: { fontSize: 9.5, fontWeight: '800', color: '#64748B', letterSpacing: 0.4, marginBottom: 1 },
+  deliveryInfoValue: { fontSize: 13, fontWeight: '800', color: '#0F172A', letterSpacing: -0.2 },
+  deliveryInfoDivider: { width: 1, height: 32, backgroundColor: 'rgba(22, 99, 72, 0.15)', marginHorizontal: 10 },
+  centeredPreviewContainer: { alignItems: 'center', justifyContent: 'center', marginVertical: 6 },
+  previewMenuCenteredCTA: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  previewMenuCenteredCTAText: { fontSize: 12.5, fontWeight: '800', color: '#166348' },
+  totalAmountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  totalAmountLabel: { fontSize: 14.5, fontWeight: '800', color: '#0F172A' },
+  taxInclusiveSubtext: { fontSize: 11, color: '#94A3B8', fontWeight: '500', marginTop: 1 },
+  totalAmountValue: { fontSize: 20, fontWeight: '900', color: '#166348' },
+  simpleInlineToggleBtn: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginTop: 6, paddingVertical: 4 },
+  simpleInlineToggleText: { fontSize: 12.5, fontWeight: '700', color: '#166348' },
+  priceBreakdownFrame: { backgroundColor: '#F8FAFC', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#E2E8F0', marginTop: 10 },
+  priceDescriptionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 3.5 },
+  priceDescriptionLabel: { fontSize: 12, color: '#64748B', fontWeight: '500' },
+  priceDescriptionValue: { fontSize: 12.5, color: '#0F172A', fontWeight: '700' },
+  freeTextHighlight: { color: '#166348', fontWeight: '800' },
+  discountValueText: { fontSize: 12.5, color: '#166348', fontWeight: '800' },
+  paymentModeStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFFFFF', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10, marginTop: 8, borderWidth: 1, borderColor: '#E2E8F0' },
+  paymentModeLabel: { fontSize: 11.5, fontWeight: '600', color: '#334155' },
+  paymentMethodPill: { paddingHorizontal: 8, paddingVertical: 2.5, borderRadius: 6 },
+  paymentCodPill: { backgroundColor: '#FEF3C7' },
+  paymentOnlinePill: { backgroundColor: '#DCFCE7' },
+  paymentMethodPillText: { fontSize: 10.5, fontWeight: '800' },
+  paymentCodPillText: { color: '#B45309' },
+  paymentOnlinePillText: { color: '#166348' },
+  addressRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  addressLeftCol: { flex: 1, marginRight: 10 },
+  addressTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 5 },
+  addressHeaderTitle: { fontSize: 12.5, fontWeight: '800', color: '#0F172A' },
+  addressBodyText: { fontSize: 12, color: '#475569', lineHeight: 18, fontWeight: '500' },
+  viewOnMapBtn: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#CBD5E1', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#FFFFFF' },
+  viewOnMapBtnText: { color: '#166348', fontSize: 11.5, fontWeight: '800' },
+  timerBannerCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFBEB', borderRadius: 18, padding: 14, borderWidth: 1, borderColor: '#FEF3C7', marginBottom: 16 },
+  timerIconCircle: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#FEF3C7', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  timerTextContainer: { flex: 1 },
+  timerMainHeading: { fontSize: 12.5, color: '#1E293B', fontWeight: '700', lineHeight: 17 },
+  timerHighlightBold: { color: '#D97706', fontWeight: '900' },
+  timerSubHeading: { fontSize: 11.5, color: '#64748B', marginTop: 2, fontWeight: '500' },
+  bottomButtonsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 10, marginBottom: 12 },
+  rejectBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#FCA5A5', borderRadius: 16, paddingVertical: 15, backgroundColor: '#FFFFFF' },
+  rejectBtnText: { color: '#DC2626', fontSize: 14, fontWeight: '800' },
+  acceptBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 16, paddingVertical: 15, backgroundColor: '#166348' },
+  acceptBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
+  previewModalContent: { width: '100%', backgroundColor: '#FFFFFF', borderTopLeftRadius: 32, borderTopRightRadius: 32, paddingHorizontal: 20, paddingTop: 16 },
+  drawerHandle: { width: 44, height: 5, backgroundColor: '#CBD5E1', borderRadius: 10, alignSelf: 'center', marginBottom: 16 },
+  previewCloseBtn: { position: 'absolute', top: 18, right: 20, backgroundColor: '#0F172A', width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', zIndex: 20 },
+  previewHeaderCentered: { alignItems: 'center', justifyContent: 'center', marginBottom: 12, paddingHorizontal: 30 },
+  previewTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A', letterSpacing: -0.4, textAlign: 'center' },
+  previewSubtitle: { fontSize: 12.5, color: '#64748B', marginTop: 3, fontWeight: '500', textAlign: 'center', lineHeight: 17 },
+  pillTabsWrapperBlock: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#F1F5F9', padding: 6, borderRadius: 16, marginBottom: 14, marginTop: 8 },
+  tabPillContainerItem: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 12, gap: 6 },
+  tabPillContainerItemActive: { backgroundColor: '#166348' },
+  tabPillContainerItemInactive: { backgroundColor: 'transparent' },
+  tabPillTextString: { fontSize: 13, fontWeight: '600' },
+  tabPillTextStringActive: { color: '#FFFFFF', fontWeight: '800' },
+  tabPillTextStringInactive: { color: '#64748B' },
+  tabPillCounterBadgeGlow: { borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, minWidth: 20, alignItems: 'center', justifyContent: 'center' },
+  tabPillCounterBadgeGlowActive: { backgroundColor: '#FFFFFF' },
+  tabPillCounterBadgeGlowInactive: { backgroundColor: '#E2E8F0' },
+  tabPillCounterBadgeText: { fontSize: 10, fontWeight: '800' },
+  tabPillCounterBadgeTextActive: { color: '#166348' },
+  tabPillCounterBadgeTextInactive: { color: '#475569' },
+  premiumMealBoxContentCardFrame: { backgroundColor: '#F8FAFC', borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0', padding: 16, marginBottom: 90 },
+  subCardHeaderStripLabel: { borderBottomWidth: 1, borderBottomColor: '#E2E8F0', paddingBottom: 10, marginBottom: 8 },
+  subCardHeaderStripLabelText: { fontSize: 13.5, fontWeight: '900', color: '#0F172A', textTransform: 'uppercase', letterSpacing: 0.8, textAlign: 'center' },
+  emptyItemsText: { textAlign: 'center', color: '#94A3B8', fontStyle: 'italic', paddingVertical: 30 },
+  sectionHeaderLabelContainerTag: { backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, alignSelf: 'flex-start', marginTop: 14, marginBottom: 8 },
+  sectionHeaderLabelContainerTagText: { fontSize: 11, fontWeight: '900', color: '#D97706', letterSpacing: 0.8 },
+  previewSelectionRowItemBlock: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  modalCircularFoodThumbGraphic: { width: 46, height: 46, borderRadius: 14, backgroundColor: '#F1F5F9' },
+  modalItemNameTextString: { fontSize: 14.5, fontWeight: '800', color: '#0F172A', flexShrink: 1 },
+  includedBadgePillBox: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  includedBadgePillBoxStandard: { backgroundColor: '#F1F5F9' },
+  includedBadgePillBoxExtra: { backgroundColor: '#FFEDD5' },
+  includedBadgePillBoxText: { fontSize: 11, fontWeight: '800' },
+  includedBadgePillBoxTextStandard: { color: '#334155' },
+  includedBadgePillBoxTextExtra: { color: '#C2410C' },
+  previewCategoryCard: { backgroundColor: '#F8FAFC', borderRadius: 18, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: '#E2E8F0' },
+  previewCategoryHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  previewCategoryTitle: { fontSize: 15.5, fontWeight: '800', color: '#0F172A' },
+  previewItemCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 14, marginBottom: 8, borderWidth: 1, borderColor: '#F1F5F9' },
+  previewItemImage: { width: 44, height: 44, borderRadius: 12, marginRight: 12 },
+  previewItemName: { fontSize: 14, fontWeight: '700', color: '#0F172A', flexShrink: 1 },
+  extraTag: { backgroundColor: '#FFEDD5', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 10, marginLeft: 8 },
+  extraTagText: { fontSize: 11, fontWeight: '800', color: '#C2410C' },
+  modalAbsoluteFooterCTAWrapper: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32, borderTopLeftRadius: 28, borderTopRightRadius: 28, zIndex: 99 },
+  modalAbsoluteFooterCTAButtonSolid: { backgroundColor: '#166348', paddingVertical: 18, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  modalAbsoluteFooterCTAButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 });

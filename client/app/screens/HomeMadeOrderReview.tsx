@@ -1,4 +1,3 @@
-// screens/HomeMadeOrderReview.tsx
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
@@ -30,16 +29,12 @@ import {
   ActiveAddress,
 } from '@/src/lib/authStorage';
 
-// Enable LayoutAnimation for Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
 const { width, height } = Dimensions.get('window');
 
-// ─── QuickBites delivery window (in minutes) ─────────────────────────
-// This window covers BOTH the chef cooking the dish AND the delivery
-// to the customer. The whole promise is "within 75 minutes of order".
 const QUICK_BITES_WINDOW_MINUTES = 75;
 
 const ArrowLeftIcon = () => (
@@ -60,7 +55,6 @@ interface HomeMadeCartItem {
   isVeg?: boolean;
 }
 
-// Static UI-only shape for delivery date cards (no booking logic attached)
 interface DeliveryDateUICard {
   key: string;
   day: string;
@@ -69,16 +63,12 @@ interface DeliveryDateUICard {
   isToday: boolean;
 }
 
-// Static UI-only shape for delivery time slot rows (no logic attached)
 interface DeliverySlotUIRow {
   id: string;
   time: string;
   type: string;
 }
 
-// ─── Dynamic UI-only delivery date list (built from today onwards) ───
-// Today's card is flagged with `isToday: true` so it can be rendered
-// disabled. Initial selection defaults to the first non-today date.
 const buildDeliveryDates = (): DeliveryDateUICard[] => {
   const list: DeliveryDateUICard[] = [];
   const now = new Date();
@@ -101,7 +91,6 @@ const buildDeliveryDates = (): DeliveryDateUICard[] => {
 
 const STATIC_DELIVERY_DATES: DeliveryDateUICard[] = buildDeliveryDates();
 
-// ─── Static UI-only delivery time slot list ─────────────────────────
 const STATIC_DELIVERY_SLOTS: DeliverySlotUIRow[] = [
   { id: 's1', time: '7:00 AM - 9:00 AM', type: 'Standard Delivery' },
   { id: 's2', time: '9:00 AM - 11:00 AM', type: 'Standard Delivery' },
@@ -118,7 +107,6 @@ const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefi
   return addr.fullAddress || '';
 };
 
-// ─── Helper: format a Date to a short local time string (e.g. "4:30 PM") ───
 const formatTimeShort = (d: Date | null): string => {
   if (!d) return '';
   try {
@@ -132,7 +120,6 @@ const formatTimeShort = (d: Date | null): string => {
   }
 };
 
-// ─── Helper: format today's date as "17 Sep" ───
 const formatTodayShort = (d: Date): string => {
   try {
     const day = d.getDate();
@@ -147,7 +134,6 @@ const HomeMadeOrderReview = () => {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
 
-  // Extract custom parameters injected from HomeMadeItemScreen route params
   const params = route.params || {};
   const chefId = params.chefId || '';
   const chefName = params.chefName || 'Chef Partner';
@@ -161,13 +147,6 @@ const HomeMadeOrderReview = () => {
   const userId = params.userId || '';
   const userName = params.userName || '';
 
-  // ─── QuickBites detection ────────────────────────────────────────────
-  // If the incoming flag is "true", OR the category/page title normalizes
-  // to "quickbites" (case- and space-insensitive), we switch into
-  // QuickBites flow: same-day delivery within 75 minutes of order,
-  // INCLUDING cooking time and delivery time.
-  // This does NOT affect homemade / mealbox / catering orders that don't
-  // match the QuickBites name.
   const isQuickBites = useMemo(() => {
     if (String(params.isQuickBites || '').toLowerCase() === 'true') return true;
     const raw = String(params.category || pageTitle || '');
@@ -175,8 +154,6 @@ const HomeMadeOrderReview = () => {
     return normalized === 'quickbites';
   }, [params.isQuickBites, params.category, pageTitle]);
 
-  // Deadline display (now + 75 min, cooking + delivery included).
-  // Recomputed on mount / when flow toggles.
   const [quickBitesDeadline, setQuickBitesDeadline] = useState<Date | null>(null);
   useEffect(() => {
     if (isQuickBites) {
@@ -188,7 +165,6 @@ const HomeMadeOrderReview = () => {
     }
   }, [isQuickBites]);
 
-  // Parse incoming cart items from HomeMadeItemScreen
   const cartItems: HomeMadeCartItem[] = useMemo(() => {
     try {
       const parsed = typeof itemsParam === 'string' ? JSON.parse(itemsParam) : itemsParam;
@@ -199,18 +175,15 @@ const HomeMadeOrderReview = () => {
     return [];
   }, [itemsParam]);
 
-  // Local mutable copy so user can adjust quantities on the review screen
   const [editableItems, setEditableItems] = useState<HomeMadeCartItem[]>(cartItems);
 
   useEffect(() => {
     setEditableItems(cartItems);
   }, [cartItems]);
 
-  // Dynamic User State
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [isLoadingAddress, setIsLoadingAddress] = useState<boolean>(true);
 
-  // Active + Saved Addresses (same source as Home.tsx)
   const [activeAddress, setActiveAddress] = useState<ActiveAddress | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string>('');
@@ -219,16 +192,12 @@ const HomeMadeOrderReview = () => {
   const [addressDetails, setAddressDetails] = useState<string>('');
   const [addressPhone, setAddressPhone] = useState<string>(params.phone || '');
 
-  // Address chooser bottom sheet
   const [isAddressSheetVisible, setIsAddressSheetVisible] = useState<boolean>(false);
-
-  // Legacy manual address modal
   const [isAddressModalVisible, setIsAddressModalVisible] = useState<boolean>(false);
   const [inputTitle, setInputTitle] = useState<string>('');
   const [inputDetails, setInputDetails] = useState<string>('');
   const [inputPhone, setInputPhone] = useState<string>('');
 
-  // Special Instructions & Phone States
   const [selectedInstructionTag, setSelectedInstructionTag] = useState<string>('');
   const [chefNotesText, setChefNotesText] = useState<string>('');
   const [contactPhoneNumber, setContactPhoneNumber] = useState<string>(
@@ -236,8 +205,6 @@ const HomeMadeOrderReview = () => {
   );
   const [alternatePhoneNumber, setAlternatePhoneNumber] = useState<string>('');
 
-  // ─── Delivery Date & Slot UI-only selection state (no booking logic) ───
-  // Default selection = first NON-today date (tomorrow).
   const [selectedDeliveryDateKey, setSelectedDeliveryDateKey] = useState<string>(
     (STATIC_DELIVERY_DATES.find((d) => !d.isToday) || STATIC_DELIVERY_DATES[0])?.key || ''
   );
@@ -245,11 +212,9 @@ const HomeMadeOrderReview = () => {
     STATIC_DELIVERY_SLOTS[0]?.id || ''
   );
 
-  // ─── Derived human-readable labels for date & slot (sent to backend/cart) ───
   const selectedDeliveryDateLabel = useMemo(() => {
     const match = STATIC_DELIVERY_DATES.find((d) => d.key === selectedDeliveryDateKey);
     if (!match) return '';
-    // Display "Today" for the current day if it somehow gets selected
     const dayLabel = match.isToday ? 'Today' : match.day;
     return `${dayLabel}, ${match.date} ${match.label}`;
   }, [selectedDeliveryDateKey]);
@@ -259,10 +224,6 @@ const HomeMadeOrderReview = () => {
     return match ? match.time : '';
   }, [selectedDeliverySlotId]);
 
-  // ─── QuickBites derived labels (same-day, within 75 minutes) ──────────
-  // ✅ NEW: The slot label is now just the clock time in "4:30 PM" format,
-  // e.g. "4:30 PM". No long text — this is what gets stored in MongoDB
-  // and displayed on the Cart, Checkout, and Order Confirmation screens.
   const quickBitesDateLabel = useMemo(() => {
     const now = new Date();
     return `Today, ${formatTodayShort(now)}`;
@@ -273,7 +234,6 @@ const HomeMadeOrderReview = () => {
     return formatTimeShort(quickBitesDeadline);
   }, [quickBitesDeadline]);
 
-  // Effective labels used in payload + params — QuickBites overrides
   const effectiveDeliveryDateLabel = isQuickBites
     ? quickBitesDateLabel
     : selectedDeliveryDateLabel;
@@ -282,7 +242,6 @@ const HomeMadeOrderReview = () => {
     ? quickBitesSlotLabel
     : selectedDeliverySlotLabel;
 
-  // Submitting state
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const applyActiveAddressToUI = (addr: ActiveAddress | SavedAddress | null) => {
@@ -307,13 +266,11 @@ const HomeMadeOrderReview = () => {
     if (addr.id) setSelectedAddressId(addr.id);
   };
 
-  // Fetch logged in user + activeAddress + savedAddresses (same as Home)
   useFocusEffect(
     useCallback(() => {
       const loadUser = async () => {
         setIsLoadingAddress(true);
         try {
-          // 1) Cached session first (fast)
           const cached = await getUser();
           if (cached) {
             setCurrentUser(cached);
@@ -335,7 +292,6 @@ const HomeMadeOrderReview = () => {
             }
           }
 
-          // 2) Fresh from server
           const freshUser = await refreshUser();
           if (freshUser) {
             setCurrentUser(freshUser);
@@ -356,7 +312,6 @@ const HomeMadeOrderReview = () => {
               setSavedAddresses(freshUser.savedAddresses);
             }
           } else {
-            // Fallback API
             try {
               const meRes = await api.get('/auth/me');
               if (meRes.data && meRes.data.user) {
@@ -399,7 +354,6 @@ const HomeMadeOrderReview = () => {
     { id: 'noonion', label: 'No onion & garlic', icon: '🚫' },
   ];
 
-  // Compute live totals from editable items
   const { computedTotalItems, computedTotalPrice } = useMemo(() => {
     let count = 0;
     let price = 0;
@@ -410,12 +364,10 @@ const HomeMadeOrderReview = () => {
     return { computedTotalItems: count, computedTotalPrice: price };
   }, [editableItems]);
 
-  // Price breakdown (homemade items typically have a flat small delivery fee)
   const DELIVERY_FEE = 0;
   const TAX_FEE = 0;
   const grandTotal = computedTotalPrice + DELIVERY_FEE + TAX_FEE;
 
-  // Quantity controls
   const updateEditableItemQuantity = (itemId: string, newQty: number) => {
     if (newQty < 1) return;
     setEditableItems((prev) =>
@@ -507,12 +459,6 @@ const HomeMadeOrderReview = () => {
     try {
       setIsSubmitting(true);
 
-      // For QuickBites, recompute the deadline at the exact moment of order
-      // placement so the "within 75 minutes (cooking + delivery)" window is
-      // anchored to now.
-      //
-      // ✅ NEW: The slot label stored in MongoDB is now just the time
-      // string ("4:30 PM"). No "ASAP", no long description.
       let finalDeliveryDate = effectiveDeliveryDateLabel;
       let finalDeliverySlot = effectiveDeliverySlotLabel;
 
@@ -522,7 +468,6 @@ const HomeMadeOrderReview = () => {
           orderTime.getTime() + QUICK_BITES_WINDOW_MINUTES * 60 * 1000
         );
         finalDeliveryDate = `Today, ${formatTodayShort(orderTime)}`;
-        // ✅ Just the clock time, e.g. "4:30 PM"
         finalDeliverySlot = formatTimeShort(deadline);
       }
 
@@ -544,8 +489,6 @@ const HomeMadeOrderReview = () => {
           selectedQtyConfig: it.selectedQtyConfig,
           isVeg: it.isVeg,
         })),
-        // ✅ Homemade delivery date & slot sent at TOP-LEVEL so cart.ts can
-        // persist them directly. The slot is just "4:30 PM" for QuickBites.
         deliveryDate: finalDeliveryDate,
         deliverySlot: finalDeliverySlot,
         orderDetails: {
@@ -560,11 +503,8 @@ const HomeMadeOrderReview = () => {
           pageTitle: pageTitle,
           chefRating: chefRating,
           chefLocation: chefLocation,
-          // ✅ Legacy keys preserved for backward compatibility
           deliveryDateKey: selectedDeliveryDateKey,
           deliverySlotId: selectedDeliverySlotId,
-          // ✅ New human-readable mirrors too, so downstream screens that read
-          // orderDetails.deliveryDate / orderDetails.deliverySlot work
           deliveryDate: finalDeliveryDate,
           deliverySlot: finalDeliverySlot,
           deliveryTimeSlot: finalDeliverySlot,
@@ -584,10 +524,9 @@ const HomeMadeOrderReview = () => {
             chefName,
             phone: contactPhoneNumber,
             alternatePhone: alternatePhoneNumber,
-            // ✅ Pass through so CartScreen can immediately render even before
-            // the API response is re-fetched
             deliveryDate: finalDeliveryDate,
             deliverySlot: finalDeliverySlot,
+            isQuickBites: isQuickBites ? 'true' : 'false',
           },
         });
       } else {
@@ -606,7 +545,6 @@ const HomeMadeOrderReview = () => {
       <StatusBar barStyle="dark-content" backgroundColor="#FAF8F5" />
 
       <View style={styles.rootContainer}>
-        {/* Top Header Section */}
         <View style={styles.headerContainer}>
           <TouchableOpacity
             style={styles.backButtonHitbox}
@@ -624,7 +562,6 @@ const HomeMadeOrderReview = () => {
           style={styles.scrollViewContainer}
           contentContainerStyle={styles.scrollContentContainer}
         >
-          {/* CHEF SUMMARY CARD */}
           <View style={styles.chefSummaryCard}>
             <Image
               source={{ uri: chefImage || 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400' }}
@@ -671,7 +608,6 @@ const HomeMadeOrderReview = () => {
             </View>
           </View>
 
-          {/* ORDER ITEMS LIST */}
           <View style={styles.orderItemsOuterContainer}>
             <View style={styles.sectionHeaderFlexContainer}>
               <Text style={styles.cardSectionMainHeaderLabelTitle}>Your Order</Text>
@@ -763,7 +699,6 @@ const HomeMadeOrderReview = () => {
             )}
           </View>
 
-          {/* PRIMARY PHONE NUMBER (READ-ONLY) */}
           <View style={styles.phoneNumberVerificationOuterContainer}>
             <View style={styles.phoneNumberLeftInfoContentLayoutRow}>
               <View style={styles.iconCircleWrapper}>
@@ -782,7 +717,6 @@ const HomeMadeOrderReview = () => {
             />
           </View>
 
-          {/* ALTERNATIVE MOBILE NUMBER */}
           <View style={styles.phoneNumberVerificationOuterContainer}>
             <View style={styles.phoneNumberLeftInfoContentLayoutRow}>
               <View style={[styles.iconCircleWrapper, { backgroundColor: 'rgba(15, 56, 42, 0.06)' }]}>
@@ -804,7 +738,6 @@ const HomeMadeOrderReview = () => {
             />
           </View>
 
-          {/* DELIVERY ADDRESS CARD */}
           <View style={styles.deliveryAddressOuterContainer}>
             <View style={styles.sectionHeaderFlexContainer}>
               <Text style={styles.cardSectionMainHeaderLabelTitle}>Delivery Address</Text>
@@ -869,12 +802,6 @@ const HomeMadeOrderReview = () => {
             </TouchableOpacity>
           </View>
 
-          {/* ─── QUICKBITES: SAME-DAY / WITHIN 75 MIN DELIVERY (READ-ONLY) ─── */}
-          {/* When the category is "Quick Bites", we replace the manual date
-              & slot pickers with a single informational card. The delivery
-              is locked to today, within 75 minutes of order placement, and
-              that window INCLUDES both cooking time and delivery time.
-              The slot label itself is just the clock time (e.g. "4:30 PM"). */}
           {isQuickBites ? (
             <View style={styles.deliveryDateSlotOuterContainer}>
               <View style={styles.sectionHeaderFlexContainer}>
@@ -905,7 +832,6 @@ const HomeMadeOrderReview = () => {
             </View>
           ) : (
             <>
-              {/* ─── DELIVERY DATE SECTION (UI ONLY, TODAY DISABLED) ─── */}
               <View style={styles.deliveryDateSlotOuterContainer}>
                 <View style={styles.sectionHeaderFlexContainer}>
                   <Text style={styles.cardSectionMainHeaderLabelTitle}>Choose Delivery Date</Text>
@@ -973,7 +899,6 @@ const HomeMadeOrderReview = () => {
                 </ScrollView>
               </View>
 
-              {/* ─── DELIVERY TIME SLOT SECTION (UI ONLY) ─── */}
               <View style={styles.deliveryDateSlotOuterContainer}>
                 <View style={styles.sectionHeaderFlexContainer}>
                   <Text style={styles.cardSectionMainHeaderLabelTitle}>
@@ -1019,7 +944,6 @@ const HomeMadeOrderReview = () => {
             </>
           )}
 
-          {/* SPECIAL INSTRUCTIONS SEGMENT */}
           <View style={styles.specialInstructionsOuterContainer}>
             <View style={styles.specialInstructionsHeaderRow}>
               <View style={styles.iconCircleWrapper}>
@@ -1079,7 +1003,6 @@ const HomeMadeOrderReview = () => {
             </View>
           </View>
 
-          {/* PRICE BREAKDOWN */}
           <View style={styles.billSummaryOuterContainer}>
             <Text style={styles.billSummaryHeading}>Bill Summary</Text>
 
@@ -1108,7 +1031,6 @@ const HomeMadeOrderReview = () => {
             </View>
           </View>
 
-          {/* Freshness Guarantee Banner */}
           <View style={styles.freshnessGuaranteeAlertMessageBannerBoxContainer}>
             <View style={styles.freshnessGuaranteeLeafIconCircleFrameSquareContainer}>
               <LeafIcon />
@@ -1118,7 +1040,6 @@ const HomeMadeOrderReview = () => {
             </Text>
           </View>
 
-          {/* HOW IT WORKS PANEL BOX */}
           <View style={styles.howItWorksPanelBox}>
             <Text style={styles.howItWorksHeaderTitle}>How It Works</Text>
             <View style={styles.howItWorksStepsRow}>
@@ -1157,7 +1078,6 @@ const HomeMadeOrderReview = () => {
           <View style={styles.extraBottomClearancePaddingSpaceLayoutFrameBox} />
         </ScrollView>
 
-        {/* Floating Bottom Sticky Action CTA Button */}
         {isFormValid && (
           <View style={styles.floatingFixedActionFooterCTAButtonPanelFrameBoxContainer}>
             <TouchableOpacity
@@ -1185,7 +1105,6 @@ const HomeMadeOrderReview = () => {
           </View>
         )}
 
-        {/* ─── CHOOSE DELIVERY LOCATION SHEET ─── */}
         <Modal
           visible={isAddressSheetVisible}
           transparent={true}
@@ -1219,7 +1138,6 @@ const HomeMadeOrderReview = () => {
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: 20 }}
               >
-                {/* ACTIVE ADDRESS */}
                 {activeAddress && activeAddress.fullAddress ? (
                   <View style={{ marginBottom: 14 }}>
                     <Text style={styles.sectionLabelCaps}>ACTIVE ADDRESS</Text>
@@ -1254,7 +1172,6 @@ const HomeMadeOrderReview = () => {
                   </View>
                 ) : null}
 
-                {/* SAVED ADDRESSES */}
                 <Text style={styles.sectionLabelCaps}>SAVED ADDRESSES</Text>
                 {savedAddresses.length > 0 ? (
                   savedAddresses.map((item) => {
@@ -1358,7 +1275,6 @@ const HomeMadeOrderReview = () => {
           </View>
         </Modal>
 
-        {/* INPUT DYNAMIC ADDRESS INPUT MODAL */}
         <Modal
           visible={isAddressModalVisible}
           animationType="fade"
@@ -1482,8 +1398,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 8,
   },
-
-  /* CHEF SUMMARY CARD */
   chefSummaryCard: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
@@ -1581,8 +1495,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F382A',
   },
-
-  /* ORDER ITEMS LIST */
   orderItemsOuterContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -1685,7 +1597,6 @@ const styles = StyleSheet.create({
     minWidth: 20,
     textAlign: 'center',
   },
-
   sectionHeaderFlexContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1711,8 +1622,6 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '700',
   },
-
-  /* PHONE NUMBER FIELDS */
   phoneNumberVerificationOuterContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 18,
@@ -1767,8 +1676,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
-
-  /* DELIVERY ADDRESS CARD */
   deliveryAddressOuterContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -1874,8 +1781,6 @@ const styles = StyleSheet.create({
     color: '#0B261D',
     fontWeight: '700',
   },
-
-  /* ─── DELIVERY DATE & TIME SLOT (UI ONLY) ─── */
   deliveryDateSlotOuterContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -1956,7 +1861,6 @@ const styles = StyleSheet.create({
   deliveryDateMonthTextInactive: {
     color: '#5B756C',
   },
-
   deliverySlotListWrapper: {
     marginTop: 12,
   },
@@ -2017,8 +1921,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#FAF8F5',
   },
-
-  /* ─── QUICKBITES INFO CARD ─── */
   quickBitesBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2092,8 +1994,6 @@ const styles = StyleSheet.create({
     marginLeft: 5,
     letterSpacing: 0.1,
   },
-
-  /* ADDRESS CHOOSER SHEET */
   sheetBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(11, 38, 29, 0.45)',
@@ -2289,8 +2189,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
     fontWeight: '500',
   },
-
-  /* SPECIAL INSTRUCTIONS */
   specialInstructionsOuterContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -2376,8 +2274,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontWeight: '500',
   },
-
-  /* BILL SUMMARY */
   billSummaryOuterContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
@@ -2441,8 +2337,6 @@ const styles = StyleSheet.create({
     color: '#0F382A',
     letterSpacing: -0.3,
   },
-
-  /* FRESHNESS BANNER */
   freshnessGuaranteeAlertMessageBannerBoxContainer: {
     backgroundColor: 'rgba(15, 56, 42, 0.04)',
     borderRadius: 18,
@@ -2469,8 +2363,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
-
-  /* HOW IT WORKS */
   howItWorksPanelBox: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
@@ -2530,12 +2422,9 @@ const styles = StyleSheet.create({
   howItWorksEmojiGraphic: {
     fontSize: 16,
   },
-
   extraBottomClearancePaddingSpaceLayoutFrameBox: {
     height: 120,
   },
-
-  /* Floating Bottom Sticky CTA */
   floatingFixedActionFooterCTAButtonPanelFrameBoxContainer: {
     position: 'absolute',
     bottom: 24,
@@ -2570,8 +2459,6 @@ const styles = StyleSheet.create({
   primarySolidGreenCTAActionButtonRightArrowSymbol: {
     marginLeft: 8,
   },
-
-  /* CENTER FORM MODAL (Manual Address) */
   modalOverlayCenter: {
     flex: 1,
     backgroundColor: 'rgba(11, 38, 29, 0.45)',
