@@ -26,6 +26,7 @@ const { width } = Dimensions.get("window");
 
 const HEADER_HEIGHT = 360;
 
+// ─── KATBOX BRAND PALETTE (Elite Boutique Standard) ───
 const KATBOX = {
   bg: "#F9F6F0",
   card: "#FFFFFF",
@@ -49,6 +50,9 @@ const KATBOX = {
   shadow: "#111827",
 };
 
+// ─── Helper: normalize a category name for robust QuickBites detection ───
+// Handles any casing, leading/trailing whitespace, and internal spaces.
+// e.g. "Quick Bites", "quickbites", "QUICK BITES", "  Quick  Bites  " all match.
 const normalizeCategoryKey = (val: any): string =>
   String(val || "").trim().toLowerCase().replace(/\s+/g, "");
 
@@ -56,6 +60,7 @@ const QUICK_BITES_KEY = "quickbites";
 
 const HomeMadeItemScreen = () => {
   const params = useLocalSearchParams();
+  // Route Params
   const id = params.id as string;
   const chefId = params.chefId as string;
   const categoryId = params.categoryId as string;
@@ -70,23 +75,30 @@ const HomeMadeItemScreen = () => {
   const effectiveChefId = chefId || id || "";
   const effectiveChefName = chefName || name || "Chef Partner";
 
+  // Dynamic States
   const [menuSections, setMenuSections] = useState<any[]>([]);
   const [pageTitle, setPageTitle] = useState(passedCategory || name || "Home Made Items");
   const [headerImage, setHeaderImage] = useState(
     image || "https://images.unsplash.com/photo-1504674900247-0877df9cc836"
   );
   const [isLoading, setIsLoading] = useState(true);
+
+  // ─── SKELETON STATE (200 ms delay threshold) ─────────────────────────
   const [showSkeleton, setShowSkeleton] = useState(false);
 
+  // Scroll & UI States
   const scrollY = useRef(new Animated.Value(0)).current;
+  // Main scrollview ref added for section targeting
   const mainScrollViewRef = useRef<ScrollView | null>(null); 
   const [searchText, setSearchText] = useState("");
   const [activeCategory, setActiveCategory] = useState("");
   const activeCategoryRef = useRef("");
   const sectionLayouts = useRef<{ [key: string]: number }>({});
   
+  // Floating Menu Sheet State
   const [showMenuSheet, setShowMenuSheet] = useState(false);
 
+  // Quantity Selection States
   const [selectedQuantities, setSelectedQuantities] = useState<{ [key: string]: string }>({});
   const [showQuantityModal, setShowQuantityModal] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -96,16 +108,22 @@ const HomeMadeItemScreen = () => {
   const [selectedItemOptions, setSelectedItemOptions] = useState<string[]>([]);
   const [modalSelectedQty, setModalSelectedQty] = useState("");
 
+  // Numeric Cart Quantity State
   const [itemQuantities, setItemQuantities] = useState<{ [key: string]: number }>({});
+
+  // Expanded Descriptions State
   const [expandedDescriptions, setExpandedDescriptions] = useState<{ [key: string]: boolean }>({});
 
+  // ─── QUICK BITES FLOW DETECTION ──────────────────────────────────────
+  // Detects if the current category is "Quick Bites" (case/space-insensitive).
+  // This flag is forwarded to HomeMadeOrderReview so it can lock the
+  // delivery date to today and slot to "within 75 minutes (cooking + delivery)".
   const isQuickBitesCategory = useMemo(() => {
     return (
       normalizeCategoryKey(passedCategory) === QUICK_BITES_KEY ||
-      normalizeCategoryKey(pageTitle) === QUICK_BITES_KEY ||
-      String(params.isQuickBites || "").toLowerCase() === "true"
+      normalizeCategoryKey(pageTitle) === QUICK_BITES_KEY
     );
-  }, [passedCategory, pageTitle, params.isQuickBites]);
+  }, [passedCategory, pageTitle]);
 
   const toggleDescription = (itemId: string) => {
     setExpandedDescriptions((prev) => ({
@@ -114,6 +132,7 @@ const HomeMadeItemScreen = () => {
     }));
   };
 
+  // Update Numeric Quantity
   const updateItemQuantity = (itemId: string, newQty: number) => {
     if (newQty < 0) return;
 
@@ -126,6 +145,7 @@ const HomeMadeItemScreen = () => {
     });
   };
 
+  // Fetch Data from MongoDB strictly scoped to this Chef & Category
   useEffect(() => {
     const fetchCategoryData = async () => {
       try {
@@ -216,6 +236,10 @@ const HomeMadeItemScreen = () => {
     fetchCategoryData();
   }, [effectiveChefId, categoryId, passedCategory]);
 
+  // ─── 200 ms skeleton delay threshold ──────────────────────────────────
+  // Only show the skeleton if the initial load exceeds 200 ms. This avoids
+  // a flash of skeleton on fast responses while still providing a graceful
+  // loading state on slow networks. Skeleton only applies to the first load.
   useEffect(() => {
     const isInitialLoad = isLoading && menuSections.length === 0;
     if (!isInitialLoad) {
@@ -226,6 +250,7 @@ const HomeMadeItemScreen = () => {
     return () => clearTimeout(t);
   }, [isLoading, menuSections.length]);
 
+  // Animations
   const translateY = scrollY.interpolate({
     inputRange: [-200, 0, HEADER_HEIGHT],
     outputRange: [0, 0, -150],
@@ -247,6 +272,7 @@ const HomeMadeItemScreen = () => {
     extrapolate: "clamp",
   });
 
+  // Dynamic Scroll Tracking
   const handleScroll = Animated.event(
     [{ nativeEvent: { contentOffset: { y: scrollY } } }],
     {
@@ -273,6 +299,7 @@ const HomeMadeItemScreen = () => {
     sectionLayouts.current[title] = event.nativeEvent.layout.y;
   };
 
+  // Menu Navigation Scroll Trigger
   const scrollToSection = (title: string) => {
     setShowMenuSheet(false);
     const targetY = sectionLayouts.current[title];
@@ -282,6 +309,7 @@ const HomeMadeItemScreen = () => {
     }
   };
 
+  // Actions
   const openQuantitySelector = (item: any) => {
     setSelectedItemId(item.id);
     setSelectedItemName(item.name);
@@ -302,6 +330,7 @@ const HomeMadeItemScreen = () => {
         ...prev,
         [selectedItemId]: modalSelectedQty,
       }));
+      // Auto-add item to counter if it isn't added already
       if (!itemQuantities[selectedItemId]) {
         updateItemQuantity(selectedItemId, 1);
       }
@@ -313,6 +342,7 @@ const HomeMadeItemScreen = () => {
     return selectedQuantities[itemId] || "";
   };
 
+  // Dynamic Search Filter
   const filteredSections = menuSections
     .map((section) => ({
       ...section,
@@ -322,6 +352,7 @@ const HomeMadeItemScreen = () => {
     }))
     .filter((section) => section.data.length > 0);
 
+  // Helper values to calculate total elements added into Cart
   const getCartTotals = () => {
     let count = 0;
     let price = 0;
@@ -341,6 +372,7 @@ const HomeMadeItemScreen = () => {
 
   const { totalCartCount, totalCartPrice } = getCartTotals();
 
+  // Dynamic price calculation for the Bottom Sheet green CTA button
   const getModalSelectedOptionPrice = () => {
     if (!selectedItemId || !modalSelectedQty) return 0;
     const flatItem = menuSections.flatMap(s => s.data).find(i => i.id === selectedItemId);
@@ -350,6 +382,7 @@ const HomeMadeItemScreen = () => {
   const currentModalItemCount = selectedItemId ? (itemQuantities[selectedItemId] || 1) : 1;
   const dynamicModalTotalPrice = getModalSelectedOptionPrice() * currentModalItemCount;
 
+  // Render Item
   const renderItem = (item: any) => {
     const currentQty = getSelectedQuantity(item.id) || item.defaultQuantity;
     const currentPrice = item.prices[currentQty] || 0;
@@ -358,6 +391,7 @@ const HomeMadeItemScreen = () => {
 
     return (
       <View style={styles.menuItemCard}>
+        {/* LEFT: Text Content */}
         <View style={styles.itemDetails}>
           <View style={styles.itemNameRow}>
             <View style={[styles.vegIconWrapper, !item.veg && styles.nonVegIconWrapper]}>
@@ -402,6 +436,7 @@ const HomeMadeItemScreen = () => {
           </View>
         </View>
 
+        {/* RIGHT: Image with ADD / Quantity Counter - Clickable */}
         <TouchableOpacity 
           style={styles.itemImageWrapper}
           onPress={() => openQuantitySelector(item)}
@@ -456,6 +491,7 @@ const HomeMadeItemScreen = () => {
     );
   };
 
+  // Persist Cart context and Navigate to HomeMadeOrderReview
   const handlePlaceOrder = async () => {
     try {
       const cartItemsPayload = Object.entries(itemQuantities).map(([itemId, qty]) => {
@@ -474,6 +510,9 @@ const HomeMadeItemScreen = () => {
 
       if (cartItemsPayload.length === 0) return;
 
+      // ✅ Forward QuickBites flag + category name to review screen.
+      // HomeMadeOrderReview will lock same-day + within-75-min delivery
+      // (cooking + delivery) whenever isQuickBites === "true".
       router.push({
         pathname: "/screens/HomeMadeOrderReview",
         params: {
@@ -496,6 +535,7 @@ const HomeMadeItemScreen = () => {
     }
   };
 
+  // ─── Skeleton early return (only when initial load exceeds 200 ms) ───
   if (showSkeleton) {
     return <HomeMadeItemSkeleton />;
   }
@@ -504,6 +544,7 @@ const HomeMadeItemScreen = () => {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
 
+      {/* PARALLAX HEADER */}
       <Animated.View
         style={[
           styles.header,
@@ -524,12 +565,14 @@ const HomeMadeItemScreen = () => {
         )}
       </Animated.View>
 
+      {/* BACK BUTTON */}
       <View style={styles.headerControls}>
         <TouchableOpacity style={styles.circleBtn} onPress={() => router.back()} activeOpacity={0.85}>
           <Ionicons name="arrow-back" size={22} color={KATBOX.textPrimary} />
         </TouchableOpacity>
       </View>
 
+      {/* MAIN SCROLL */}
       <Animated.ScrollView
         ref={(ref: any) => { mainScrollViewRef.current = ref; }}
         style={styles.body}
@@ -544,6 +587,7 @@ const HomeMadeItemScreen = () => {
         <View style={styles.sheet}>
           <View style={styles.handle} />
 
+          {/* CHEF INFO */}
           <View style={styles.headerRow}>
             <Text style={[styles.chefName, !isAvailable && styles.textMuted]} numberOfLines={1}>
               {pageTitle}
@@ -554,6 +598,7 @@ const HomeMadeItemScreen = () => {
             </View>
           </View>
 
+          {/* CHEF NAME OVER LOCATION TEXT CONTAINER */}
           {effectiveChefName && (
             <View style={styles.chefNameRow}>
               <MaterialCommunityIcons name="chef-hat" size={16} color={KATBOX.primary} />
@@ -573,6 +618,11 @@ const HomeMadeItemScreen = () => {
             <Text style={styles.katboxPromiseText}>100% Homecooked • FSSAI Certified Kitchen</Text>
           </View>
 
+          {/* ─── QUICK BITES: KATBOX NOTE-STYLE INFO CARD ─── */}
+          {/* Renders only when the current category normalizes to "quickbites".
+              Communicates, in a warm note format styled with the KATBOX palette,
+              that every dish is freshly cooked to order and the entire promise
+              of cooking + delivery is fulfilled within 75 minutes. */}
           {isQuickBitesCategory && (
             <View style={styles.quickBitesNoteCard}>
               <View style={styles.quickBitesNoteAccentBar} />
@@ -593,6 +643,7 @@ const HomeMadeItemScreen = () => {
             </View>
           )}
 
+          {/* LOADING STATE */}
           {isLoading ? (
             <View style={{ marginTop: 60, alignItems: "center" }}>
               <ActivityIndicator size="large" color={KATBOX.primary} />
@@ -625,6 +676,7 @@ const HomeMadeItemScreen = () => {
         </View>
       </Animated.ScrollView>
 
+      {/* STICKY HEADER */}
       <Animated.View
         style={[
           styles.stickyHeader,
@@ -659,6 +711,7 @@ const HomeMadeItemScreen = () => {
         )}
       </Animated.View>
 
+      {/* FIXED FLOATING MENU BUTTON */}
       {!isLoading && filteredSections.length > 0 && !showMenuSheet && (
         <TouchableOpacity 
           style={[
@@ -673,6 +726,7 @@ const HomeMadeItemScreen = () => {
         </TouchableOpacity>
       )}
 
+      {/* DYNAMIC FLOATING BAR FOR CART */}
       {totalCartCount > 0 && (
         <View style={styles.cartFloatingBarContainer}>
           <View style={styles.cartFloatingBar}>
@@ -694,6 +748,7 @@ const HomeMadeItemScreen = () => {
         </View>
       )}
 
+      {/* FLOATING SUBCATEGORIES MENU OVERLAY */}
       <Modal
         visible={showMenuSheet}
         transparent
@@ -748,6 +803,7 @@ const HomeMadeItemScreen = () => {
         </View>
       </Modal>
 
+      {/* QUANTITY BOTTOM SHEET */}
       <Modal
         visible={showQuantityModal}
         transparent
@@ -1020,11 +1076,13 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.2,
   },
+
+  /* ─── QUICK BITES — KATBOX NOTE-STYLE INFO CARD ───────────────────── */
   quickBitesNoteCard: {
     flexDirection: "row",
-    backgroundColor: KATBOX.primaryTintSoft,
+    backgroundColor: KATBOX.primaryTintSoft,   // soft brand-tinted note bg
     borderWidth: 1,
-    borderColor: "#A7F3D0",
+    borderColor: "#A7F3D0",                    // matches katbox promise banner
     borderRadius: 14,
     marginTop: -14,
     marginBottom: 22,
@@ -1037,7 +1095,7 @@ const styles = StyleSheet.create({
   },
   quickBitesNoteAccentBar: {
     width: 4,
-    backgroundColor: KATBOX.primary,
+    backgroundColor: KATBOX.primary,           // brand green accent stripe
   },
   quickBitesNoteContent: {
     flex: 1,
@@ -1054,7 +1112,7 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: KATBOX.primaryTint,
+    backgroundColor: KATBOX.primaryTint,       // subtle brand-tinted chip
     borderWidth: 1,
     borderColor: "#A7F3D0",
     alignItems: "center",
@@ -1077,6 +1135,7 @@ const styles = StyleSheet.create({
     color: KATBOX.primary,
     fontWeight: "900",
   },
+
   sectionHeader: {
     paddingVertical: 12,
     marginBottom: 12,
@@ -1094,6 +1153,8 @@ const styles = StyleSheet.create({
     backgroundColor: KATBOX.primary,
     marginTop: 6,
   },
+
+  /* ==================== MENU CARD ==================== */
   menuItemCard: {
     flexDirection: "row",
     backgroundColor: KATBOX.card,
@@ -1190,6 +1251,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: KATBOX.textPrimary,
   },
+
+  /* RIGHT SIDE - IMAGE + COUNTER */
   itemImageWrapper: {
     width: 110, 
     height: 110,
@@ -1233,6 +1296,7 @@ const styles = StyleSheet.create({
     marginRight: 2,
     letterSpacing: 0.2,
   },
+
   quantityCounter: {
     position: "absolute",
     bottom: -12,
@@ -1264,6 +1328,8 @@ const styles = StyleSheet.create({
     minWidth: 20,
     textAlign: "center",
   },
+
+  /* Sticky Header */
   stickyHeader: {
     position: "absolute",
     top: 0,
@@ -1335,6 +1401,8 @@ const styles = StyleSheet.create({
     color: KATBOX.textPrimary,
     letterSpacing: -0.2,
   },
+
+  /* Bottom Sheet Styles */
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(17, 24, 39, 0.65)", 
@@ -1493,6 +1561,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: KATBOX.primary,
   },
+
   bottomActionBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -1541,6 +1610,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.2,
   },
+
+  /* ==================== FLOATING UI STYLES ==================== */
   floatingMenuButton: {
     position: "absolute",
     bottom: 30,
@@ -1661,6 +1732,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginLeft: 6,
   },
+
+  /* CHECKOUT FIXED BAR STYLES */
   cartFloatingBarContainer: {
     position: "absolute",
     bottom: 20,

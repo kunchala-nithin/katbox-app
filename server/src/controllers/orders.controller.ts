@@ -1,3 +1,4 @@
+// orders.controller.ts
 import { Request, Response } from "express";
 import mongoose from "mongoose";
 import Order, {
@@ -74,6 +75,11 @@ const calculateSlotTargetTime = (dateStr: string, slotStr: string): Date => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Safely parse a value that may arrive as a JSON
+   string (from multipart/form-data) or already as an array/object
+   (from application/json). Never throws.
+   ───────────────────────────────────────────────────────────────── */
 const parseIfJsonString = (value: any, fallback: any = null) => {
   if (value === undefined || value === null) return fallback;
   if (typeof value !== "string") return value;
@@ -86,12 +92,22 @@ const parseIfJsonString = (value: any, fallback: any = null) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Safely parse a numeric coordinate value that
+   may arrive as a string from multipart/form-data. Returns
+   undefined for invalid/empty values so MongoDB does not store NaN.
+   ───────────────────────────────────────────────────────────────── */
 const parseNumberOrUndefined = (val: any): number | undefined => {
   if (val === undefined || val === null || val === "") return undefined;
   const n = Number(val);
   return Number.isFinite(n) ? n : undefined;
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Format an absolute Date into "4:30 PM" style string.
+   Used to build the delivery slot label. This is the ONLY format
+   that will be persisted for QuickBites / homemade delivery slots.
+   ───────────────────────────────────────────────────────────────── */
 const formatTimeShort = (d: Date): string => {
   try {
     return d.toLocaleTimeString("en-IN", {
@@ -104,6 +120,10 @@ const formatTimeShort = (d: Date): string => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Format an absolute Date into "17 Sep" style string.
+   Used only for the delivery date label.
+   ───────────────────────────────────────────────────────────────── */
 const formatDateShort = (d: Date): string => {
   try {
     const day = d.getDate();
@@ -202,6 +222,29 @@ setInterval(async () => {
   }
 }, 15 * 60 * 1000);
 
+/**
+ * POST /api/orders/create
+ *
+ * IMPORTANT: When an order is created, it goes ONLY to the Admin.
+ * The chef is NOT notified here. Chef receives the order only after
+ * admin verifies advance payment via /verify-advance.
+ *
+ * ✅ NEW: The controller computes and persists three additional
+ *    timestamp fields on the order document at the exact moment of
+ *    order placement:
+ *
+ *      • orderPlacedAt          → the server time when createOrder ran.
+ *      • estimatedDeliveryAt    → absolute Date when delivery is expected.
+ *      • deliveryWindowMinutes  → the window size (75 for QuickBites, else 0).
+ *
+ *    ✅ The human-readable delivery slot label that gets stored in
+ *       MongoDB is now ONLY the time in "4:30 PM" format (e.g. "4:30 PM"),
+ *       never the long "ASAP (Within 75 minutes...)" string.
+ *
+ *    ✅ NEW: latitude & longitude are also persisted on the order and
+ *       on each delivery schedule so downstream map actions can pin
+ *       the exact location.
+ */
 export const createOrder = async (req: AuthRequest, res: Response) => {
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id || req.body?.userId;
@@ -222,6 +265,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       menuImage,
       durationType,
       deliveryTimeSlot,
+      // ✅ New: top-level delivery slot label for homemade (mirror of deliveryTimeSlot)
       deliverySlot,
       addressDetails,
       deliveryAddress,
@@ -247,13 +291,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       deliveryType,
       pricePerPlate,
       addons,
+      // ✅ NEW: QuickBites flow hint + optional client-provided absolute timestamp
       isQuickBites,
       estimatedDeliveryAtMs,
       deliveryWindowMinutes,
+      // ✅ NEW: geo coordinates for map pinning
       latitude,
       longitude,
     } = req.body;
 
+    // ✅ Normalize coordinates once (works for JSON and multipart/form-data)
     const resolvedLatitude = parseNumberOrUndefined(latitude);
     const resolvedLongitude = parseNumberOrUndefined(longitude);
 
@@ -305,6 +352,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
     }
 
+    // Handle Screenshot Upload if provided via multer
     let screenshotData = { url: "", cloudinaryId: "" };
     const uploadedFile = req.file;
     if (uploadedFile) {
@@ -350,6 +398,15 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       console.log("Chef phone lookup warning:", lookupErr);
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // ✅ Compute absolute delivery timestamps at order placement.
+    //    • orderPlacedAt = server "now"
+    //    • If QuickBites OR serviceType === homemade with a QuickBites
+    //      hint: estimatedDeliveryAt = now + 75 min (or the provided
+    //      deliveryWindowMinutes), deliveryWindowMinutes = that value.
+    //    • Else if the client sent an absolute ms timestamp: use it.
+    //    • Else: leave estimatedDeliveryAt unset.
+    // ────────────────────────────────────────────────────────────────
     const orderPlacedAt = new Date();
     const quickBitesFlag =
       String(isQuickBites || "").toLowerCase() === "true" ||
@@ -359,6 +416,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     let resolvedEstimatedDeliveryAt: Date | undefined = undefined;
 
     if (quickBitesFlag) {
+      // Default to 75 minutes when the client didn't specify
       if (!resolvedWindowMinutes || resolvedWindowMinutes <= 0) {
         resolvedWindowMinutes = 75;
       }
@@ -372,6 +430,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
     }
 
+    // ✅ Format the human-readable delivery slot label so downstream UIs
+    // can display a fixed string even without reading the Date.
+    //
+    // ✅ NEW: The slot label is now ALWAYS just the time — "4:30 PM" —
+    // never the long "ASAP (Within 75 minutes…)" string.
     let finalDeliverySlotLabel = String(deliverySlot || deliveryTimeSlot || "").trim();
     let finalDeliveryDateLabel = String(deliveryDate || "").trim();
 
@@ -380,9 +443,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       const dateStr = formatDateShort(orderPlacedAt);
 
       if (quickBitesFlag) {
+        // ✅ Just the time, e.g. "4:30 PM"
         finalDeliveryDateLabel = `Today, ${dateStr}`;
         finalDeliverySlotLabel = timeStr;
       } else if (!finalDeliverySlotLabel) {
+        // ✅ Just the time
         finalDeliverySlotLabel = timeStr;
       }
       if (!finalDeliveryDateLabel) {
@@ -409,6 +474,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           }))
         : [];
 
+      // ✅ Resolve the delivery slot label for homemade — prefer the new
+      // top-level `deliverySlot` param, fall back to legacy `deliveryTimeSlot`.
       const resolvedHomemadeSlot = finalDeliverySlotLabel || "";
 
       const newHomemadeOrder = new HomemadeOrderModel({
@@ -426,10 +493,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         deliveryTimeSlot: resolvedHomemadeSlot,
         deliverySlot: resolvedHomemadeSlot,
         deliveryDate: finalDeliveryDateLabel || "Today",
+        // ✅ Persist the QuickBites flag alongside the timestamps
         isQuickBites: quickBitesFlag,
+        // ✅ Persist the absolute delivery timestamps computed from "now"
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
         deliveryWindowMinutes: resolvedWindowMinutes,
+        // ✅ Persist geo coordinates for map pinning
         latitude: resolvedLatitude,
         longitude: resolvedLongitude,
         subtotal: Number(subtotal) || 0,
@@ -477,9 +547,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         addons: Array.isArray(addons) ? addons : [],
         selections: selections || null,
         items: items || [],
+        // ✅ Timestamps for downstream UIs
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
         deliveryWindowMinutes: resolvedWindowMinutes,
+        // ✅ Persist geo coordinates for map pinning
         latitude: resolvedLatitude,
         longitude: resolvedLongitude,
         subtotal: Number(subtotal) || 0,
@@ -503,6 +575,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       savedOrder = await newCateringOrder.save();
     }
     else {
+      // ✅ Copy coordinates onto each schedule as well so per-schedule
+      // map actions can pin the exact drop location.
       const initialSchedules = sortedDeliveries.map((dateItem: string) => ({
         date: dateItem,
         status: "Scheduled",
@@ -536,9 +610,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         pausedDates: [],
         selections: selections || null,
         items: items || [],
+        // ✅ Timestamps for downstream UIs
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
         deliveryWindowMinutes: resolvedWindowMinutes,
+        // ✅ Persist geo coordinates for map pinning
         latitude: resolvedLatitude,
         longitude: resolvedLongitude,
         subtotal: Number(subtotal) || 0,
@@ -623,6 +699,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * PATCH /api/orders/:orderId/verify-advance
+ */
 export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
   try {
     const { orderId } = req.params;
@@ -705,6 +784,9 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * GET /api/orders/chef-orders
+ */
 export const getChefOrders = async (req: AuthRequest, res: Response) => {
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
@@ -750,6 +832,9 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * PATCH /api/orders/:orderId/status
+ */
 export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { orderId } = req.params;
@@ -815,6 +900,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
           order.prepStartedAt = new Date();
         }
         if (!order.targetDeliveryTime) {
+          // ✅ Prefer the persisted estimatedDeliveryAt if we have one
           if (order.estimatedDeliveryAt) {
             order.targetDeliveryTime = order.estimatedDeliveryAt;
           } else {
@@ -861,6 +947,9 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * PATCH /api/orders/:orderId/schedule-status
+ */
 export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { orderId } = req.params;
@@ -947,6 +1036,9 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * PATCH /api/orders/:orderId/extend-timer
+ */
 export const extendOrderTimer = async (req: AuthRequest, res: Response) => {
   try {
     const { orderId } = req.params;
@@ -968,6 +1060,9 @@ export const extendOrderTimer = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * GET /api/orders/my-orders
+ */
 export const getMyOrders = async (req: AuthRequest, res: Response) => {
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
@@ -997,6 +1092,9 @@ export const getMyOrders = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * PATCH /api/orders/:orderId/pause
+ */
 export const pauseOrderDelivery = async (req: AuthRequest, res: Response) => {
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
@@ -1037,6 +1135,9 @@ export const pauseOrderDelivery = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * PATCH /api/orders/:orderId/unpause
+ */
 export const unpauseOrderDelivery = async (req: AuthRequest, res: Response) => {
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
@@ -1065,6 +1166,9 @@ export const unpauseOrderDelivery = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * PATCH /api/orders/:orderId/reschedule
+ */
 export const rescheduleOrderDelivery = async (req: AuthRequest, res: Response) => {
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
@@ -1089,6 +1193,9 @@ export const rescheduleOrderDelivery = async (req: AuthRequest, res: Response) =
   }
 };
 
+/**
+ * POST /api/orders/:orderId/feedback
+ */
 export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
@@ -1151,7 +1258,9 @@ export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
                 if (customerDoc.name) userNameForReview = customerDoc.name;
                 if (customerDoc.avatar) userAvatarForReview = customerDoc.avatar;
               }
-            } catch (userLookupErr) {}
+            } catch (userLookupErr) {
+              // Silently ignore
+            }
           }
 
           const newReviewItem = {
@@ -1210,6 +1319,9 @@ export const submitOrderFeedback = async (req: AuthRequest, res: Response) => {
   }
 };
 
+/**
+ * GET /api/orders/:orderId
+ */
 export const getOrderById = async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
@@ -1221,6 +1333,9 @@ export const getOrderById = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * GET /api/admin/orders
+ */
 export const getAllOrders = async (req: AuthRequest, res: Response) => {
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id;

@@ -1,3 +1,4 @@
+// orderconfirmationscreen.tsx
 import React, { useEffect, useRef, useMemo, useState } from "react";
 import {
   View,
@@ -20,6 +21,7 @@ import api from "@/src/lib/api";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
+// Occasion Emoji Resolver Helper
 const getOccasionEmoji = (occasionName: string) => {
   if (!occasionName) return "🎉";
   const occ = occasionName.toLowerCase();
@@ -35,6 +37,7 @@ const getOccasionEmoji = (occasionName: string) => {
   return "🎉";
 };
 
+// Helper function to extract short day name and date number for the reference image tile UI
 const parseDateParts = (dateStr: string) => {
   if (!dateStr) return { dayName: "MON", dayNumber: "17", fullString: dateStr };
 
@@ -50,6 +53,7 @@ const parseDateParts = (dateStr: string) => {
   return { dayName: "DAY", dayNumber: "1", fullString: cleanedStr };
 };
 
+// ✅ NEW: Format an absolute Date into "4:30 PM"
 const formatTimeShortLocal = (d: Date | null): string => {
   if (!d) return "";
   try {
@@ -63,6 +67,7 @@ const formatTimeShortLocal = (d: Date | null): string => {
   }
 };
 
+// ✅ NEW: Format an absolute Date into "17 Sep"
 const formatDateShortLocal = (d: Date | null): string => {
   if (!d) return "";
   try {
@@ -74,6 +79,7 @@ const formatDateShortLocal = (d: Date | null): string => {
   }
 };
 
+// Heavy Ribbon & Confetti Particle Definitions (Matching luxury palette accents)
 const PREMIUM_COLORS = [
   "#0F382A",
   "#107C41",
@@ -112,6 +118,7 @@ export default function OrderConfirmationScreen() {
 
   const initialOrderId = (params.orderId as string) || "DW2405200001";
 
+  // Fetch Order details directly from MongoDB via API
   useEffect(() => {
     let isMounted = true;
 
@@ -139,10 +146,12 @@ export default function OrderConfirmationScreen() {
     };
   }, [initialOrderId]);
 
+  // Determine Service Flow dynamically
   const serviceType = dbOrder?.serviceType || (params.serviceType as string) || "mealbox";
   const isCateringFlow = serviceType === "catering";
   const isHomemadeFlow = serviceType === "homemade";
 
+  // Dynamic fallback values if loading direct route params or MongoDB document
   const orderId = dbOrder?.orderId || initialOrderId;
   const restaurantName = dbOrder?.restaurantName || (params.restaurantName as string) || dbOrder?.chefName || (params.chefName as string) || "Premium Caterer";
   const chefName = dbOrder?.chefName || (params.chefName as string) || "Chef Partner";
@@ -154,7 +163,7 @@ export default function OrderConfirmationScreen() {
   const pricePerPlate = dbOrder?.pricePerPlate || Number(params.pricePerPlate) || 0;
   const addressDetails = dbOrder?.addressDetails || dbOrder?.deliveryAddress || (params.addressDetails as string) || "Address on File";
 
-  const menuName = dbOrder?.menuName || (params.menuName as string) || (isCateringFlow ? "Royal Banquet Platter" : (isHomemadeFlow ? "Homemade Orders Order" : "Classic Lunch"));
+  const menuName = dbOrder?.menuName || (params.menuName as string) || (isCateringFlow ? "Royal Banquet Platter" : (isHomemadeFlow ? "Homemade Dishes Order" : "Classic Lunch"));
   const menuImage = (() => {
     if (dbOrder?.menuImage) return dbOrder.menuImage;
     if (dbOrder?.restaurantImage) return dbOrder.restaurantImage;
@@ -170,6 +179,9 @@ export default function OrderConfirmationScreen() {
 
   const rawDurationType = dbOrder?.durationType || (params.durationType as string) || "Flexible Days (2 Days Running)";
 
+  // ✅ HOMEMADE-ONLY: resolve the persisted delivery date & slot from db order / route params
+  // Both the new `deliverySlot` field and the legacy `deliveryTimeSlot` are checked so
+  // that older records created before the field existed still render.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return "";
     return String(
@@ -190,6 +202,10 @@ export default function OrderConfirmationScreen() {
     ).trim();
   }, [dbOrder, params.deliverySlot, params.deliveryTimeSlot, isHomemadeFlow]);
 
+  // ✅ NEW: Resolve the absolute estimated delivery time from the persisted order.
+  // This is the "source of truth" that was computed by the backend at the moment
+  // the order was placed. When present, we use it to render a live "arriving by X"
+  // message instead of the historical label.
   const orderPlacedAtResolved: Date | null = useMemo(() => {
     const raw = dbOrder?.orderPlacedAt;
     if (!raw) return null;
@@ -206,6 +222,7 @@ export default function OrderConfirmationScreen() {
 
   const isQuickBitesOrder = Boolean(dbOrder?.isQuickBites);
 
+  // ✅ NEW: Compute a friendly label for the estimated delivery time
   const estimatedDeliveryLabel = useMemo(() => {
     if (!estimatedDeliveryAtResolved) return "";
     const time = formatTimeShortLocal(estimatedDeliveryAtResolved);
@@ -234,6 +251,12 @@ export default function OrderConfirmationScreen() {
   const discount = dbOrder ? dbOrder.discount : Number(params.discount) || 0;
   const paymentMethod = dbOrder?.paymentMethod || (params.paymentMethod as string) || "cod";
 
+  /* ─────────────────────────────────────────────────────────
+     ✅ FIX — Defensive parsing for selections / items / addons.
+     These may arrive from MongoDB already as arrays (newly created
+     orders) OR as JSON strings (legacy orders or direct route params).
+     Never throws; always returns the correct type.
+     ───────────────────────────────────────────────────────── */
   const parsedSelections = useMemo(() => {
     const raw = dbOrder?.selections ?? params.selections;
     if (!raw) return null;
@@ -266,6 +289,7 @@ export default function OrderConfirmationScreen() {
 
   const isMealBoxFlow = serviceType === "mealbox" || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
 
+  // Selected Preview Modal State
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>("");
 
@@ -299,6 +323,7 @@ export default function OrderConfirmationScreen() {
     });
   };
 
+  // Parse scheduled dates array dynamically for MealBox flows
   const scheduledDatesArray: string[] = useMemo(() => {
     if (isCateringFlow || isHomemadeFlow) return [];
 
@@ -332,6 +357,9 @@ export default function OrderConfirmationScreen() {
 
   const isCod = String(paymentMethod).toLowerCase() === "cod";
 
+  // Dynamic Date Display Resolvers
+  // ✅ For homemade: combine the selected date with the selected slot (when both exist).
+  // Falls back to the legacy "Today (within 30–45 min)" message when neither is available.
   const confirmedFirstDeliveryDate = isCateringFlow
     ? `${eventDate} • ${eventTime}`
     : isHomemadeFlow
@@ -344,6 +372,7 @@ export default function OrderConfirmationScreen() {
                 : "Today (within 30–45 min)")))
     : (scheduledDatesArray.length > 0 ? scheduledDatesArray[0] : rawDeliveryDate);
 
+  // Animated Values
   const checkmarkZoomAnim = useRef(new Animated.Value(1)).current;
   const screenBlastAnim = useRef(new Animated.Value(0)).current;
 
@@ -413,6 +442,8 @@ export default function OrderConfirmationScreen() {
         selections: parsedSelections ? JSON.stringify(parsedSelections) : undefined,
         items: parsedItems ? JSON.stringify(parsedItems) : undefined,
         addons: parsedAddons ? JSON.stringify(parsedAddons) : undefined,
+        // ✅ For homemade, forward the resolved date + slot so the Orders tab
+        // can display them without needing to refetch the order document.
         deliverySlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
         deliveryTimeSlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
       },
@@ -432,6 +463,7 @@ export default function OrderConfirmationScreen() {
 
   return (
     <View style={styles.mainContainer}>
+      {/* HEAVY FULL-SCREEN RIBBON & CONFETTI BLAST OVERLAY */}
       <View style={styles.fullScreenOverlayCanvas} pointerEvents="none">
         {HEAVY_BLAST_PARTICLES.map((particle) => {
           const rad = (particle.angle * Math.PI) / 180;
@@ -486,6 +518,7 @@ export default function OrderConfirmationScreen() {
         })}
       </View>
 
+      {/* Clean Top Dark Forest Green Header Area */}
       <View style={[styles.topBannerBackground, { paddingTop: insets.top + 20 }]}>
         <View style={styles.checkmarkWrapperContainer}>
           <Animated.View
@@ -508,6 +541,7 @@ export default function OrderConfirmationScreen() {
               : `Yay! Your payment was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
           </Text>
 
+          {/* Order ID & UTR Pill */}
           <View style={styles.orderIdBadgePill}>
             <Text style={styles.orderIdLabelText}>Order ID</Text>
             <Text style={styles.orderIdValueText}>{orderId}</Text>
@@ -531,6 +565,7 @@ export default function OrderConfirmationScreen() {
         </View>
       </View>
 
+      {/* Main Content Scroll Area */}
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
@@ -539,6 +574,7 @@ export default function OrderConfirmationScreen() {
         ]}
       >
         <View>
+          {/* 1. DYNAMIC ORDER SUMMARY CARD (HOMEMADE / CATERING / MEALBOX) */}
           {isHomemadeFlow ? (
             <View style={styles.cateringMainSummaryCard}>
               <View style={[styles.cateringOccasionTopStrip, { backgroundColor: "rgba(22, 99, 72, 0.08)", borderColor: "rgba(22, 99, 72, 0.16)" }]}>
@@ -556,6 +592,7 @@ export default function OrderConfirmationScreen() {
                 <Text style={styles.homemadeChefBadgeText}>Cooked by {chefName}</Text>
               </View>
 
+              {/* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP (only renders when at least one value exists) */}
               {(estimatedDeliveryAtResolved || homemadeDeliveryDateResolved || homemadeDeliverySlotResolved) ? (
                 <View style={styles.homemadeConfirmedDeliveryStripContainer}>
                   {!!homemadeDeliveryDateResolved && (
@@ -847,6 +884,7 @@ export default function OrderConfirmationScreen() {
             </View>
           )}
 
+          {/* 2. Upcoming Deliveries Section Card (MEALBOX FLOW EXCLUSIVE) */}
           {!isCateringFlow && !isHomemadeFlow && scheduledDatesArray.length > 0 && (
             <View style={styles.refUpcomingContainerCard}>
               <View style={styles.refUpcomingHeaderRow}>
@@ -897,6 +935,7 @@ export default function OrderConfirmationScreen() {
             </View>
           )}
 
+          {/* 3. What's Next Tracker Card */}
           <View style={styles.whatsNextCard}>
             <View style={styles.whatsNextHeaderRow}>
               <Text style={styles.cardHeaderTitle}>What's Next?</Text>
@@ -985,6 +1024,7 @@ export default function OrderConfirmationScreen() {
             </View>
           </View>
 
+          {/* Action Buttons */}
           <TouchableOpacity
             activeOpacity={0.88}
             style={styles.viewOrdersButton}
@@ -1005,6 +1045,7 @@ export default function OrderConfirmationScreen() {
         </View>
       </ScrollView>
 
+      {/* Dynamic Selections Preview Modal */}
       <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closeSheet}>
         <BlurView intensity={30} tint="dark" style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeSheet} />
@@ -1031,6 +1072,7 @@ export default function OrderConfirmationScreen() {
               </View>
             </View>
 
+            {/* MealBox Tab Pills Header (Mealbox only) */}
             {isMealBoxFlow && parsedSelections && !Array.isArray(parsedSelections) && (
               <View style={styles.pillTabsWrapperBlock}>
                 {Object.keys(parsedSelections).map((dayKey) => {
@@ -1345,9 +1387,9 @@ const styles = StyleSheet.create({
     color: "#FAF8F5",
     letterSpacing: -0.4,
     marginBottom: 6,
-    textAlign: "center",
-    width: "100%",
-    alignSelf: "center",
+    textAlign: "center",   // ✅ ensures the title text is centered
+    width: "100%",         // ✅ takes full width of parent so centering is visible
+    alignSelf: "center",   // ✅ safety net for cross-axis alignment
   },
   orderConfirmedSubtitle: {
     fontSize: 13,
@@ -1384,6 +1426,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
   },
+
+  /* Dedicated Premium Catering Card Styling */
   cateringMainSummaryCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
@@ -1513,6 +1557,8 @@ const styles = StyleSheet.create({
     color: "#0F382A",
     letterSpacing: -0.5,
   },
+
+  /* Homemade Header & Chef Badge */
   homemadeChefBadgeRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1533,6 +1579,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#0B261D",
   },
+
+  /* ✅ HOMEMADE CONFIRMED DELIVERY DATE & SLOT STRIP */
   homemadeConfirmedDeliveryStripContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -1576,6 +1624,8 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(22, 101, 52, 0.15)",
     marginHorizontal: 10,
   },
+
+  /* Premium Clean User-Friendly Dishes Container */
   homemadeDishesContainer: {
     marginVertical: 4,
   },
@@ -1671,6 +1721,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#0B261D",
   },
+
+  /* Standard Summary Card */
   summaryCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
@@ -1777,6 +1829,8 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#0F382A",
   },
+
+  /* Reference Image Style Upcoming Deliveries Container */
   refUpcomingContainerCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
@@ -1912,6 +1966,8 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     fontWeight: "500",
   },
+
+  /* What's Next Tracker */
   whatsNextCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
@@ -2021,6 +2077,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#5B756C",
   },
+
+  /* Action Buttons */
   viewOrdersButton: {
     backgroundColor: "#15803D",
     flexDirection: "row",
@@ -2056,6 +2114,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800",
   },
+
+  /* Selections Preview Modal Styles */
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(11, 38, 29, 0.45)",

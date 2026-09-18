@@ -43,6 +43,7 @@ const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefi
   return addr.fullAddress || "";
 };
 
+// ✅ NEW: Format an absolute Date into a friendly "4:30 PM" string
 const formatTimeShortLocal = (d: Date | null): string => {
   if (!d) return "";
   try {
@@ -100,17 +101,24 @@ export default function CheckOutScreen() {
   const durationType = (params.durationType as string) || "Flexible Days (2 Days Running)";
   const deliveryDate = (params.deliveryDate as string) || "Mon, 20 May – Tue, 21 May";
   const deliveryTimeSlot = (params.deliveryTimeSlot as string) || "7:00 PM - 9:00 PM";
+  // ✅ Homemade-only: top-level delivery slot param (may be empty for mealbox/catering)
   const deliverySlotParam = (params.deliverySlot as string) || "";
 
+  // ✅ Homemade resolution — prefer the top-level slot; fall back to deliveryTimeSlot
   const homemadeResolvedDate = deliveryDate || "";
   const homemadeResolvedSlot = deliverySlotParam || deliveryTimeSlot || "";
 
+  // ✅ NEW: Detect QuickBites flow from route params (forwarded from HomeMadeOrderReview)
   const isQuickBites = String((params.isQuickBites as string) || "").toLowerCase() === "true";
 
+  // ✅ NEW: Compute a fresh, live estimated delivery time for QuickBites.
+  // Anchored to "now" so the label stays accurate even if the user took
+  // several minutes on the review screen.
   const liveEstimatedDeliveryAt = useMemo(() => {
     if (isQuickBites) {
       return new Date(Date.now() + 75 * 60 * 1000);
     }
+    // Fall back to any client-provided absolute ms timestamp
     const rawMs = (params.estimatedDeliveryAtMs as string) || "";
     const parsedMs = Number(rawMs);
     if (Number.isFinite(parsedMs) && parsedMs > 0) {
@@ -119,6 +127,7 @@ export default function CheckOutScreen() {
     return null;
   }, [isQuickBites, params.estimatedDeliveryAtMs]);
 
+  // ✅ NEW: Compute the dynamic delivery date/slot labels for display
   const dynamicHomemadeDateLabel = useMemo(() => {
     if (!isHomemadeFlow) return homemadeResolvedDate;
     if (isQuickBites) {
@@ -133,6 +142,7 @@ export default function CheckOutScreen() {
   const dynamicHomemadeSlotLabel = useMemo(() => {
     if (!isHomemadeFlow) return homemadeResolvedSlot;
     if (isQuickBites && liveEstimatedDeliveryAt) {
+      // ✅ Just the clock time, e.g. "4:30 PM"
       return formatTimeShortLocal(liveEstimatedDeliveryAt);
     }
     return homemadeResolvedSlot;
@@ -150,11 +160,13 @@ export default function CheckOutScreen() {
   const [newStreet, setNewStreet] = useState("");
   const [newCity, setNewCity] = useState("");
 
+  // SCANNER, UTR & SCREENSHOT VERIFICATION STATE
   const [showScannerModal, setShowScannerModal] = useState(false);
   const [verificationMode, setVerificationMode] = useState<"utr" | "screenshot">("utr");
   const [utrNumber, setUtrNumber] = useState("");
   const [paymentScreenshotUri, setPaymentScreenshotUri] = useState<string | null>(null);
 
+  // 5-MINUTE COUNTDOWN TIMER STATE (300 seconds)
   const [timeLeft, setTimeLeft] = useState(300);
 
   useEffect(() => {
@@ -480,10 +492,13 @@ export default function CheckOutScreen() {
       formData.append("chefId", chefId);
       formData.append("chefName", chefName);
       formData.append("items", JSON.stringify(parsedItems));
+      // ✅ Homemade now sends the real selected delivery date & slot instead of hardcoded "Today" / "30-45 min"
       formData.append("deliveryDate", dynamicHomemadeDateLabel || "Today");
       formData.append("deliveryTimeSlot", dynamicHomemadeSlotLabel || "30–45 min");
+      // ✅ New top-level deliverySlot param for order controller to persist
       formData.append("deliverySlot", dynamicHomemadeSlotLabel || "30–45 min");
 
+      // ✅ NEW: forward the QuickBites flag and the absolute delivery timestamp
       formData.append("isQuickBites", isQuickBites ? "true" : "false");
       formData.append("deliveryWindowMinutes", isQuickBites ? "75" : "0");
       if (liveEstimatedDeliveryAt) {
@@ -607,6 +622,7 @@ export default function CheckOutScreen() {
               </View>
             </View>
 
+            {/* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP (only renders when at least one value exists) */}
             {(dynamicHomemadeDateLabel || dynamicHomemadeSlotLabel) ? (
               <View style={styles.homemadeDeliveryStripContainer}>
                 {!!dynamicHomemadeDateLabel && (
@@ -882,8 +898,10 @@ export default function CheckOutScreen() {
           </View>
         )}
 
+        {/* Choose a Payment Method Section */}
         <Text style={styles.choosePaymentHeaderLabel}>Choose a payment method</Text>
 
+        {/* 1. UPI Payment Option (Disabled) */}
         <TouchableOpacity
           activeOpacity={0.9}
           disabled={true}
@@ -907,6 +925,7 @@ export default function CheckOutScreen() {
           <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
         </TouchableOpacity>
 
+        {/* 2. Cards Option (Disabled) */}
         <TouchableOpacity
           activeOpacity={0.9}
           disabled={true}
@@ -925,6 +944,7 @@ export default function CheckOutScreen() {
           <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
         </TouchableOpacity>
 
+        {/* 3. Net Banking Option (Disabled) */}
         <TouchableOpacity
           activeOpacity={0.9}
           disabled={true}
@@ -943,6 +963,7 @@ export default function CheckOutScreen() {
           <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
         </TouchableOpacity>
 
+        {/* 4. Wallets Option (Disabled) */}
         <TouchableOpacity
           activeOpacity={0.9}
           disabled={true}
@@ -961,6 +982,7 @@ export default function CheckOutScreen() {
           <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
         </TouchableOpacity>
 
+        {/* 5. Cash on Delivery (COD) Option with 40% Advance (Active) */}
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={() => setSelectedPaymentMethod("cod")}
@@ -986,6 +1008,7 @@ export default function CheckOutScreen() {
           <Ionicons name="chevron-forward" size={18} color="#5B756C" />
         </TouchableOpacity>
 
+        {/* Bottom Trust Badge Footer Banner */}
         <View style={styles.trustBadgeFooterContainer}>
           <View style={{ flexDirection: "row", alignItems: "center" }}>
             <View style={styles.trustShieldCircle}>
@@ -1004,6 +1027,7 @@ export default function CheckOutScreen() {
         <View style={{ height: 160 }} />
       </ScrollView>
 
+      {/* Dynamic Expandable Price Breakup Sheet */}
       {showDetails && (
         <Animated.View
           style={[
@@ -1104,6 +1128,7 @@ export default function CheckOutScreen() {
         </Animated.View>
       )}
 
+      {/* Floating Bottom Action Bar */}
       <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View>
           <Text style={styles.bottomAmountPayableLabel}>Advance (40%) Due Now</Text>
@@ -1154,6 +1179,7 @@ export default function CheckOutScreen() {
         <Text style={{ color: "#0F382A", fontWeight: "700" }}>Terms & Conditions</Text>
       </Text>
 
+      {/* ================= ORDER CONFIRMATION MODAL ================= */}
       <Modal
         visible={showConfirmModal}
         transparent
@@ -1242,6 +1268,7 @@ export default function CheckOutScreen() {
         </View>
       </Modal>
 
+      {/* ================= SCANNER & VERIFICATION PROOF MODAL ================= */}
       <Modal
         visible={showScannerModal}
         transparent
@@ -1274,6 +1301,7 @@ export default function CheckOutScreen() {
             </View>
             <Text style={styles.scannerModalSubtitle}>Choose how you want to submit your payment proof</Text>
 
+            {/* Toggle Switch between UTR and Screenshot */}
             <View style={styles.verificationModeToggleRow}>
               <TouchableOpacity
                 style={[styles.verificationModeTab, verificationMode === "utr" && styles.verificationModeTabActive]}
@@ -1378,6 +1406,7 @@ export default function CheckOutScreen() {
         </View>
       </Modal>
 
+      {/* CHANGE DELIVERY ADDRESS MODAL (HOMEMADE FLOW) */}
       <Modal
         visible={showChangeAddressModal}
         animationType="slide"
@@ -1466,6 +1495,7 @@ export default function CheckOutScreen() {
         </View>
       </Modal>
 
+      {/* Dynamic Selections Preview Modal */}
       <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closeSheet}>
         <BlurView intensity={30} tint="dark" style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeSheet} />
@@ -1997,6 +2027,8 @@ const styles = StyleSheet.create({
     color: "#0F382A",
     letterSpacing: 0.1,
   },
+
+  /* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP */
   homemadeDeliveryStripContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -2040,6 +2072,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(22, 101, 52, 0.15)",
     marginHorizontal: 10,
   },
+
   homemadeItemCardRow: {
     flexDirection: "row",
     alignItems: "center",

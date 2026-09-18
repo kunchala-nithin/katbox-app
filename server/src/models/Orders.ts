@@ -6,7 +6,7 @@ export interface IDeliverySchedule {
   status: string;
   timeSlot: string;
   address: string;
-  // ✅ Per-schedule coordinates for precise map pinning
+  // ✅ NEW: per-schedule coordinates for precise map pinning
   latitude?: number;
   longitude?: number;
   actualDeliveredAt?: Date;
@@ -64,11 +64,11 @@ export interface IBaseOrder extends Document {
   actualDeliveredAt?: Date;
   deliveredOnTime?: boolean;
   gracePeriodMinutes?: number;
-  // ✅ Absolute timestamps computed at order placement time
+  // ✅ NEW: absolute timestamps computed at order placement time
   orderPlacedAt?: Date;
   estimatedDeliveryAt?: Date;
   deliveryWindowMinutes?: number;
-  // ✅ Geo coordinates for accurate map pinning
+  // ✅ NEW: Geo coordinates for accurate map pinning
   latitude?: number;
   longitude?: number;
   razorpayOrderId?: string;
@@ -96,10 +96,10 @@ export interface IHomemadeOrder extends IBaseOrder {
   items: IHomemadeOrderItem[];
   deliveryAddress: string;
   deliveryTimeSlot?: string;
-  // ✅ Top-level delivery slot label for homemade orders (e.g. "4:30 PM")
+  // ✅ New top-level delivery slot label for homemade orders (e.g. "9:00 AM - 11:00 AM")
   deliverySlot?: string;
   deliveryDate?: string;
-  // ✅ QuickBites flag (persisted for downstream screens to render dynamic delivery times)
+  // ✅ NEW: QuickBites flag (persisted for downstream screens to render "arriving by X")
   isQuickBites?: boolean;
 }
 
@@ -135,7 +135,7 @@ const DeliveryScheduleSchema = new Schema(
     status: { type: String, required: true, default: "Scheduled" },
     timeSlot: { type: String, default: "7:00 PM - 9:00 PM" },
     address: { type: String, default: "" },
-    // ✅ Coordinates per scheduled delivery slot
+    // ✅ NEW: coordinates per scheduled delivery slot
     latitude: { type: Number },
     longitude: { type: Number },
     actualDeliveredAt: { type: Date },
@@ -220,11 +220,11 @@ const BaseOrderSchema: Schema = new Schema(
     actualDeliveredAt: { type: Date },
     deliveredOnTime: { type: Boolean, default: true },
     gracePeriodMinutes: { type: Number, default: 0 },
-    // ✅ Absolute timestamps computed at order placement time
+    // ✅ NEW: absolute timestamps computed at order placement time
     orderPlacedAt: { type: Date },
     estimatedDeliveryAt: { type: Date },
     deliveryWindowMinutes: { type: Number, default: 0 },
-    // ✅ Geo coordinates for accurate map pinning
+    // ✅ NEW: Geo coordinates for accurate map pinning
     latitude: { type: Number },
     longitude: { type: Number },
     razorpayOrderId: { type: String, default: "" },
@@ -260,9 +260,10 @@ const HomemadeOrderSchema = new Schema({
   items: { type: [HomemadeItemSubSchema], required: true, default: [] },
   deliveryAddress: { type: String, required: true, default: "" },
   deliveryTimeSlot: { type: String, default: "30–45 min" },
+  // ✅ Human-readable delivery slot label selected by user on the review screen
   deliverySlot: { type: String, default: "" },
   deliveryDate: { type: String, default: "Today" },
-  // ✅ Persist QuickBites flag
+  // ✅ NEW: Persist the QuickBites flag so downstream UIs can render the live "arriving by X" banner
   isQuickBites: { type: Boolean, default: false },
 });
 
