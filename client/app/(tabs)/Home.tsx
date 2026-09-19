@@ -29,6 +29,9 @@ import {
   FontAwesome5,
 } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants, { AppOwnership } from 'expo-constants';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import api from '@/src/lib/api';
 import {
@@ -313,6 +316,11 @@ export default function HomeScreen() {
   // Screen-Open Permission Prompt Modal State
   const [isPermissionPopupVisible, setIsPermissionPopupVisible] = useState<boolean>(false);
   const [isRequestingPermission, setIsRequestingPermission] = useState<boolean>(false);
+
+  // ─── ✅ NEW: Notification Permission Prompt States ───
+  const [isNotificationPopupVisible, setIsNotificationPopupVisible] = useState<boolean>(false);
+  const [isRequestingNotification, setIsRequestingNotification] = useState<boolean>(false);
+  const hasPromptedNotificationRef = useRef<boolean>(false);
 
   // Coming Soon Popup Modal State for Hire Chef
   const [isComingSoonModalVisible, setIsComingSoonModalVisible] = useState<boolean>(false);
@@ -634,6 +642,113 @@ export default function HomeScreen() {
 
   useEffect(() => {
     checkLocationStatusAndPrompt();
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ NEW: Register (or refresh) the current user's Expo push token on the
+  //    backend. Idempotent — the server just overwrites the pushToken field.
+  //    Silent no-op on Expo Go or simulators.
+  // ─────────────────────────────────────────────────────────────────────────
+  const registerPushTokenForCurrentUser = async (): Promise<boolean> => {
+    try {
+      const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
+      if (isExpoGo) {
+        console.log('📱 Running in Expo Go - skipping remote push token registration');
+        return false;
+      }
+
+      if (!Device.isDevice) {
+        return false;
+      }
+
+      const projectId =
+        Constants.expoConfig?.extra?.eas?.projectId ??
+        Constants.easConfig?.projectId;
+
+      if (!projectId) {
+        console.log('⚠️ No EAS projectId found. Push token registration skipped.');
+        return false;
+      }
+
+      const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+      const token = tokenData?.data;
+      if (!token) return false;
+
+      await api.patch('/api/auth/update-profile', { pushToken: token });
+      console.log('📲 Push token registered from Home:', token);
+      return true;
+    } catch (err) {
+      console.log('❌ Push token registration error (Home):', err);
+      return false;
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ NEW: Check notification permission and show the prompt modal if needed.
+  //    If already granted, silently registers the token so a reinstall or
+  //    token rotation is handled automatically.
+  // ─────────────────────────────────────────────────────────────────────────
+  const checkNotificationPermissionAndPrompt = async () => {
+    try {
+      const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
+      if (isExpoGo) return;              // Silently skip in Expo Go
+      if (!Device.isDevice) return;      // Silently skip on simulator
+
+      const { status } = await Notifications.getPermissionsAsync();
+
+      if (status !== 'granted') {
+        setIsNotificationPopupVisible(true);
+      } else {
+        // Already granted — make sure token is registered
+        await registerPushTokenForCurrentUser();
+      }
+    } catch (err) {
+      console.log('Notification permission check error:', err);
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ NEW: User tapped "Allow Notifications" in the prompt modal.
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleAllowNotificationPopup = async () => {
+    setIsRequestingNotification(true);
+    try {
+      const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
+      if (isExpoGo) {
+        setIsNotificationPopupVisible(false);
+        return;
+      }
+
+      const { status } = await Notifications.requestPermissionsAsync();
+
+      if (status === 'granted') {
+        await registerPushTokenForCurrentUser();
+      }
+      // Whether granted or denied, close the modal — the OS remembers
+      // the user's choice, so we should not nag repeatedly.
+      setIsNotificationPopupVisible(false);
+    } catch (err) {
+      console.log('Notification permission request error:', err);
+      setIsNotificationPopupVisible(false);
+    } finally {
+      setIsRequestingNotification(false);
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ NEW: On first mount of Home (i.e. first authenticated screen), after a
+  //    short delay so the screen paints first, check notification permission.
+  //    The ref prevents this from firing on every remount within the session.
+  // ─────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (hasPromptedNotificationRef.current) return;
+    hasPromptedNotificationRef.current = true;
+
+    const timer = setTimeout(() => {
+      checkNotificationPermissionAndPrompt();
+    }, 800);
+
+    return () => clearTimeout(timer);
   }, []);
 
   const persistSavedAddresses = async (
@@ -1875,6 +1990,63 @@ export default function HomeScreen() {
                   <Feather name="arrow-right" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
                 </>
               )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ─── ✅ NEW: NOTIFICATION PERMISSION MODAL ─── */}
+      <Modal
+        visible={isNotificationPopupVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsNotificationPopupVisible(false)}
+      >
+        <View style={styles.permissionModalBackdrop}>
+          <View style={styles.permissionCardContainer}>
+            <View style={[styles.permissionIllustrationCircle, { backgroundColor: '#DBEAFE' }]}>
+              <Ionicons name="notifications" size={38} color="#2563EB" />
+              <View style={[styles.permissionPulseDot, { borderColor: 'rgba(37, 99, 235, 0.3)' }]} />
+            </View>
+
+            <Text style={styles.permissionCardTitle}>Stay Updated with Katbox</Text>
+            <Text style={styles.permissionCardDescription}>
+              Allow notifications to get instant updates on your order status, delivery progress, and exclusive offers.
+            </Text>
+
+            <View style={styles.permissionFeaturesList}>
+              <View style={styles.permissionFeatureItem}>
+                <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginRight: 8 }} />
+                <Text style={styles.permissionFeatureText}>Real-time order & delivery updates</Text>
+              </View>
+              <View style={styles.permissionFeatureItem}>
+                <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginRight: 8 }} />
+                <Text style={styles.permissionFeatureText}>Chef acceptance & status alerts</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.permissionAllowButton, { backgroundColor: '#2563EB', shadowColor: '#2563EB' }]}
+              activeOpacity={0.88}
+              onPress={handleAllowNotificationPopup}
+              disabled={isRequestingNotification}
+            >
+              {isRequestingNotification ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Text style={styles.permissionAllowButtonText}>Allow Notifications</Text>
+                  <Feather name="arrow-right" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ marginTop: 12, paddingVertical: 6 }}
+              onPress={() => setIsNotificationPopupVisible(false)}
+              activeOpacity={0.7}
+            >
+              <Text style={{ fontSize: 12.5, color: '#64748B', fontWeight: '600' }}>Maybe later</Text>
             </TouchableOpacity>
           </View>
         </View>
