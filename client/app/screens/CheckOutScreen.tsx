@@ -20,8 +20,6 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import * as ImagePicker from "expo-image-picker";
-import * as MediaLibrary from "expo-media-library";
-import * as FileSystem from "expo-file-system/legacy";
 import { useFocusEffect } from "@react-navigation/native";
 
 import api from "@/src/lib/api";
@@ -198,30 +196,6 @@ export default function CheckOutScreen() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
-  };
-
-  const downloadScannerImage = async () => {
-    try {
-      const { status } = await MediaLibrary.requestPermissionsAsync(false, ["photo"]);
-      if (status !== "granted") {
-        Alert.alert("Permission Required", "Please grant photo library access to download the QR scanner.");
-        return;
-      }
-
-      const asset = Image.resolveAssetSource(require("@/assets/images/scanner.png"));
-      const fileUri = `${FileSystem.documentDirectory}scanner_qr.png`;
-
-      const downloadResult = await FileSystem.downloadAsync(asset.uri, fileUri);
-      if (downloadResult.status === 200) {
-        await MediaLibrary.saveToLibraryAsync(downloadResult.uri);
-        Alert.alert("Success", "QR Scanner saved to your gallery successfully!");
-      } else {
-        Alert.alert("Download Failed", "Could not download the QR scanner image.");
-      }
-    } catch (error) {
-      console.error("Error downloading scanner:", error);
-      Alert.alert("Error", "Failed to download scanner image.");
-    }
   };
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -1353,11 +1327,6 @@ export default function CheckOutScreen() {
                   resizeMode="contain"
                 />
               </View>
-
-              <TouchableOpacity style={styles.downloadScannerBtn} onPress={downloadScannerImage} activeOpacity={0.8}>
-                <Ionicons name="download-outline" size={16} color="#166538" style={{ marginRight: 6 }} />
-                <Text style={styles.downloadScannerBtnText}>Download QR Code to Gallery</Text>
-              </TouchableOpacity>
 
               {verificationMode === "utr" ? (
                 <>
@@ -2554,7 +2523,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(15, 56, 42, 0.15)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 10,
+    marginBottom: 14,
     padding: 12,
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: 6 },
@@ -2565,23 +2534,6 @@ const styles = StyleSheet.create({
   scannerImageStyle: {
     width: "100%",
     height: "100%",
-  },
-  downloadScannerBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(22, 101, 52, 0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(22, 101, 52, 0.2)",
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginBottom: 14,
-  },
-  downloadScannerBtnText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "#166538",
   },
   scannerUtrNoticeBox: {
     flexDirection: "row",
