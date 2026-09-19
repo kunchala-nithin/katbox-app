@@ -19,6 +19,7 @@
         "NSPhotoLibraryUsageDescription": "Allow access to your photos to upload restaurant image",
         "NSCameraUsageDescription": "Allow access to camera to upload restaurant image",
         "NSPhotoLibraryAddUsageDescription": "Allow KatBox to save the payment QR scanner to your gallery.",
+        "NSLocationWhenInUseUsageDescription": "KatBox uses your location to find nearby chefs and estimate delivery times.",
         "LSApplicationQueriesSchemes": [
           "phonepe",
           "gpay",
@@ -47,7 +48,9 @@
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.VIBRATE",
-        "android.permission.WAKE_LOCK"
+        "android.permission.WAKE_LOCK",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
       ]
     },
     "web": {
@@ -86,6 +89,15 @@
           "sounds": [
             "./assets/sounds/alarm.mp3"
           ]
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "KatBox uses your location to find nearby chefs and estimate delivery times.",
+          "locationWhenInUsePermission": "KatBox uses your location to find nearby chefs and estimate delivery times.",
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
         }
       ]
     ],

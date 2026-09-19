@@ -32,6 +32,8 @@ import {
   ActiveAddress,
   SavedAddress,
 } from "@/src/lib/authStorage";
+// ✅ NEW: read the active delivery location (lat/lng) from the global store
+import { useDeliveryLocationStore } from "@/src/store/deliveryLocationStore";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -60,6 +62,9 @@ const formatTimeShortLocal = (d: Date | null): string => {
 export default function CheckOutScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+
+  // ✅ NEW: read delivery location (lat/lng) from global store — single source of truth
+  const deliveryLocation = useDeliveryLocationStore((s) => s.deliveryLocation);
 
   const [loading, setLoading] = useState(false);
 
@@ -445,6 +450,18 @@ export default function CheckOutScreen() {
       ],
     }));
 
+    // ✅ NEW: Resolve lat/lng — prefer global store, fall back to locally-loaded activeAddress
+    const resolvedLatitude =
+      deliveryLocation?.latitude !== undefined && deliveryLocation?.latitude !== null
+        ? deliveryLocation.latitude
+        : (activeAddress?.latitude ?? 0);
+    const resolvedLongitude =
+      deliveryLocation?.longitude !== undefined && deliveryLocation?.longitude !== null
+        ? deliveryLocation.longitude
+        : (activeAddress?.longitude ?? 0);
+    const resolvedDeliveryFullAddress =
+      deliveryLocation?.fullAddress || activeAddress?.fullAddress || addressDetails;
+
     const formData = new FormData();
     formData.append("userId", userId);
     formData.append("userName", userName);
@@ -453,6 +470,10 @@ export default function CheckOutScreen() {
     formData.append("menuImage", menuImage);
     formData.append("addressDetails", addressDetails);
     formData.append("deliveryAddress", addressDetails);
+    // ✅ NEW: attach delivery latitude / longitude (goes into order.deliveryAddress on the backend)
+    formData.append("latitude", String(resolvedLatitude));
+    formData.append("longitude", String(resolvedLongitude));
+    formData.append("deliveryAddressFull", resolvedDeliveryFullAddress);
     formData.append("subtotal", String(subtotal));
     formData.append("deliveryPrice", String(deliveryPrice));
     formData.append("discount", String(discount));

@@ -45,6 +45,8 @@ import {
 import AddressMapModal, {
   AddressMapConfirmPayload,
 } from '@/src/components/AddressMapModal';
+// ✅ NEW: single-source-of-truth for delivery location (survives back navigation)
+import { useDeliveryLocationStore } from '@/src/store/deliveryLocationStore';
 
 const { width, height } = Dimensions.get('window');
 const HOME_CARD_WIDTH = 220;
@@ -293,6 +295,9 @@ const HomeChefBannerCarousel = ({
 
 export default function HomeScreen() {
   const router = useRouter();
+  // ✅ NEW: Delivery location store (single source of truth for lat/lng)
+  const setDeliveryLocationInStore = useDeliveryLocationStore((s) => s.setDeliveryLocation);
+  const hydrateDeliveryLocation = useDeliveryLocationStore((s) => s.hydrateDeliveryLocation);
   const [greeting, setGreeting] = useState<'Good Morning' | 'Good Afternoon' | 'Good Evening' | 'Welcome'>('Good Morning');
   const [userName, setUserName] = useState<string>('User');
   const [currentUserId, setCurrentUserId] = useState<string>('');
@@ -379,6 +384,32 @@ export default function HomeScreen() {
       return `${addr.houseDetails}, ${addr.fullAddress}`;
     }
     return addr.fullAddress || 'Select delivery location';
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ NEW: Push the active address into the global delivery-location store so
+  //         downstream screens (Checkout, Orders, Admin) can read lat/lng
+  //         without prop-drilling through 8 screens.
+  // ─────────────────────────────────────────────────────────────────────────
+  const syncActiveAddressToStore = async (addr: ActiveAddress | null | undefined) => {
+    if (!addr || !addr.fullAddress) return;
+    try {
+      await setDeliveryLocationInStore({
+        id: addr.id,
+        title: addr.title,
+        houseDetails: addr.houseDetails || '',
+        fullAddress: addr.fullAddress,
+        latitude: addr.latitude,
+        longitude: addr.longitude,
+        tag: addr.tag,
+        updatedAt:
+          addr.updatedAt instanceof Date
+            ? addr.updatedAt.toISOString()
+            : addr.updatedAt || new Date().toISOString(),
+      });
+    } catch (e) {
+      console.log('syncActiveAddressToStore error:', e);
+    }
   };
 
   // Helper function to check if address already exists in user's saved addresses
@@ -498,6 +529,8 @@ export default function HomeScreen() {
           if (cachedUser.activeAddress.id) {
             setSelectedAddressId(cachedUser.activeAddress.id);
           }
+          // ✅ NEW: push cached active address to the store immediately
+          syncActiveAddressToStore(cachedUser.activeAddress);
         } else if (cachedUser.address && cachedUser.address.trim().length > 0) {
           setLocationDisplay(cachedUser.address.trim());
         }
@@ -532,6 +565,8 @@ export default function HomeScreen() {
             if (freshUser.activeAddress.id) {
               setSelectedAddressId(freshUser.activeAddress.id);
             }
+            // ✅ NEW: push freshly-fetched active address to the store
+            syncActiveAddressToStore(freshUser.activeAddress);
           } else if (freshUser.address && freshUser.address.trim().length > 0) {
             setLocationDisplay(freshUser.address.trim());
           }
@@ -583,6 +618,12 @@ export default function HomeScreen() {
       fetchCartCount();
     }, [])
   );
+
+  // ✅ NEW: Hydrate the persisted delivery location on mount so back-navigation
+  //         and app restarts still remember lat/lng of the same user.
+  useEffect(() => {
+    hydrateDeliveryLocation();
+  }, [hydrateDeliveryLocation]);
 
   // ─── BOTTOM-OF-SCROLL REFRESH ───
   const refreshWholeScreen = useCallback(async () => {
@@ -863,6 +904,9 @@ export default function HomeScreen() {
         address: formatAddressDisplay(gpsActive),
       });
 
+      // ✅ NEW: GPS-detected location → push to store
+      await syncActiveAddressToStore(gpsActive);
+
       hasAppliedGpsOnceRef.current = true;
     } catch (error) {
       console.error('Error getting location:', error);
@@ -908,6 +952,9 @@ export default function HomeScreen() {
       activeAddress: newActive,
       address: formatAddressDisplay(newActive),
     });
+
+    // ✅ NEW: user picked a saved address → push to store
+    await syncActiveAddressToStore(newActive);
 
     // ✅ Force a fresh fetch since the delivery location changed
     fetchDynamicChefs(true, true);
@@ -962,6 +1009,11 @@ export default function HomeScreen() {
             }
 
             await persistSavedAddresses(updated, nextActive);
+
+            // ✅ NEW: if the active address was replaced, sync the new one
+            if (nextActive) {
+              await syncActiveAddressToStore(nextActive);
+            }
           },
         },
       ]
@@ -1025,6 +1077,8 @@ export default function HomeScreen() {
 
       await persistSavedAddresses(updated, newActive);
       setSelectedAddressId(editingAddressId);
+      // ✅ NEW: edited address is now active → sync to store
+      await syncActiveAddressToStore(newActive);
     } else {
       const duplicate = isAddressDuplicate(
         savedAddresses,
@@ -1050,6 +1104,8 @@ export default function HomeScreen() {
         };
         await persistSavedAddresses(updated, newActive);
         setSelectedAddressId(duplicate.id);
+        // ✅ NEW: dedup-matched address is now active → sync to store
+        await syncActiveAddressToStore(newActive);
       } else {
         const newAddressItem: SavedAddress = {
           id: `addr_${Date.now()}`,
@@ -1076,6 +1132,8 @@ export default function HomeScreen() {
 
         await persistSavedAddresses(updatedList, newActive);
         setSelectedAddressId(newAddressItem.id);
+        // ✅ NEW: brand-new address is now active → sync to store
+        await syncActiveAddressToStore(newActive);
       }
     }
 
