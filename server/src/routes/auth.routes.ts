@@ -1176,6 +1176,18 @@ router.patch(
  * Authentication is handled by the same `protect` middleware
  * used by /me and /update-profile.
  *
+ * ✅ PATCH (this update):
+ *
+ *   The handler now ALSO accepts a `savedAddresses` array —
+ *   matching the behaviour of /update-profile exactly. This
+ *   means any older client that still targets /update-address
+ *   can push the full saved-address list here and it will land
+ *   in MongoDB unchanged.
+ *
+ *   When the client sends only { activeAddress } (address
+ *   selection), the existing savedAddresses array on the user
+ *   document is left completely untouched.
+ *
  * ============================================================
  */
 
@@ -1202,6 +1214,7 @@ router.patch(
       const {
         activeAddress,
         address,
+        savedAddresses,
       } = req.body;
 
       const updateFields: any = {};
@@ -1278,6 +1291,99 @@ router.patch(
           typeof address === "string"
             ? address.trim()
             : address;
+      }
+
+      /*
+       * --------------------------------------------------------
+       * SAVED ADDRESSES (NEW — parity with /update-profile)
+       * --------------------------------------------------------
+       *
+       * Deduped by houseDetails + fullAddress so repeated taps
+       * on "Save address" never create duplicates in MongoDB.
+       *
+       * When omitted from the payload, we simply do NOT touch
+       * the existing savedAddresses array — so selecting a
+       * different active address does not wipe the saved list.
+       */
+
+      if (
+        Array.isArray(savedAddresses)
+      ) {
+        const uniqueAddresses: ISavedAddress[] =
+          [];
+
+        const seen =
+          new Set<string>();
+
+        for (
+          const addr of savedAddresses
+        ) {
+          if (
+            !addr ||
+            !addr.fullAddress
+          ) {
+            continue;
+          }
+
+          const normalizedKey =
+            `${(
+              addr.houseDetails ||
+              ""
+            )
+              .trim()
+              .toLowerCase()}_${addr.fullAddress
+              .trim()
+              .toLowerCase()}`;
+
+          if (
+            !seen.has(normalizedKey)
+          ) {
+            seen.add(normalizedKey);
+
+            uniqueAddresses.push({
+              id:
+                addr.id ||
+                `addr_${Date.now()}_${Math.random()
+                  .toString(36)
+                  .substring(2, 7)}`,
+
+              title:
+                addr.title ||
+                "Home",
+
+              houseDetails:
+                addr.houseDetails ||
+                "",
+
+              fullAddress:
+                addr.fullAddress,
+
+              latitude:
+                typeof addr.latitude === "number"
+                  ? addr.latitude
+                  : 0,
+
+              longitude:
+                typeof addr.longitude === "number"
+                  ? addr.longitude
+                  : 0,
+
+              tag:
+                addr.tag ||
+                "Home",
+
+              createdAt:
+                addr.createdAt
+                  ? new Date(
+                      addr.createdAt
+                    )
+                  : new Date(),
+            });
+          }
+        }
+
+        updateFields.savedAddresses =
+          uniqueAddresses;
       }
 
       /*

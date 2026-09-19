@@ -486,6 +486,18 @@ export const getSavedAddressesForUser =
  * ============================================================
  * SAVE USER-SCOPED ADDRESSES
  * ============================================================
+ *
+ * This is the mobile entry-point that gets called from Home.tsx
+ * whenever the user adds, edits, deletes, or selects an address.
+ *
+ * It performs TWO writes in one call:
+ *
+ *   1. AsyncStorage (instant offline cache, per user)
+ *   2. MongoDB via `updateUserAddress` below
+ *
+ * The MongoDB write is what makes saved addresses appear on
+ * other review screens (Catering / MealBox / HomeMade) after
+ * a fresh `refreshUser()`.
  */
 export const setSavedAddressesForUser =
   async (
@@ -522,6 +534,40 @@ export const setSavedAddressesForUser =
  * ============================================================
  * UPDATE USER ADDRESS
  * ============================================================
+ *
+ * FIX (this file):
+ *
+ * Previously this function called PATCH /auth/update-address,
+ * which on the backend ONLY handles `activeAddress` and
+ * `address`. It silently DROPPED any `savedAddresses` array
+ * that we sent it.
+ *
+ * As a result:
+ *
+ *   - the local AsyncStorage cache had the new address
+ *   - MongoDB did NOT, so:
+ *       • other devices couldn't see it
+ *       • a fresh login on the same device re-hydrated a stale
+ *         list from the server
+ *       • review screens (Catering / MealBox / HomeMade) that
+ *         call refreshUser() never saw the newly added address
+ *
+ * We now route through PATCH /auth/update-profile, which the
+ * backend already implements with full support for:
+ *
+ *   - savedAddresses[]   (dedupes by houseDetails + fullAddress)
+ *   - activeAddress      (writes activeAddress + address)
+ *   - address            (legacy string fallback)
+ *   - name / pushToken   (optional, untouched when omitted)
+ *
+ * When we only send `activeAddress`, the backend leaves the
+ * existing `savedAddresses` array on the user document intact.
+ * When we send `savedAddresses`, it replaces the array with the
+ * deduped version we provide. Both flows work correctly.
+ *
+ * The response shape is identical to the old endpoint:
+ *   { success: true, message: string, user: <fullUserPayload> }
+ * so no downstream code needs to change.
  */
 export const updateUserAddress =
   async (payload: {
@@ -542,7 +588,7 @@ export const updateUserAddress =
     try {
       const response =
         await api.patch(
-          "/auth/update-address",
+          "/auth/update-profile",
           payload,
           {
             headers: {
@@ -583,6 +629,12 @@ export const updateUserAddress =
  * ============================================================
  * REFRESH USER FROM BACKEND
  * ============================================================
+ *
+ * Called from every review screen (Catering / MealBox / HomeMade)
+ * inside their `useFocusEffect` to pull the freshest
+ * `savedAddresses` + `activeAddress` from MongoDB. Once the
+ * endpoint fix above is in place, this will return the list that
+ * was just written by Home.tsx.
  */
 export const refreshUser =
   async (): Promise<StoredUser | null> => {

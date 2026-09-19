@@ -503,8 +503,17 @@ export default function ChefOrderReviewScreen() {
   const isAddressComplete = !!address && address.trim().length > 0;
   const isDeliveryComplete = !!delivery;
 
+  // ✅ NEW: Special instructions are considered "selected" when the user has
+  //     chosen a spice level OR toggled the "No onion & garlic" option.
+  //     The free-text description / notes field is OPTIONAL — it does NOT
+  //     affect this flag, and it does NOT block the Add to cart / Review order buttons.
+  const isSpecialInstructionsComplete = !!selectedSpice || noOnionsGarlic;
+
   const shouldShowPhoneTick = isAddressComplete && isPhoneValid;
 
+  // ✅ UPDATED: The form is now considered complete ONLY when the user has
+  //    also picked a delivery service AND a special instruction (spice level
+  //    OR no-onion-garlic toggle). The optional notes text is not required.
   const isFormComplete =
     isOccasionComplete &&
     isDateComplete &&
@@ -512,7 +521,9 @@ export default function ChefOrderReviewScreen() {
     isGuestsComplete &&
     isAddressComplete &&
     isPhoneValid &&
-    isAltPhoneValid;
+    isAltPhoneValid &&
+    isDeliveryComplete &&
+    isSpecialInstructionsComplete;
 
   const progressSteps = [
     { complete: isOccasionComplete },
@@ -1235,7 +1246,13 @@ export default function ChefOrderReviewScreen() {
               <View style={styles.iconCircleWrapper}>
                 <Ionicons name="document-text-outline" size={15} color={theme.primaryPurple} />
               </View>
-              <Text style={styles.notesTitle}>Special instructions</Text>
+              <View>
+                <Text style={styles.notesTitle}>Special instructions</Text>
+                {/* ✅ NEW: clearer hint — spice level is required, description is optional */}
+                <Text style={styles.optionalFieldSubLabel}>
+                  Select a spice level (required) • Description is optional
+                </Text>
+              </View>
             </View>
             <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 12, gap: 6 }}>
               <TouchableOpacity
