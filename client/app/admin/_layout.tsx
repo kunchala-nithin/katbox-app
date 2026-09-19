@@ -12,6 +12,7 @@ import {
 import { getUser, refreshUser, getToken } from '@/src/lib/authStorage'
 import { isTokenExpired } from '@/src/lib/jwtUtils'
 import { subscribeAuth } from '@/src/lib/authEvents'
+import { useOrderNotifier } from '@/src/hooks/useOrderNotifier'
 
 const ADMIN_TAB_CONFIG: Record<
     string,
@@ -42,6 +43,16 @@ export default function AdminTabsLayout() {
     const [allowed, setAllowed] = useState<boolean | null>(null)
     const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
     const hasLoadedRef = useRef(false)
+
+    /* ─────────────────────────────────────────────────────────
+       ✅ NEW: Role-scoped order alarm + push notification listener.
+       Enabled only once auth (allowed === true) AND role
+       (isAdmin === true) are fully resolved. When disabled, the
+       hook is a no-op — zero side effects.
+       ───────────────────────────────────────────────────────── */
+    useOrderNotifier('admin', {
+        enabled: allowed === true && isAdmin === true,
+    })
 
     useEffect(() => {
         let mounted = true

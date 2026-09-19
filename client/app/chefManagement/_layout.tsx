@@ -12,6 +12,7 @@ import {
 import { getUser, refreshUser, getToken } from '@/src/lib/authStorage'
 import { isTokenExpired } from '@/src/lib/jwtUtils'
 import { subscribeAuth } from '@/src/lib/authEvents'
+import { useOrderNotifier } from '@/src/hooks/useOrderNotifier'
 
 const CHEF_TAB_CONFIG: Record<
   string,
@@ -48,6 +49,26 @@ export default function ChefTabsLayout() {
   const [isChef, setIsChef] = useState<boolean | null>(null) // ⭐ Start as null to prevent premature redirects
   const hasLoadedRef = useRef(false)
 
+  /* ─────────────────────────────────────────────────────────
+     ✅ NEW: Chef identity atoms consumed by useOrderNotifier
+     so that CHEF-side order filtering can be done without an
+     extra network round-trip.
+     ───────────────────────────────────────────────────────── */
+  const [chefUserId, setChefUserId] = useState<string | null>(null)
+  const [chefName, setChefName] = useState<string | null>(null)
+
+  /* ─────────────────────────────────────────────────────────
+     ✅ NEW: Role-scoped order alarm + push notification listener.
+     Enabled only once auth (allowed === true) AND role
+     (isChef === true) are fully resolved. When disabled, the
+     hook is a no-op — zero side effects.
+     ───────────────────────────────────────────────────────── */
+  useOrderNotifier('chef', {
+    enabled: allowed === true && isChef === true,
+    chefUserId,
+    chefName,
+  })
+
   useEffect(() => {
     let mounted = true
 
@@ -69,11 +90,17 @@ export default function ChefTabsLayout() {
         const cached = await getUser()
         if (cached && mounted) {
           setIsChef(!!cached.isChef)
+          /* ✅ Populate chef identity from cache for the notifier. */
+          if (cached.id) setChefUserId(String(cached.id))
+          if (cached.name) setChefName(String(cached.name))
         }
 
         const fresh = await refreshUser()
         if (fresh && mounted) {
           setIsChef(!!fresh.isChef)
+          /* ✅ Refresh chef identity from the network too. */
+          if (fresh.id) setChefUserId(String(fresh.id))
+          if (fresh.name) setChefName(String(fresh.name))
         } else if (!cached && mounted) {
           setIsChef(false)
         }

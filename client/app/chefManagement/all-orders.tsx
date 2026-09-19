@@ -18,7 +18,6 @@ import {
   LayoutAnimation,
   UIManager,
   Easing,
-  Vibration,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -28,11 +27,11 @@ import {
 } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import { Audio } from 'expo-av';
 import Constants, { AppOwnership } from 'expo-constants';
 import api from '@/src/lib/api';
 import { LinearGradient } from 'expo-linear-gradient';
 import { socket } from '@/src/lib/socket';
+import { startOrderAlarm, stopOrderAlarm } from '@/src/lib/orderAlarm';
 
 const { width, height } = Dimensions.get('window');
 
@@ -563,11 +562,10 @@ export default function AllOrdersScreen() {
   const [previewActiveDay, setPreviewActiveDay] = useState<string>('');
   const sheetAnim = useRef(new Animated.Value(400)).current;
 
-  // Audio sound & snooze scheduler refs
-  const soundRef = useRef<Audio.Sound | null>(null);
+  // ✅ Alarm snooze-cycle interval ref.
+  //    Sound + vibration + 10s auto-stop are now fully owned by the
+  //    shared singleton `client/src/lib/orderAlarm.ts`.
   const alarmIntervalRef = useRef<any>(null);
-  const alarmStopTimeoutRef = useRef<any>(null);
-  const isAlarmPlayingRef = useRef<boolean>(false);
 
   useEffect(() => {
     async function setupNotifications() {
@@ -619,47 +617,25 @@ export default function AllOrdersScreen() {
     }
   };
 
+  /* ─────────────────────────────────────────────────────────
+     ✅ UPDATED: These now delegate to the shared singleton
+     alarm controller (`client/src/lib/orderAlarm.ts`).
+
+     Why: the layout-mounted `useOrderNotifier('chef')` hook can
+     ALSO trigger the alarm (on socket event OR foreground push).
+     Without a singleton, the same order would ring twice — one
+     from the hook, one from this screen.
+
+     The singleton is idempotent, manages its own 10s auto-stop
+     timer, plays the bundled `assets/sounds/alarm.mp3`, applies
+     the correct audio mode, and drives the repeating vibration.
+     ───────────────────────────────────────────────────────── */
   const startOrderAlarmSound = async () => {
-    try {
-      if (isAlarmPlayingRef.current) return;
-      isAlarmPlayingRef.current = true;
-
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        shouldDuckAndroid: true,
-      });
-
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3' },
-        { shouldPlay: true, isLooping: true, volume: 1.0 }
-      );
-      soundRef.current = sound;
-      await sound.playAsync();
-
-      Vibration.vibrate([0, 600, 300, 600, 300], true);
-
-      if (alarmStopTimeoutRef.current) clearTimeout(alarmStopTimeoutRef.current);
-      alarmStopTimeoutRef.current = setTimeout(async () => {
-        await stopOrderAlarmSoundOnly();
-      }, 10000);
-    } catch (err) {
-      console.log('Error playing alarm sound:', err);
-    }
+    await startOrderAlarm();
   };
 
   const stopOrderAlarmSoundOnly = async () => {
-    try {
-      if (soundRef.current) {
-        await soundRef.current.stopAsync();
-        await soundRef.current.unloadAsync();
-        soundRef.current = null;
-      }
-      Vibration.cancel();
-      isAlarmPlayingRef.current = false;
-    } catch (err) {
-      console.log('Error stopping sound:', err);
-    }
+    await stopOrderAlarm();
   };
 
   const clearAlarmAndSnoozeCycle = async () => {
@@ -667,11 +643,7 @@ export default function AllOrdersScreen() {
       clearInterval(alarmIntervalRef.current);
       alarmIntervalRef.current = null;
     }
-    if (alarmStopTimeoutRef.current) {
-      clearTimeout(alarmStopTimeoutRef.current);
-      alarmStopTimeoutRef.current = null;
-    }
-    await stopOrderAlarmSoundOnly();
+    await stopOrderAlarm();
   };
 
   const initAlarmCycleForPendingOrder = (orderItem: any) => {

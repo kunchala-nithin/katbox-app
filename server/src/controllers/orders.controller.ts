@@ -12,6 +12,14 @@ import Cart from "../models/Cart";
 import cloudinary from "../config/cloudinary";
 import { io } from "..";
 import { recalculateChefRating } from "./chef.controller";
+import {
+  sendExpoPush,
+  sendExpoPushBatch,
+  isValidExpoToken,
+  ORDER_ALARM_SOUND,
+  ADMIN_ORDER_CHANNEL_ID,
+  CHEF_ORDER_CHANNEL_ID,
+} from "../utils/expoPush";
 
 interface AuthRequest extends Request {
   user?: {
@@ -153,27 +161,129 @@ const uploadBufferToCloudinary = (fileBuffer: Buffer) => {
   });
 };
 
-const sendExpoPushNotification = async (pushToken: string, title: string, body: string, data: any = {}) => {
-  if (!pushToken || typeof pushToken !== 'string' || !pushToken.startsWith('ExponentPushToken[')) return;
-  try {
-    await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Accept-encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        to: pushToken,
-        sound: 'default',
-        title,
-        body,
-        data,
-      }),
-    });
-  } catch (err) {
-    console.log('Expo push notification error:', err);
+/* ─────────────────────────────────────────────────────────────────
+   ✅ UPDATED — Local wrapper now delegates to the centralized
+   `sendExpoPush` helper from ../utils/expoPush.
+   Signature kept IDENTICAL so all existing call sites
+   (customer pushes in feedback cron + order flows) keep working
+   with zero changes. Uses the OS default sound (NOT the alarm)
+   so customer-facing notifications remain unchanged.
+   ───────────────────────────────────────────────────────────────── */
+const sendExpoPushNotification = async (
+  pushToken: string,
+  title: string,
+  body: string,
+  data: any = {}
+) => {
+  if (!isValidExpoToken(pushToken)) return;
+  await sendExpoPush({
+    token: pushToken,
+    title,
+    body,
+    data,
+    sound: "default",
+  });
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Human-readable title + body for customer-facing
+   order status push notifications. Maps every status value that
+   the admin/chef dropdowns can produce to a friendly message.
+   Falls back to a generic message for any unmapped status.
+   ───────────────────────────────────────────────────────────────── */
+const getCustomerStatusMessage = (
+  rawStatus: string,
+  orderId: string
+): { title: string; body: string } => {
+  const s = String(rawStatus || "").trim().toLowerCase();
+  const shortId = orderId ? `#${orderId}` : "";
+
+  // Accepted / Prep started
+  if (s === "accepted") {
+    return {
+      title: "✅ Order Accepted",
+      body: `Your order ${shortId} has been accepted and will be prepared shortly.`,
+    };
   }
+
+  // Preparing
+  if (s === "preparing" || s === "prep") {
+    return {
+      title: "👨‍🍳 Order Being Prepared",
+      body: `Great news! Your order ${shortId} is now being prepared.`,
+    };
+  }
+
+  // Packed
+  if (
+    s === "prepared & packing" ||
+    s === "prepared and packing" ||
+    s === "packing" ||
+    s === "packed"
+  ) {
+    return {
+      title: "📦 Order Packed",
+      body: `Your order ${shortId} has been packed and is ready to be dispatched.`,
+    };
+  }
+
+  // Out for delivery
+  if (s === "out for delivery" || s === "out_for_delivery" || s === "dispatched") {
+    return {
+      title: "🚴 Out for Delivery",
+      body: `Your order ${shortId} is on its way! Please be ready to receive it.`,
+    };
+  }
+
+  // Delivered / completed
+  if (s === "delivered" || s === "completed") {
+    return {
+      title: "🎉 Order Delivered",
+      body: `Your order ${shortId} has been delivered. Enjoy your meal!`,
+    };
+  }
+
+  // Cancelled
+  if (s === "cancelled" || s === "canceled") {
+    return {
+      title: "❌ Order Cancelled",
+      body: `Your order ${shortId} has been cancelled. If this was unexpected, please contact support.`,
+    };
+  }
+
+  // Cash collected / fully paid
+  if (
+    s === "cash collected" ||
+    s === "cash_collected" ||
+    s === "collected" ||
+    s === "balance collected" ||
+    s === "fully paid"
+  ) {
+    return {
+      title: "💰 Payment Received",
+      body: `Payment for order ${shortId} has been received. Thank you!`,
+    };
+  }
+
+  // Paused / Unpaused (mealbox schedule)
+  if (s === "paused") {
+    return {
+      title: "⏸ Delivery Paused",
+      body: `A scheduled delivery for order ${shortId} has been paused.`,
+    };
+  }
+  if (s === "scheduled" || s === "unpaused") {
+    return {
+      title: "▶ Delivery Resumed",
+      body: `A scheduled delivery for order ${shortId} has been resumed.`,
+    };
+  }
+
+  // Generic fallback for any unmapped status
+  return {
+    title: "📋 Order Update",
+    body: `Your order ${shortId} status: ${rawStatus}`,
+  };
 };
 
 // Background cron reminder for feedbacks
@@ -244,6 +354,12 @@ setInterval(async () => {
  *    ✅ NEW: latitude & longitude are also persisted on the order and
  *       on each delivery schedule so downstream map actions can pin
  *       the exact location.
+ *
+ *    ✅ NEW (this update): After the order is saved, EVERY user with
+ *       isAdmin === true receives an Expo push with the bundled
+ *       alarm.mp3 sound + admin_orders_alarm channel + data.role
+ *       = "admin". This makes the admin's phone ring even when the
+ *       app is fully closed.
  */
 export const createOrder = async (req: AuthRequest, res: Response) => {
   try {
@@ -680,6 +796,50 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
 
       io.emit("new_order_placed", savedOrder);
+
+      /* ──────────────────────────────────────────────────────────
+         ✅ NEW: Notify EVERY admin with the alarm sound.
+         • Runs AFTER the order is safely saved.
+         • Uses the batch endpoint so all admins are notified
+           in a single HTTP call.
+         • Sound = alarm.mp3, channel = admin_orders_alarm,
+           priority = "max", data.role = "admin".
+         • Never throws — wrapped in its own try/catch.
+         ────────────────────────────────────────────────────────── */
+      try {
+        const admins = await User.find({
+          isAdmin: true,
+          pushToken: { $exists: true, $ne: "" },
+        }).select("pushToken name");
+
+        const validAdmins = admins.filter((a: any) =>
+          isValidExpoToken(a.pushToken)
+        );
+
+        if (validAdmins.length > 0) {
+          const adminPayloads = validAdmins.map((admin: any) => ({
+            token: String(admin.pushToken),
+            title: `🚨 New Order ${savedOrder.orderId}`,
+            body: `${savedOrder.userName || "A customer"} placed an order of ₹${savedOrder.totalAmount}. Tap to review.`,
+            data: {
+              orderId: savedOrder.orderId,
+              screen: "admin-orders",
+              role: "admin",
+            },
+            sound: ORDER_ALARM_SOUND,
+            channelId: ADMIN_ORDER_CHANNEL_ID,
+            priority: "max" as const,
+            vibrate: [0, 600, 300, 600, 300],
+          }));
+
+          await sendExpoPushBatch(adminPayloads);
+          console.log(
+            `[createOrder] Sent admin alarm push to ${validAdmins.length} admin(s)`
+          );
+        }
+      } catch (adminPushErr) {
+        console.log("Admin push notification error:", adminPushErr);
+      }
     } catch (e) {
       console.log("Order creation notification emit warning:", e);
     }
@@ -701,6 +861,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
 /**
  * PATCH /api/orders/:orderId/verify-advance
+ *
+ * ✅ UPDATED: The push to the assigned chef now uses the bundled
+ *    alarm.mp3 sound + chef_orders_alarm channel + priority "max",
+ *    and includes data.role = "chef" and data.chefId so the client
+ *    can route + alarm correctly even when the app is closed.
  */
 export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
   try {
@@ -742,11 +907,13 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
 
       const chefIdentifier = order.chefId;
       let chefUserDoc: any = null;
+      let resolvedChefUserId: string | null = null;
 
       if (chefIdentifier && mongoose.Types.ObjectId.isValid(chefIdentifier)) {
         const chefDoc = await Chef.findById(chefIdentifier);
         if (chefDoc?.user) {
           chefUserDoc = await User.findById(chefDoc.user);
+          resolvedChefUserId = String(chefDoc.user);
           io.to(String(chefDoc.user)).emit("new_chef_order", updatedOrder);
         }
       }
@@ -754,6 +921,7 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
         const chefDoc = await Chef.findOne({ name: order.chefName });
         if (chefDoc?.user) {
           chefUserDoc = await User.findById(chefDoc.user);
+          resolvedChefUserId = String(chefDoc.user);
           io.to(String(chefDoc.user)).emit("new_chef_order", updatedOrder);
         }
       }
@@ -762,13 +930,28 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
         io.to(String(chefIdentifier)).emit("order_updated", updatedOrder);
       }
 
-      if (chefUserDoc?.pushToken) {
-        await sendExpoPushNotification(
-          chefUserDoc.pushToken,
-          "🎉 New Verified Order!",
-          `Order #${order.orderId} (₹${order.totalAmount}) payment received. Start preparing now!`,
-          { orderId: order.orderId, screen: "chef-orders" }
-        );
+      /* ──────────────────────────────────────────────────────────
+         ✅ UPDATED: Chef push now uses the bundled alarm sound,
+         the chef alarm channel, priority "max", and carries
+         data.role = "chef" + data.chefId for client-side routing
+         and chef-scoped alarms.
+         ────────────────────────────────────────────────────────── */
+      if (chefUserDoc?.pushToken && isValidExpoToken(chefUserDoc.pushToken)) {
+        await sendExpoPush({
+          token: String(chefUserDoc.pushToken),
+          title: `🔔 New Verified Order ${order.orderId}`,
+          body: `${order.userName || "Customer"} → ₹${order.totalAmount}. Tap to accept now!`,
+          data: {
+            orderId: order.orderId,
+            screen: "chef-orders",
+            role: "chef",
+            chefId: resolvedChefUserId || String(chefUserDoc._id || ""),
+          },
+          sound: ORDER_ALARM_SOUND,
+          channelId: CHEF_ORDER_CHANNEL_ID,
+          priority: "max",
+          vibrate: [0, 600, 300, 600, 300],
+        });
       }
     } catch (e) {
       console.log("Socket emit warning:", e);
@@ -834,6 +1017,10 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
 
 /**
  * PATCH /api/orders/:orderId/status
+ *
+ * ✅ UPDATED: Now also sends a push notification to the customer
+ *    whenever the order status changes (chef or admin). Works
+ *    whether the customer's app is open, backgrounded, or killed.
  */
 export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
   try {
@@ -937,6 +1124,41 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       console.log("Socket emit warning:", e);
     }
 
+    /* ──────────────────────────────────────────────────────────
+       ✅ NEW: Push notification to the CUSTOMER on every status
+       change (by chef or admin). Works when the customer's app
+       is open, backgrounded, or fully killed.
+
+       • Uses the DEFAULT phone sound (NOT alarm.mp3).
+       • data.screen === "orders" → tap opens the customer's Orders tab.
+       • data.role === "customer" → lets any customer-side listener
+         filter out non-customer pushes.
+       • Never throws — wrapped in its own try/catch.
+       ────────────────────────────────────────────────────────── */
+    try {
+      if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
+        const customerDoc = await User.findById(order.userId);
+        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+          const msg = getCustomerStatusMessage(normalized, order.orderId);
+          await sendExpoPush({
+            token: String(customerDoc.pushToken),
+            title: msg.title,
+            body: msg.body,
+            data: {
+              orderId: order.orderId,
+              screen: "orders",
+              role: "customer",
+              status: normalized,
+            },
+            sound: "default",
+            priority: "high",
+          });
+        }
+      }
+    } catch (customerPushErr) {
+      console.log("Customer status push error:", customerPushErr);
+    }
+
     return res.status(200).json({
       success: true,
       message: `Order updated successfully`,
@@ -949,6 +1171,11 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
 
 /**
  * PATCH /api/orders/:orderId/schedule-status
+ *
+ * ✅ UPDATED: Now also sends a push notification to the customer
+ *    whenever an individual scheduled delivery (meal-box orders)
+ *    changes status (chef or admin). Works whether the customer's
+ *    app is open, backgrounded, or killed.
  */
 export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
   try {
@@ -1028,6 +1255,43 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
       }
     } catch (e) {
       console.log("Socket emit warning:", e);
+    }
+
+    /* ──────────────────────────────────────────────────────────
+       ✅ NEW: Push notification to the CUSTOMER for THIS scheduled
+       delivery's status change. Works when the customer's app is
+       open, backgrounded, or fully killed.
+
+       • Uses the DEFAULT phone sound (NOT alarm.mp3).
+       • Includes the affected date in the title so the customer
+         knows which delivery changed.
+       • data.screen === "orders" → tap opens the customer's Orders tab.
+       • data.role === "customer".
+       • Never throws — wrapped in its own try/catch.
+       ────────────────────────────────────────────────────────── */
+    try {
+      if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
+        const customerDoc = await User.findById(order.userId);
+        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+          const baseMsg = getCustomerStatusMessage(normalizedStatus, order.orderId);
+          await sendExpoPush({
+            token: String(customerDoc.pushToken),
+            title: `${baseMsg.title} • ${dateStr}`,
+            body: baseMsg.body,
+            data: {
+              orderId: order.orderId,
+              screen: "orders",
+              role: "customer",
+              status: normalizedStatus,
+              scheduleDate: dateStr,
+            },
+            sound: "default",
+            priority: "high",
+          });
+        }
+      }
+    } catch (customerPushErr) {
+      console.log("Customer schedule push error:", customerPushErr);
     }
 
     return res.status(200).json({ success: true, message: "Delivery schedule updated", order: updatedOrder });

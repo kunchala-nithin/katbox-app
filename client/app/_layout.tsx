@@ -3,6 +3,7 @@ import { useFonts } from 'expo-font'
 import { Stack, useRouter, useSegments } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { Platform } from 'react-native'
 import * as Notifications from 'expo-notifications'
 import * as Device from 'expo-device'
 import * as SecureStore from 'expo-secure-store'
@@ -27,6 +28,52 @@ Notifications.setNotificationHandler({
     shouldShowList: true,
   }),
 })
+
+/* ─────────────────────────────────────────────────────────────
+   ✅ NEW: COLD-START ANDROID CHANNEL BOOTSTRAP
+   ─────────────────────────────────────────────────────────────
+   The role-scoped channels are normally created by
+   `useOrderNotifier` when the admin/chef tab group is first
+   mounted. However, if a brand-new admin device receives its
+   very first order BEFORE opening the admin tab group, the
+   channel would not exist yet — and Android would fall back to
+   a silent default channel.
+
+   We proactively create BOTH alarm channels here at module load
+   so the very first order is guaranteed to ring with the bundled
+   alarm.mp3 sound, even if the user has never opened the tab.
+   ───────────────────────────────────────────────────────────── */
+if (Platform.OS === 'android') {
+  ;(async () => {
+    try {
+      const alarmChannels = [
+        { id: 'admin_orders_alarm', name: 'Admin Order Alarms' },
+        { id: 'chef_orders_alarm', name: 'Chef Order Alarms' },
+      ]
+
+      for (const ch of alarmChannels) {
+        await Notifications.setNotificationChannelAsync(ch.id, {
+          name: ch.name,
+          importance: Notifications.AndroidImportance?.MAX ?? 5,
+          vibrationPattern: [0, 600, 300, 600, 300],
+          sound: 'alarm',
+          enableVibrate: true,
+          bypassDnd: true,
+          lockscreenVisibility:
+            Notifications.AndroidNotificationVisibility?.PUBLIC,
+          audioAttributes: {
+            usage: Notifications.AndroidAudioUsage?.NOTIFICATION,
+            contentType: Notifications.AndroidAudioContentType?.SONIFICATION,
+          },
+        })
+      }
+
+      console.log('✅ Cold-start Android alarm channels ready')
+    } catch (err) {
+      console.log('Cold-start Android channel error:', err)
+    }
+  })()
+}
 
 const CLERK_PUBLISHABLE_KEY =
   process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY
