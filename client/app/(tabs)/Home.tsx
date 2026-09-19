@@ -153,12 +153,14 @@ const BANNER_SLIDES: BannerSlide[] = [
   },
 ];
 
+// ✅ UPDATED: Quick Bites (with "45 MIN" badge) inserted at position 5, View All moved to position 6
 const CATEGORIES: CategoryItem[] = [
   { id: '1', name: 'Meal Boxes', icon: 'food-takeout-box-outline', type: 'mci', badge: 'HOT' },
   { id: '2', name: 'Catering', icon: 'silverware-fork-knife', type: 'mci' },
   { id: '3', name: 'Hire Chef', icon: 'user-tie', type: 'fa5', badge: 'SOON' },
   { id: '4', name: 'Food & Cravings', icon: 'silverware-variant', type: 'mci' },
-  { id: '5', name: 'View All', icon: 'grid', type: 'feather' },
+  { id: '5', name: 'Quick Bites', icon: 'lightning-bolt', type: 'mci', badge: '45 MIN' },
+  { id: '6', name: 'View All', icon: 'grid', type: 'feather' },
 ];
 
 const FILTER_TAGS = [
@@ -373,9 +375,14 @@ export default function HomeScreen() {
   const [couponApplied, setCouponApplied] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('1');
 
+  // ✅ NEW: "view all →" hint shown when the last (View All) category is off-screen
+  const [showViewAllHint, setShowViewAllHint] = useState<boolean>(true);
+
   const bannerScrollRef = useRef<ScrollView>(null);
   const mainScrollRef = useRef<ScrollView>(null);
   const caterersSectionRef = useRef<View>(null);
+  // ✅ NEW: ref for the horizontal Quick-Category scroller
+  const categoryScrollRef = useRef<ScrollView>(null);
 
   // Helper: format display string from address object
   const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefined): string => {
@@ -1159,15 +1166,39 @@ export default function HomeScreen() {
     }
   };
 
+  // ✅ NEW: detect whether the last category ("View All") is currently visible
+  const handleCategoryScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const maxScrollX = contentSize.width - layoutMeasurement.width;
+    const isAtEnd = maxScrollX <= 0 || contentOffset.x >= maxScrollX - 15;
+    setShowViewAllHint(!isAtEnd);
+  };
+
+  // ✅ UPDATED: tapping "view all →" hint navigates to the SAME destination
+  //             as tapping the "View All" category (i.e. AllChefCards page).
+  const handleViewAllHintPress = () => {
+    setSelectedCategory('6');
+    router.push('/screens/AllChefCards');
+  };
+
   const handleCategoryPress = (item: CategoryItem) => {
     setSelectedCategory(item.id);
     const isMealBox = item.id === '1' || item.name.includes('Meal Box');
     const isCatering = item.id === '2' || item.name.includes('Catering');
     const isHireChef = item.id === '3' || item.name.includes('Hire Chef');
     const isFoodAndCravings = item.id === '4' || item.name.includes('Food & Cravings');
+    const isQuickBites = item.id === '5' || item.name.includes('Quick Bites');
 
     if (isHireChef) {
       setIsComingSoonModalVisible(true);
+      return;
+    }
+
+    if (isQuickBites) {
+      router.push({
+        pathname: '/screens/AllChefCards',
+        params: { fromCategory: 'Quick Bites', filterQuickBites: 'true' },
+      });
       return;
     }
 
@@ -1186,7 +1217,8 @@ export default function HomeScreen() {
         pathname: '/screens/AllChefCards',
         params: { fromCategory: 'Food & Cravings', filterFoodAndCravings: 'true' },
       });
-    } else if (item.id === '5' || item.name.includes('View All')) {
+    } else if (item.id === '6' || item.name.includes('View All')) {
+      // ✅ SAME destination as the "view all →" underlined hint
       router.push('/screens/AllChefCards');
     }
   };
@@ -1485,9 +1517,16 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.collapsingBodySection}>
-          {/* ─── 5-Column Quick Category Grid ─── */}
+          {/* ─── 6-Column Quick Category Grid (Horizontal Scroll) ─── */}
           <View style={styles.categoryGridSection}>
-            <View style={styles.categoryGridRow}>
+            <ScrollView
+              ref={categoryScrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              onScroll={handleCategoryScroll}
+              scrollEventThrottle={16}
+              contentContainerStyle={styles.categoryGridScrollContent}
+            >
               {CATEGORIES.map((item) => {
                 const isSelected = selectedCategory === item.id;
                 return (
@@ -1505,7 +1544,13 @@ export default function HomeScreen() {
                     >
                       {renderCategoryIcon(item, isSelected)}
                       {item.badge && (
-                        <View style={[styles.categoryHotBadge, item.badge === 'SOON' && styles.categorySoonBadge]}>
+                        <View
+                          style={[
+                            styles.categoryHotBadge,
+                            item.badge === 'SOON' && styles.categorySoonBadge,
+                            item.badge === '45 MIN' && styles.categoryQuickBadge,
+                          ]}
+                        >
                           <Text style={styles.categoryHotBadgeText}>{item.badge}</Text>
                         </View>
                       )}
@@ -1522,7 +1567,22 @@ export default function HomeScreen() {
                   </TouchableOpacity>
                 );
               })}
-            </View>
+            </ScrollView>
+
+            {/* ✅ UPDATED: "view all →" underlined hint now sits BELOW the
+                category bar. Shows only when the last (View All) category is
+                off-screen. Tapping navigates to the SAME destination as the
+                View All category. */}
+            {showViewAllHint && (
+              <TouchableOpacity
+                style={styles.viewAllHintContainer}
+                onPress={handleViewAllHintPress}
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}
+              >
+                <Text style={styles.viewAllHintText}>view all →</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           <View style={styles.couponContainer}>
@@ -2676,9 +2736,34 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
 
+  /* ─── CATEGORY STRIP (Premium) ─── */
   categoryGridSection: {
-    paddingHorizontal: 12,
-    marginBottom: 16,
+    paddingHorizontal: 0,
+    marginBottom: 18,
+    paddingTop: 2,
+  },
+  // ✅ UPDATED: hint now sits BELOW the category bar (right-aligned).
+  //    Tapping navigates to the SAME destination as the "View All" category.
+  viewAllHintContainer: {
+    paddingHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 3,
+  },
+  viewAllHintText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#15803D',
+    textDecorationLine: 'underline',
+    letterSpacing: 0.25,
+  },
+  // ✅ UPDATED: horizontal scroller for 6 categories
+  categoryGridScrollContent: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
   categoryGridRow: {
     flexDirection: 'row',
@@ -2686,13 +2771,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   categoryGridItem: {
-    width: (width - 24) / 5,
+    width: (width - 20) / 5,
     alignItems: 'center',
+    paddingHorizontal: 2,
   },
   categoryIconCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 18,
+    width: 54,
+    height: 54,
+    borderRadius: 19,
     backgroundColor: '#F0FDF4',
     borderWidth: 1.5,
     borderColor: '#DCFCE7',
@@ -2700,39 +2786,63 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'relative',
     shadowColor: '#15803D',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   categoryIconCircleActive: {
     backgroundColor: '#DCFCE7',
     borderColor: '#15803D',
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 5,
   },
+  // ✅ UPDATED: premium badge with white ring, shadow, and proper alignment.
+  //    Sized so short labels (HOT / SOON) and longer labels (45 MIN) both
+  //    render cleanly without overlapping adjacent categories.
   categoryHotBadge: {
     position: 'absolute',
-    top: -4,
-    right: -4,
-    backgroundColor: '#E11D48',
-    borderRadius: 6,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
+    top: -6,
+    right: -8,
+    backgroundColor: '#DC2626',
+    borderRadius: 9,
+    paddingHorizontal: 6,
+    paddingVertical: 2.5,
     zIndex: 10,
+    minWidth: 22,
+    minHeight: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 4,
+    elevation: 4,
   },
   categorySoonBadge: {
     backgroundColor: '#D97706',
   },
+  // ✅ NEW: distinct premium green for the "45 MIN" Quick Bites speed badge
+  categoryQuickBadge: {
+    backgroundColor: '#15803D',
+  },
   categoryHotBadgeText: {
     color: '#FFFFFF',
-    fontSize: 6.5,
+    fontSize: 7,
     fontWeight: '900',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+    lineHeight: 9,
   },
   categoryNameText: {
     fontSize: 10.5,
     fontWeight: '700',
     color: '#374151',
     textAlign: 'center',
-    marginTop: 6,
+    marginTop: 7,
     lineHeight: 13,
   },
   categoryNameTextActive: {

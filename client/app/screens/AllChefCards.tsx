@@ -51,6 +51,14 @@ const DEFAULT_COVER_IMAGES = [
   "https://images.unsplash.com/photo-1589302168068-964664d93dc0?w=800",
 ];
 
+// ✅ NEW: robust QuickBites category-key normalizer
+// Handles any casing, whitespace, or internal spaces:
+// "Quick Bites", "quickbites", "QUICK BITES", "  Quick  Bites  " all match.
+const normalizeCategoryKey = (val: any): string =>
+  String(val || "").trim().toLowerCase().replace(/\s+/g, "");
+
+const QUICK_BITES_KEY = "quickbites";
+
 // Helper to assign a relevant dynamic icon for cuisine filters
 const getCuisineIcon = (cuisineName: string) => {
   const name = cuisineName.toLowerCase();
@@ -249,7 +257,15 @@ export default function HomeMadeCaterers() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { fromCategory, filterMealBox, filterCatering, filterFoodAndCravings, targetChefId } = params;
+  // ✅ NEW: accept filterQuickBites param
+  const {
+    fromCategory,
+    filterMealBox,
+    filterCatering,
+    filterFoodAndCravings,
+    filterQuickBites,
+    targetChefId,
+  } = params;
 
   const translateY = useRef(new Animated.Value(0)).current;
   const cityIndexRef = useRef(0);
@@ -461,10 +477,6 @@ export default function HomeMadeCaterers() {
   );
 
   // ─── 200 ms skeleton delay threshold ───
-  // Only show the skeleton if the initial load exceeds 200 ms.
-  // This avoids a flash of skeleton on fast responses while still
-  // providing a graceful loading state on slow networks.
-  // Skeleton only appears on the very first load (DATA.length === 0).
   useEffect(() => {
     const isLoading = loading && DATA.length === 0;
     if (!isLoading) {
@@ -475,12 +487,40 @@ export default function HomeMadeCaterers() {
     return () => clearTimeout(t);
   }, [loading, DATA.length]);
 
+  // ✅ UPDATED: fetchChefs now also handles the Quick Bites filter —
+  //    only chefs who own a "QuickBites" category are kept, and each
+  //    item carries `quickBitesCategoryId` so we can deep-link on tap.
   const fetchChefs = async () => {
     try {
       setLoading(true);
       const res = await api.get("/api/chefs");
 
-      const formatted = res.data.chefs.map((chef: any, i: number) => {
+      let chefsSource = res.data.chefs;
+
+      // ─── QUICK BITES FILTER ───
+      // When filterQuickBites is true, we fetch each chef's categories
+      // (in parallel) and keep only those whose categories include one
+      // that normalizes to "quickbites". We also cache the matched
+      // category's _id on the chef object so we can deep-link.
+      if (filterQuickBites === "true") {
+        const enriched = await Promise.all(
+          chefsSource.map(async (chef: any) => {
+            try {
+              const catRes = await api.get(`/api/chef-categories/chef/${chef._id}`);
+              const cats: any[] = catRes.data || [];
+              const qbCat = cats.find(
+                (c: any) => normalizeCategoryKey(c.name) === QUICK_BITES_KEY
+              );
+              return qbCat ? { ...chef, quickBitesCategoryId: qbCat._id } : null;
+            } catch (e) {
+              return null;
+            }
+          })
+        );
+        chefsSource = enriched.filter(Boolean);
+      }
+
+      const formatted = chefsSource.map((chef: any, i: number) => {
         const hasBanners = chef.banners && chef.banners.length > 0;
         const resolvedCover = hasBanners
           ? chef.banners[0].url
@@ -502,6 +542,8 @@ export default function HomeMadeCaterers() {
           banners: chef.banners || [],
           foodType: chef.foodType || "BOTH",
           isAvailable: chef.isAvailable ?? true,
+          // ✅ carries the QuickBites category _id for deep-linking
+          quickBitesCategoryId: chef.quickBitesCategoryId || null,
         };
       });
 
@@ -568,6 +610,31 @@ export default function HomeMadeCaterers() {
 
   const handleChefCardPress = (item: any) => {
     if (!item.isAvailable) return;
+
+    // ✅ NEW: Quick Bites flow → skip ChefInfoScreen, go DIRECTLY to
+    //    HomeMadeItemScreen targeting the chef's QuickBites category.
+    if (fromCategory === "Quick Bites" || filterQuickBites === "true") {
+      router.push({
+        pathname: "/screens/HomeMadeItemScreen",
+        params: {
+          id: item.id,
+          chefId: item.id,
+          categoryId: item.quickBitesCategoryId || "",
+          name: item.name,
+          chefName: item.name,
+          userId: currentUser?.id || currentUser?._id || "",
+          userName: currentUser?.name || "",
+          image: item.coverImage,
+          rating: String(item.rating),
+          location: item.locationText || "Hyderabad",
+          isAvailable: String(item.isAvailable),
+          category: "QuickBites",
+          fromCategory: "Quick Bites",
+          filterQuickBites: "true",
+        },
+      });
+      return;
+    }
 
     // Catering category flow -> Navigates to CateringMealPlans
     if (fromCategory === "Catering" || filterCatering === "true") {
@@ -689,6 +756,8 @@ export default function HomeMadeCaterers() {
     if (fromCategory === "Meal Box") return "Meal Box Chefs";
     if (fromCategory === "Catering") return "Catering Chefs";
     if (fromCategory === "Food & Cravings" || filterFoodAndCravings === "true") return "Food & Cravings";
+    // ✅ NEW: Quick Bites header title
+    if (fromCategory === "Quick Bites" || filterQuickBites === "true") return "Quick Bites";
     return "All Chefs";
   };
 
