@@ -298,6 +298,66 @@ const AddChefs = () => {
     setShowCouponForm(false);
   };
 
+  // ─────────────────────────────────────────────────────────────────
+  // ✅ NEW: Auto-sync coupons to backend after add / delete
+  //    Mirrors the existing `handleToggleAvailability` pattern.
+  //    Only runs when the chef already has a saved profile
+  //    (isEditing === true) — brand-new drafts wait for "Publish".
+  //
+  //    Effect: when the chef adds or removes a coupon here, the
+  //    MongoDB `Chef.coupons` array is updated immediately. The
+  //    admin screen (admin/all-chefs.tsx) reads from that same
+  //    array, so the next time it focuses / refreshes, the admin
+  //    sees the change automatically — no extra admin work required.
+  // ─────────────────────────────────────────────────────────────────
+  const autoSaveCouponsToBackend = async (updatedCoupons: CouponItem[]) => {
+    if (!isEditing) return; // draft profile — wait for "Publish chef profile"
+
+    try {
+      const token = await getToken();
+      if (!token) return;
+
+      const formData = new FormData();
+      formData.append("name", name);
+      formData.append("exp", exp);
+      formData.append("phone", phone);
+      formData.append("aadhar", aadhar);
+      formData.append("location", location);
+      formData.append("specialty", specialty);
+      formData.append("price", price);
+      formData.append("foodType", foodType);
+      formData.append("fssaiNo", fssaiNo);
+      formData.append("isAvailable", String(isAvailable));
+      formData.append("coupons", JSON.stringify(updatedCoupons));
+
+      // Preserve existing banners and any pending deletions
+      const existingBannersPayload = banners
+        .filter((b) => !b.isNew && b.cloudinaryId)
+        .map((b) => ({
+          url: b.uri,
+          cloudinaryId: b.cloudinaryId,
+        }));
+      formData.append("existingBanners", JSON.stringify(existingBannersPayload));
+      formData.append("deletedBannerIds", JSON.stringify(deletedBannerIds));
+
+      await api.post("/api/chefs", formData, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "multipart/form-data",
+        },
+        timeout: 60000,
+      });
+
+      console.log("✅ Coupons synced to backend from chef dashboard");
+    } catch (err: any) {
+      console.log(
+        "⚠️ Auto-save coupons failed:",
+        err?.response?.data || err?.message || err
+      );
+      // Silent failure — the chef can still tap "Update profile" to retry
+    }
+  };
+
   const handleAddCoupon = () => {
     const code = couponCode.trim().toUpperCase();
     const value = couponValue.trim();
@@ -319,20 +379,25 @@ const AddChefs = () => {
       return;
     }
 
-    setCoupons((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-${Math.random()}`,
-        code,
-        type: couponType,
-        value,
-        description:
-          couponDescription.trim() ||
-          (couponType === "percent" ? `${value}% off` : `₹${value} off`),
-        serviceType: couponServiceType,
-      },
-    ]);
+    const newCoupon: CouponItem = {
+      id: `${Date.now()}-${Math.random()}`,
+      code,
+      type: couponType,
+      value,
+      description:
+        couponDescription.trim() ||
+        (couponType === "percent" ? `${value}% off` : `₹${value} off`),
+      serviceType: couponServiceType,
+    };
+
+    const updatedCoupons = [...coupons, newCoupon];
+    setCoupons(updatedCoupons);
     resetCouponForm();
+
+    // ✅ NEW: push the updated list to MongoDB immediately so the
+    //    admin screen reflects the change without the chef having
+    //    to tap "Update profile" for coupons alone.
+    autoSaveCouponsToBackend(updatedCoupons);
   };
 
   const handleRemoveCoupon = (id: string) => {
@@ -342,7 +407,16 @@ const AddChefs = () => {
       {
         text: "Remove",
         style: "destructive",
-        onPress: () => setCoupons((prev) => prev.filter((c) => c.id !== id)),
+        onPress: () => {
+          const updatedCoupons = coupons.filter((c) => c.id !== id);
+          setCoupons(updatedCoupons);
+
+          // ✅ NEW: push the updated list to MongoDB immediately so
+          //    the admin screen reflects the deletion on its next
+          //    focus / refresh — without the chef having to tap
+          //    "Update profile" for coupons alone.
+          autoSaveCouponsToBackend(updatedCoupons);
+        },
       },
     ]);
   };
