@@ -58,7 +58,6 @@ const SERVICE_TYPE_OPTIONS: CouponServiceType[] = [
   "quickbites",
 ];
 
-// ✅ NEW: Order service icon map for the order-history modal
 const ORDER_SERVICE_ICON: Record<string, any> = {
   catering: "silverware-fork-knife",
   mealbox: "food-takeout-box-outline",
@@ -73,7 +72,6 @@ const ORDER_SERVICE_LABEL: Record<string, string> = {
   quickbites: "Quick Bites",
 };
 
-// ✅ NEW: Status pill tone for order cards
 const orderStatusTone = (status: string) => {
   const s = String(status || "").toLowerCase();
   if (s.includes("delivered") || s.includes("completed") || s.includes("collected")) {
@@ -91,7 +89,6 @@ const orderStatusTone = (status: string) => {
   return { bg: "rgba(100, 116, 139, 0.14)", fg: "#64748B", label: status || "Placed" };
 };
 
-// ✅ NEW: Format a raw ISO string into "21 Sept 2026"
 const formatOrderDate = (iso?: string) => {
   if (!iso) return "—";
   try {
@@ -105,14 +102,6 @@ const formatOrderDate = (iso?: string) => {
   } catch {
     return "—";
   }
-};
-
-const formatFssai = (value: any): string => {
-  if (!value) return "";
-  const s = String(value).trim();
-  if (!s) return "";
-  if (s.length <= 8) return s;
-  return `${s.substring(0, 4)}…${s.substring(s.length - 4)}`;
 };
 
 export default function AdminAllChefsScreen() {
@@ -157,7 +146,7 @@ export default function AdminAllChefsScreen() {
   const [savingCoupon, setSavingCoupon] = useState(false);
   const [deletingCouponId, setDeletingCouponId] = useState<string | null>(null);
 
-  // ✅ NEW: Order-history modal state
+  // ─── Order-history modal state ───
   const [showOrdersModal, setShowOrdersModal] = useState<boolean>(false);
   const [ordersChef, setOrdersChef] = useState<any>(null);
 
@@ -318,7 +307,6 @@ export default function AdminAllChefsScreen() {
     setEditingChef(null);
   };
 
-  // ✅ NEW: Open the order-history modal
   const openOrdersModal = (chef: any) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setOrdersChef(chef);
@@ -424,10 +412,6 @@ export default function AdminAllChefsScreen() {
         },
       ]
     );
-  };
-
-  const handleAddNewChef = () => {
-    router.push("/chefManagement/add-chefs");
   };
 
   // ─── Coupon form helpers ───
@@ -685,18 +669,19 @@ export default function AdminAllChefsScreen() {
 
           <View style={styles.metaRowDivider} />
 
+          {/* ✅ FSSAI: full number shown — no truncation, wraps if needed */}
           <View style={styles.metaRow}>
             <View style={styles.metaRowIconWrap}>
               <MaterialIcons name="verified-user" size={12} color="#2563EB" />
             </View>
             <Text style={styles.metaRowLabel}>FSSAI</Text>
-            <Text style={styles.metaRowValue} numberOfLines={1}>
-              {chef.fssaiNo ? formatFssai(chef.fssaiNo) : "—"}
+            <Text style={styles.metaRowValueFssai} numberOfLines={2}>
+              {chef.fssaiNo ? String(chef.fssaiNo) : "—"}
             </Text>
           </View>
         </View>
 
-        {/* ─── STATS STRIP (rating / reviews / coupons / kitchen) ─── */}
+        {/* ─── STATS STRIP ─── */}
         <View style={styles.statsStripRow}>
           <View style={styles.statChip}>
             <Ionicons name="star" size={10} color="#F59E0B" />
@@ -740,7 +725,7 @@ export default function AdminAllChefsScreen() {
           </View>
         </View>
 
-        {/* ─── ✅ NEW: ORDERS SUMMARY STRIP ─── */}
+        {/* ─── ORDERS SUMMARY STRIP ─── */}
         <TouchableOpacity
           style={styles.ordersSummaryRow}
           activeOpacity={0.85}
@@ -1100,6 +1085,7 @@ export default function AdminAllChefsScreen() {
       </LinearGradient>
 
       <View style={styles.bodyCard}>
+        {/* ─── SEARCH (full width) ─── */}
         <View style={styles.searchWrapper}>
           <View style={styles.searchBox}>
             <Ionicons name="search" size={15} color="#2563EB" />
@@ -1116,15 +1102,6 @@ export default function AdminAllChefsScreen() {
               </TouchableOpacity>
             )}
           </View>
-
-          <TouchableOpacity
-            style={styles.addChefBtn}
-            activeOpacity={0.85}
-            onPress={handleAddNewChef}
-          >
-            <Ionicons name="add" size={16} color="#FFFFFF" />
-            <Text style={styles.addChefBtnText}>Add</Text>
-          </TouchableOpacity>
         </View>
 
         <View style={styles.filterTabsWrapper}>
@@ -1410,7 +1387,7 @@ export default function AdminAllChefsScreen() {
         </View>
       </Modal>
 
-      {/* ─── ✅ NEW: ORDER HISTORY MODAL ─── */}
+      {/* ─── ORDER HISTORY MODAL ─── */}
       <Modal
         visible={showOrdersModal}
         transparent
@@ -1425,7 +1402,6 @@ export default function AdminAllChefsScreen() {
           <View style={styles.ordersModalSheet}>
             <View style={styles.editModalHandle} />
 
-            {/* ─── MODAL HEADER ─── */}
             <View style={styles.ordersModalHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.ordersModalTitle}>Order History</Text>
@@ -1442,7 +1418,6 @@ export default function AdminAllChefsScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* ─── SUMMARY STRIP ─── */}
             <View style={styles.ordersModalSummary}>
               <View style={styles.ordersModalSummaryCell}>
                 <Text style={styles.ordersModalSummaryLabel}>RECEIVED</Text>
@@ -1476,7 +1451,6 @@ export default function AdminAllChefsScreen() {
               </View>
             </View>
 
-            {/* ─── ORDER LIST ─── */}
             <ScrollView
               style={styles.ordersModalScroll}
               contentContainerStyle={{ paddingBottom: 16 }}
@@ -1613,7 +1587,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#0F172A",
   },
 
-  /* ─── DARK HEADER ─── */
   darkHeader: { paddingBottom: 12 },
   headerInner: { paddingHorizontal: 16, paddingTop: 4 },
 
@@ -1717,7 +1690,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingTop: 14,
     paddingBottom: 8,
-    gap: 8,
   },
   searchBox: {
     flex: 1,
@@ -1737,26 +1709,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#0F172A",
     paddingVertical: 0,
-  },
-  addChefBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#2563EB",
-    paddingHorizontal: 12,
-    height: 40,
-    borderRadius: 12,
-    shadowColor: "#2563EB",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.22,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  addChefBtnText: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.2,
   },
 
   filterTabsWrapper: {
@@ -2043,6 +1995,16 @@ const styles = StyleSheet.create({
     color: "#0F172A",
     letterSpacing: -0.1,
   },
+  /* ✅ NEW: Dedicated FSSAI value style — no truncation, slightly smaller,
+     wraps to 2 lines only if the number is longer than the row width. */
+  metaRowValueFssai: {
+    flex: 1,
+    fontSize: 11.5,
+    fontWeight: "800",
+    color: "#0F172A",
+    letterSpacing: 0.3,
+    lineHeight: 16,
+  },
   metaRowDivider: {
     height: 1,
     backgroundColor: "#E2E8F0",
@@ -2081,7 +2043,6 @@ const styles = StyleSheet.create({
     borderRadius: 2.5,
   },
 
-  /* ─── ✅ NEW: ORDERS SUMMARY STRIP ─── */
   ordersSummaryRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -2141,7 +2102,6 @@ const styles = StyleSheet.create({
     letterSpacing: -0.1,
   },
 
-  /* ─── COUPONS TOGGLE ROW ─── */
   couponsToggleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -2602,7 +2562,6 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
 
-  /* ─── ✅ NEW: ORDER HISTORY MODAL ─── */
   ordersModalSheet: {
     backgroundColor: "#FFFFFF",
     borderTopLeftRadius: 26,

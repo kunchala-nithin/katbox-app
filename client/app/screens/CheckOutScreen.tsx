@@ -67,8 +67,10 @@ export default function CheckOutScreen() {
   const [loading, setLoading] = useState(false);
 
   const serviceType = (params.serviceType as string) || "mealbox";
+  // ✅ QuickBites detection — separate flow flag, but same UI as homemade.
+  const isQuickBitesFlow = serviceType === "quickbites";
   const isCateringFlow = serviceType === "catering";
-  const isHomemadeFlow = serviceType === "homemade";
+  const isHomemadeFlow = serviceType === "homemade" || isQuickBitesFlow;
 
   const totalAmount = (params.totalAmount as string) || "687";
   const numericTotal = Number(totalAmount) || 0;
@@ -111,10 +113,12 @@ export default function CheckOutScreen() {
   const homemadeResolvedDate = deliveryDate || "";
   const homemadeResolvedSlot = deliverySlotParam || deliveryTimeSlot || "";
 
-  // ✅ NEW: Detect QuickBites flow from route params (forwarded from HomeMadeOrderReview)
-  const isQuickBites = String((params.isQuickBites as string) || "").toLowerCase() === "true";
+  // ✅ Detect QuickBites flow either from the serviceType OR from an explicit param.
+  const isQuickBites =
+    isQuickBitesFlow ||
+    String((params.isQuickBites as string) || "").toLowerCase() === "true";
 
-  // ✅ NEW: Compute a fresh, live estimated delivery time for QuickBites.
+  // ✅ Compute a fresh, live estimated delivery time for QuickBites.
   // Anchored to "now" so the label stays accurate even if the user took
   // several minutes on the review screen.
   const liveEstimatedDeliveryAt = useMemo(() => {
@@ -130,7 +134,7 @@ export default function CheckOutScreen() {
     return null;
   }, [isQuickBites, params.estimatedDeliveryAtMs]);
 
-  // ✅ NEW: Compute the dynamic delivery date/slot labels for display
+  // ✅ Compute the dynamic delivery date/slot labels for display
   const dynamicHomemadeDateLabel = useMemo(() => {
     if (!isHomemadeFlow) return homemadeResolvedDate;
     if (isQuickBites) {
@@ -439,6 +443,7 @@ export default function CheckOutScreen() {
     const formData = new FormData();
     formData.append("userId", userId);
     formData.append("userName", userName);
+    // ✅ Persist QuickBites as its own serviceType on the order document
     formData.append("serviceType", serviceType);
     formData.append("menuName", menuName);
     formData.append("menuImage", menuImage);
@@ -487,13 +492,13 @@ export default function CheckOutScreen() {
       formData.append("chefId", chefId);
       formData.append("chefName", chefName);
       formData.append("items", JSON.stringify(parsedItems));
-      // ✅ Homemade now sends the real selected delivery date & slot instead of hardcoded "Today" / "30-45 min"
+      // ✅ Homemade / QuickBites sends the resolved delivery date & slot
       formData.append("deliveryDate", dynamicHomemadeDateLabel || "Today");
       formData.append("deliveryTimeSlot", dynamicHomemadeSlotLabel || "30–45 min");
       // ✅ New top-level deliverySlot param for order controller to persist
       formData.append("deliverySlot", dynamicHomemadeSlotLabel || "30–45 min");
 
-      // ✅ NEW: forward the QuickBites flag and the absolute delivery timestamp
+      // ✅ Forward the QuickBites flag and the absolute delivery timestamp
       formData.append("isQuickBites", isQuickBites ? "true" : "false");
       formData.append("deliveryWindowMinutes", isQuickBites ? "75" : "0");
       if (liveEstimatedDeliveryAt) {
@@ -529,7 +534,10 @@ export default function CheckOutScreen() {
         setShowScannerModal(false);
         router.push({
           pathname: "/screens/OrderConfirmationScreen",
-          params: { orderId: createdOrder.orderId },
+          params: {
+            orderId: createdOrder.orderId,
+            serviceType, // ✅ forward so confirmation renders correct flow
+          },
         });
       } else {
         Alert.alert("Order Error", res.data?.message || "Failed to place order.");
@@ -603,7 +611,9 @@ export default function CheckOutScreen() {
         {isHomemadeFlow ? (
           <View style={styles.mainCardModern}>
             <View style={[styles.modernTagPillEdge, { backgroundColor: "rgba(22, 101, 52, 0.08)", borderColor: "rgba(22, 101, 52, 0.15)" }]}>
-              <Text style={styles.modernTagTextEdge}>HOMEMADE ORDER</Text>
+              <Text style={styles.modernTagTextEdge}>
+                {isQuickBitesFlow ? "QUICK BITES ORDER" : "HOMEMADE ORDER"}
+              </Text>
             </View>
 
             <View style={styles.homemadeChefHeaderRow}>
@@ -617,7 +627,7 @@ export default function CheckOutScreen() {
               </View>
             </View>
 
-            {/* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP (only renders when at least one value exists) */}
+            {/* ✅ HOMEMADE / QUICKBITES DELIVERY DATE & SLOT STRIP */}
             {(dynamicHomemadeDateLabel || dynamicHomemadeSlotLabel) ? (
               <View style={styles.homemadeDeliveryStripContainer}>
                 {!!dynamicHomemadeDateLabel && (
@@ -1065,7 +1075,9 @@ export default function CheckOutScreen() {
           ) : isHomemadeFlow ? (
             <>
               <View style={styles.breakupLineRow}>
-                <Text style={styles.breakupLineLabel}>Dishes Subtotal</Text>
+                <Text style={styles.breakupLineLabel}>
+                  {isQuickBitesFlow ? "Quick Bites Subtotal" : "Dishes Subtotal"}
+                </Text>
                 <Text style={styles.breakupLineValue}>₹{subtotal}</Text>
               </View>
               <View style={styles.breakupLineRow}>
@@ -2018,7 +2030,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 
-  /* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP */
+  /* ✅ HOMEMADE / QUICKBITES DELIVERY DATE & SLOT STRIP */
   homemadeDeliveryStripContainer: {
     flexDirection: "row",
     alignItems: "center",

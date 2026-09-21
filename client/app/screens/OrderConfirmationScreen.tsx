@@ -146,10 +146,14 @@ export default function OrderConfirmationScreen() {
     };
   }, [initialOrderId]);
 
-  // Determine Service Flow dynamically
+  // Determine Service Flow dynamically.
+  // ✅ QuickBites is treated as a sibling of homemade (same UI), while
+  //    its stored serviceType stays "quickbites" so titles/labels can
+  //    reflect the specific flow.
   const serviceType = dbOrder?.serviceType || (params.serviceType as string) || "mealbox";
+  const isQuickBitesFlow = serviceType === "quickbites";
   const isCateringFlow = serviceType === "catering";
-  const isHomemadeFlow = serviceType === "homemade";
+  const isHomemadeFlow = serviceType === "homemade" || isQuickBitesFlow;
 
   // Dynamic fallback values if loading direct route params or MongoDB document
   const orderId = dbOrder?.orderId || initialOrderId;
@@ -179,9 +183,10 @@ export default function OrderConfirmationScreen() {
 
   const rawDurationType = dbOrder?.durationType || (params.durationType as string) || "Flexible Days (2 Days Running)";
 
-  // ✅ HOMEMADE-ONLY: resolve the persisted delivery date & slot from db order / route params
-  // Both the new `deliverySlot` field and the legacy `deliveryTimeSlot` are checked so
-  // that older records created before the field existed still render.
+  // ✅ HOMEMADE / QUICKBITES ONLY: resolve the persisted delivery date & slot
+  // from db order / route params. Both the new `deliverySlot` field and the
+  // legacy `deliveryTimeSlot` are checked so that older records created
+  // before the field existed still render.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return "";
     return String(
@@ -202,10 +207,10 @@ export default function OrderConfirmationScreen() {
     ).trim();
   }, [dbOrder, params.deliverySlot, params.deliveryTimeSlot, isHomemadeFlow]);
 
-  // ✅ NEW: Resolve the absolute estimated delivery time from the persisted order.
-  // This is the "source of truth" that was computed by the backend at the moment
-  // the order was placed. When present, we use it to render a live "arriving by X"
-  // message instead of the historical label.
+  // ✅ Resolve the absolute estimated delivery time from the persisted order.
+  // This is the "source of truth" that was computed by the backend at the
+  // moment the order was placed. When present, we use it to render a live
+  // "arriving by X" message instead of the historical label.
   const orderPlacedAtResolved: Date | null = useMemo(() => {
     const raw = dbOrder?.orderPlacedAt;
     if (!raw) return null;
@@ -220,9 +225,11 @@ export default function OrderConfirmationScreen() {
     return isNaN(d.getTime()) ? null : d;
   }, [dbOrder]);
 
-  const isQuickBitesOrder = Boolean(dbOrder?.isQuickBites);
+  // ✅ QuickBites detection combines both the persisted flag AND the
+  // resolved serviceType so that downstream labels are always correct.
+  const isQuickBitesOrder = Boolean(dbOrder?.isQuickBites) || isQuickBitesFlow;
 
-  // ✅ NEW: Compute a friendly label for the estimated delivery time
+  // ✅ Compute a friendly label for the estimated delivery time
   const estimatedDeliveryLabel = useMemo(() => {
     if (!estimatedDeliveryAtResolved) return "";
     const time = formatTimeShortLocal(estimatedDeliveryAtResolved);
@@ -358,8 +365,9 @@ export default function OrderConfirmationScreen() {
   const isCod = String(paymentMethod).toLowerCase() === "cod";
 
   // Dynamic Date Display Resolvers
-  // ✅ For homemade: combine the selected date with the selected slot (when both exist).
-  // Falls back to the legacy "Today (within 30–45 min)" message when neither is available.
+  // ✅ For homemade / quickbites: combine the selected date with the
+  // selected slot (when both exist). Falls back to the legacy
+  // "Today (within 30–45 min)" message when neither is available.
   const confirmedFirstDeliveryDate = isCateringFlow
     ? `${eventDate} • ${eventTime}`
     : isHomemadeFlow
@@ -442,10 +450,12 @@ export default function OrderConfirmationScreen() {
         selections: parsedSelections ? JSON.stringify(parsedSelections) : undefined,
         items: parsedItems ? JSON.stringify(parsedItems) : undefined,
         addons: parsedAddons ? JSON.stringify(parsedAddons) : undefined,
-        // ✅ For homemade, forward the resolved date + slot so the Orders tab
-        // can display them without needing to refetch the order document.
+        // ✅ For homemade / quickbites, forward the resolved date + slot so
+        // the Orders tab can display them without needing to refetch.
         deliverySlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
         deliveryTimeSlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
+        // ✅ Preserve the quickbites flag so downstream screens (Orders tab) can render correctly.
+        isQuickBites: isQuickBitesFlow ? "true" : "false",
       },
     });
   };
@@ -533,7 +543,13 @@ export default function OrderConfirmationScreen() {
 
         <View style={{ alignItems: "center", width: "100%" }}>
           <Text style={styles.orderConfirmedTitle}>
-            {isCateringFlow ? "Catering Order Confirmed!" : (isHomemadeFlow ? "Homemade Order Confirmed!" : "Order Confirmed!")}
+            {isCateringFlow
+              ? "Catering Order Confirmed!"
+              : isQuickBitesFlow
+              ? "Quick Bites Order Confirmed!"
+              : isHomemadeFlow
+              ? "Homemade Order Confirmed!"
+              : "Order Confirmed!"}
           </Text>
           <Text style={styles.orderConfirmedSubtitle}>
             {isCod
@@ -574,12 +590,14 @@ export default function OrderConfirmationScreen() {
         ]}
       >
         <View>
-          {/* 1. DYNAMIC ORDER SUMMARY CARD (HOMEMADE / CATERING / MEALBOX) */}
+          {/* 1. DYNAMIC ORDER SUMMARY CARD (HOMEMADE / QUICKBITES / CATERING / MEALBOX) */}
           {isHomemadeFlow ? (
             <View style={styles.cateringMainSummaryCard}>
               <View style={[styles.cateringOccasionTopStrip, { backgroundColor: "rgba(22, 99, 72, 0.08)", borderColor: "rgba(22, 99, 72, 0.16)" }]}>
                 <Ionicons name="restaurant" size={15} color="#166348" style={{ marginRight: 6 }} />
-                <Text style={[styles.cateringOccasionText, { color: "#166348" }]}>Fresh Homemade Dishes</Text>
+                <Text style={[styles.cateringOccasionText, { color: "#166348" }]}>
+                  {isQuickBitesFlow ? "Fresh Quick Bites Dishes" : "Fresh Homemade Dishes"}
+                </Text>
                 <View style={[styles.cateringGuestPill, { backgroundColor: "#166348" }]}>
                   <Text style={[styles.cateringGuestPillText, { color: "#FAF8F5" }]}>{parsedItems.length} Dishes</Text>
                 </View>
@@ -592,7 +610,7 @@ export default function OrderConfirmationScreen() {
                 <Text style={styles.homemadeChefBadgeText}>Cooked by {chefName}</Text>
               </View>
 
-              {/* ✅ HOMEMADE DELIVERY DATE & SLOT STRIP (only renders when at least one value exists) */}
+              {/* ✅ HOMEMADE / QUICKBITES DELIVERY DATE & SLOT STRIP */}
               {(estimatedDeliveryAtResolved || homemadeDeliveryDateResolved || homemadeDeliverySlotResolved) ? (
                 <View style={styles.homemadeConfirmedDeliveryStripContainer}>
                   {!!homemadeDeliveryDateResolved && (
@@ -977,7 +995,9 @@ export default function OrderConfirmationScreen() {
                 </View>
                 <View style={styles.timelineContentRight}>
                   <Text style={styles.currentStepTitle}>
-                    {isCateringFlow ? "Platter Preparation by Catering Chefs" : (isHomemadeFlow ? `Cooking by Chef ${chefName}` : "Preparing by Chef")}
+                    {isCateringFlow
+                      ? "Platter Preparation by Catering Chefs"
+                      : (isHomemadeFlow ? `Cooking by Chef ${chefName}` : "Preparing by Chef")}
                   </Text>
                   <Text style={styles.stepSubtitleText}>
                     {isCateringFlow
@@ -1067,7 +1087,9 @@ export default function OrderConfirmationScreen() {
                   Selections Summary
                 </Text>
                 <Text style={{ fontSize: 12.5, color: "#5B756C", marginLeft: 2, fontWeight: "500" }}>
-                  {isCateringFlow ? "Confirmed catering dishes & add-ons" : (isHomemadeFlow ? "Confirmed homemade items" : "Inspecting confirmed choices")}
+                  {isCateringFlow
+                    ? "Confirmed catering dishes & add-ons"
+                    : (isHomemadeFlow ? "Confirmed homemade items" : "Inspecting confirmed choices")}
                 </Text>
               </View>
             </View>
@@ -1558,7 +1580,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
 
-  /* Homemade Header & Chef Badge */
+  /* Homemade / QuickBites Header & Chef Badge */
   homemadeChefBadgeRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1580,7 +1602,7 @@ const styles = StyleSheet.create({
     color: "#0B261D",
   },
 
-  /* ✅ HOMEMADE CONFIRMED DELIVERY DATE & SLOT STRIP */
+  /* ✅ HOMEMADE / QUICKBITES CONFIRMED DELIVERY DATE & SLOT STRIP */
   homemadeConfirmedDeliveryStripContainer: {
     flexDirection: "row",
     alignItems: "center",

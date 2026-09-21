@@ -80,7 +80,8 @@ export interface IBaseOrder extends Document {
   updatedAt: Date;
 }
 
-// 1. Separate Dedicated Interface for Homemade Orders ONLY
+// 1. Separate Dedicated Interface for Homemade Orders ONLY.
+// ✅ Also reused by QuickBites orders (which share the same schema).
 export interface IHomemadeOrderItem {
   id: string;
   name: string;
@@ -92,7 +93,8 @@ export interface IHomemadeOrderItem {
 }
 
 export interface IHomemadeOrder extends IBaseOrder {
-  serviceType: "homemade";
+  // ✅ QuickBites shares the homemade shape; only the discriminator differs.
+  serviceType: "homemade" | "quickbites";
   items: IHomemadeOrderItem[];
   deliveryAddress: string;
   deliveryTimeSlot?: string;
@@ -242,7 +244,7 @@ const BaseOrderSchema: Schema = new Schema(
 const Order: Model<IBaseOrder> =
   mongoose.models.Order || mongoose.model<IBaseOrder>("Order", BaseOrderSchema);
 
-// 3. PURE HOMEMADE SCHEMA
+// 3. HOMEMADE SCHEMA (also reused by QuickBites)
 const HomemadeItemSubSchema = new Schema(
   {
     id: { type: String, required: true },
@@ -295,6 +297,14 @@ export const HomemadeOrderModel =
   Order.discriminators && Order.discriminators["homemade"]
     ? (Order.discriminators["homemade"] as Model<IHomemadeOrder>)
     : Order.discriminator<IHomemadeOrder>("homemade", HomemadeOrderSchema);
+
+// ✅ NEW: QuickBites is a dedicated discriminator reusing the homemade schema,
+// so quickbites orders are stored with serviceType = "quickbites" on the
+// SAME collection, keeping the data model unified.
+export const QuickBitesOrderModel =
+  Order.discriminators && Order.discriminators["quickbites"]
+    ? (Order.discriminators["quickbites"] as Model<IHomemadeOrder>)
+    : Order.discriminator<IHomemadeOrder>("quickbites", HomemadeOrderSchema);
 
 export const CateringOrderModel =
   Order.discriminators && Order.discriminators["catering"]

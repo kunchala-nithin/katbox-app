@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import mongoose from "mongoose";
 import Order, {
   HomemadeOrderModel,
+  QuickBitesOrderModel,
   CateringOrderModel,
   MealBoxOrderModel,
 } from "../models/Orders";
@@ -339,9 +340,17 @@ setInterval(async () => {
  * The chef is NOT notified here. Chef receives the order only after
  * admin verifies advance payment via /verify-advance.
  *
- * ✅ NEW: The controller computes and persists three additional
- *    timestamp fields on the order document at the exact moment of
- *    order placement:
+ * ✅ QuickBites flow:
+ *    When serviceType === "quickbites" (or isQuickBites === "true", or the
+ *    category normalizes to "quickbites"), the order is saved through the
+ *    dedicated QuickBitesOrderModel — a discriminated sibling of homemade
+ *    that reuses the same schema but persists serviceType = "quickbites"
+ *    on the shared Orders collection. Every downstream behaviour
+ *    (admin alarm, chef alarm on verify, status timeline, feedback cron)
+ *    stays identical to a homemade order.
+ *
+ * ✅ The controller computes and persists three additional timestamp
+ *    fields on the order document at the exact moment of order placement:
  *
  *      • orderPlacedAt          → the server time when createOrder ran.
  *      • estimatedDeliveryAt    → absolute Date when delivery is expected.
@@ -351,15 +360,14 @@ setInterval(async () => {
  *       MongoDB is now ONLY the time in "4:30 PM" format (e.g. "4:30 PM"),
  *       never the long "ASAP (Within 75 minutes...)" string.
  *
- *    ✅ NEW: latitude & longitude are also persisted on the order and
+ *    ✅ latitude & longitude are also persisted on the order and
  *       on each delivery schedule so downstream map actions can pin
  *       the exact location.
  *
- *    ✅ NEW (this update): After the order is saved, EVERY user with
- *       isAdmin === true receives an Expo push with the bundled
- *       alarm.mp3 sound + admin_orders_alarm channel + data.role
- *       = "admin". This makes the admin's phone ring even when the
- *       app is fully closed.
+ *    ✅ After the order is saved, EVERY user with isAdmin === true
+ *       receives an Expo push with the bundled alarm.mp3 sound +
+ *       admin_orders_alarm channel + data.role = "admin". This makes
+ *       the admin's phone ring even when the app is fully closed.
  */
 export const createOrder = async (req: AuthRequest, res: Response) => {
   try {
@@ -407,11 +415,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       deliveryType,
       pricePerPlate,
       addons,
-      // ✅ NEW: QuickBites flow hint + optional client-provided absolute timestamp
+      // ✅ QuickBites flow hint + optional client-provided absolute timestamp
       isQuickBites,
       estimatedDeliveryAtMs,
       deliveryWindowMinutes,
-      // ✅ NEW: geo coordinates for map pinning
+      // ✅ geo coordinates for map pinning
       latitude,
       longitude,
     } = req.body;
@@ -488,7 +496,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     const effectiveChefId = String(chefId || "");
     const effectiveChefName = chefName || restaurantName || "";
     const effectiveRestaurantName = restaurantName || chefName || "";
+
+    // ✅ Normalize the incoming serviceType to lowercase so we always
+    // compare apples-to-apples when choosing the correct discriminator.
     const resolvedServiceType = serviceType ? String(serviceType).toLowerCase() : "mealbox";
+
     const resolvedAddress = String(deliveryAddress || addressDetails || "");
 
     const numericTotal = Number(totalAmount) || 0;
@@ -517,14 +529,15 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     // ────────────────────────────────────────────────────────────────
     // ✅ Compute absolute delivery timestamps at order placement.
     //    • orderPlacedAt = server "now"
-    //    • If QuickBites OR serviceType === homemade with a QuickBites
-    //      hint: estimatedDeliveryAt = now + 75 min (or the provided
-    //      deliveryWindowMinutes), deliveryWindowMinutes = that value.
-    //    • Else if the client sent an absolute ms timestamp: use it.
+    //    • QuickBites = serviceType === "quickbites" OR isQuickBites === "true"
+    //      OR category normalizes to "quickbites".
+    //      → estimatedDeliveryAt = now + 75 min (or supplied window)
+    //    • Else if client sent an absolute ms timestamp: use it.
     //    • Else: leave estimatedDeliveryAt unset.
     // ────────────────────────────────────────────────────────────────
     const orderPlacedAt = new Date();
     const quickBitesFlag =
+      resolvedServiceType === "quickbites" ||
       String(isQuickBites || "").toLowerCase() === "true" ||
       String(req.body?.category || "").trim().toLowerCase().replace(/\s+/g, "") === "quickbites";
 
@@ -549,7 +562,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     // ✅ Format the human-readable delivery slot label so downstream UIs
     // can display a fixed string even without reading the Date.
     //
-    // ✅ NEW: The slot label is now ALWAYS just the time — "4:30 PM" —
+    // ✅ The slot label is now ALWAYS just the time — "4:30 PM" —
     // never the long "ASAP (Within 75 minutes…)" string.
     let finalDeliverySlotLabel = String(deliverySlot || deliveryTimeSlot || "").trim();
     let finalDeliveryDateLabel = String(deliveryDate || "").trim();
@@ -573,7 +586,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     let savedOrder: any = null;
 
-    if (resolvedServiceType === "homemade") {
+    // ✅ Homemade AND QuickBites share the same schema, but they are
+    //    saved through DIFFERENT discriminator models so that the
+    //    persisted serviceType correctly stays as "homemade" or
+    //    "quickbites" respectively on the shared Orders collection.
+    if (resolvedServiceType === "homemade" || resolvedServiceType === "quickbites") {
       const parsedItemsRaw = parseIfJsonString(items, []);
 
       const sanitizedItems = Array.isArray(parsedItemsRaw)
@@ -590,11 +607,17 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           }))
         : [];
 
-      // ✅ Resolve the delivery slot label for homemade — prefer the new
-      // top-level `deliverySlot` param, fall back to legacy `deliveryTimeSlot`.
+      // ✅ Resolve the delivery slot label for homemade / quickbites —
+      // prefer the new top-level `deliverySlot` param, fall back to
+      // legacy `deliveryTimeSlot`.
       const resolvedHomemadeSlot = finalDeliverySlotLabel || "";
 
-      const newHomemadeOrder = new HomemadeOrderModel({
+      // ✅ Pick the correct discriminator model.
+      const ModelToUse = resolvedServiceType === "quickbites"
+        ? QuickBitesOrderModel
+        : HomemadeOrderModel;
+
+      const newHomemadeOrder = new ModelToUse({
         orderId: generatedOrderId,
         userId: finalUserId,
         userName: userName || "",
@@ -603,7 +626,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         chefId: effectiveChefId,
         chefName: effectiveChefName,
         chefPhone: resolvedChefPhone,
-        serviceType: "homemade",
+        // ✅ Always persist the resolved serviceType so downstream
+        // screens (CartScreen, Orders tab, admin dashboard) can key
+        // off the correct value: "homemade" or "quickbites".
+        serviceType: resolvedServiceType,
         items: sanitizedItems,
         deliveryAddress: resolvedAddress,
         deliveryTimeSlot: resolvedHomemadeSlot,
@@ -798,7 +824,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       io.emit("new_order_placed", savedOrder);
 
       /* ──────────────────────────────────────────────────────────
-         ✅ NEW: Notify EVERY admin with the alarm sound.
+         ✅ Notify EVERY admin with the alarm sound.
          • Runs AFTER the order is safely saved.
          • Uses the batch endpoint so all admins are notified
            in a single HTTP call.
@@ -931,7 +957,7 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
       }
 
       /* ──────────────────────────────────────────────────────────
-         ✅ UPDATED: Chef push now uses the bundled alarm sound,
+         ✅ Chef push now uses the bundled alarm sound,
          the chef alarm channel, priority "max", and carries
          data.role = "chef" + data.chefId for client-side routing
          and chef-scoped alarms.
@@ -1125,7 +1151,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
     }
 
     /* ──────────────────────────────────────────────────────────
-       ✅ NEW: Push notification to the CUSTOMER on every status
+       ✅ Push notification to the CUSTOMER on every status
        change (by chef or admin). Works when the customer's app
        is open, backgrounded, or fully killed.
 
@@ -1258,7 +1284,7 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
     }
 
     /* ──────────────────────────────────────────────────────────
-       ✅ NEW: Push notification to the CUSTOMER for THIS scheduled
+       ✅ Push notification to the CUSTOMER for THIS scheduled
        delivery's status change. Works when the customer's app is
        open, backgrounded, or fully killed.
 

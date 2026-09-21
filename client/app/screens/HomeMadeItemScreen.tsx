@@ -510,13 +510,15 @@ const HomeMadeItemScreen = () => {
 
       if (cartItemsPayload.length === 0) return;
 
-      // ✅ Forward QuickBites flag + category name to review screen.
+      // ✅ Forward QuickBites flag + serviceType + category name to review screen.
       // HomeMadeOrderReview will lock same-day + within-75-min delivery
-      // (cooking + delivery) whenever isQuickBites === "true".
+      // (cooking + delivery) whenever isQuickBites === "true", and the
+      // serviceType will be persisted as "quickbites" instead of "homemade"
+      // so the CartScreen and Orders collection correctly classify the order.
       router.push({
         pathname: "/screens/HomeMadeOrderReview",
         params: {
-          serviceType: 'homemade',
+          serviceType: isQuickBitesCategory ? "quickbites" : "homemade",
           chefId: effectiveChefId,
           chefName: effectiveChefName,
           chefImage: headerImage,

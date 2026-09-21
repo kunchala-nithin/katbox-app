@@ -14,7 +14,15 @@ export const addToCart = async (req: Request, res: Response) => {
     // ✅ Look for explicit serviceType mapping from payload
     const { serviceType, couponCode, discount } = req.body;
 
-    if (serviceType === 'homemade' || serviceType === 'mealbox') {
+    // ✅ ITEM-BASED FLOWS: homemade, mealbox and quickbites all share the same
+    // item-list-based cart structure. QuickBites is a sibling of homemade and
+    // must persist the same delivery timestamps + slot fields.
+    const isItemBasedFlow =
+      serviceType === 'homemade' ||
+      serviceType === 'mealbox' ||
+      serviceType === 'quickbites';
+
+    if (isItemBasedFlow) {
       const { chefId, chefName, items, totalItems, totalPrice, menu, selections, addons, orderDetails, userPhone, alternatePhone } = req.body;
       
       // Calculate dynamic discount metrics safely
@@ -24,7 +32,7 @@ export const addToCart = async (req: Request, res: Response) => {
       const resolvedUserPhone = userPhone || orderDetails?.contactPhone || (req as any).user?.phone || '';
       const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
 
-      // ✅ Homemade-only: resolve delivery date & slot from top-level body OR nested orderDetails
+      // ✅ Homemade / QuickBites-only: resolve delivery date & slot from top-level body OR nested orderDetails
       const resolvedDeliveryDate = String(
         req.body.deliveryDate ||
         orderDetails?.deliveryDate ||
@@ -50,7 +58,13 @@ export const addToCart = async (req: Request, res: Response) => {
       const resolvedDeliveryWindowMinutes = Number(req.body.deliveryWindowMinutes) || 0;
       const resolvedIsQuickBites =
         String(req.body.isQuickBites || '').toLowerCase() === 'true' ||
-        String(orderDetails?.isQuickBites || '').toLowerCase() === 'true';
+        String(orderDetails?.isQuickBites || '').toLowerCase() === 'true' ||
+        serviceType === 'quickbites';
+
+      // ✅ Only homemade / quickbites flows carry the delivery date / slot /
+      // estimatedDeliveryAt info. Mealbox carts keep these fields empty.
+      const carriesDeliveryMeta =
+        serviceType === 'homemade' || serviceType === 'quickbites';
 
       // Clear out active current instances sitting in standard active workflow session
       await Cart.deleteMany({ user: userId, status: "in-cart" });
@@ -73,13 +87,13 @@ export const addToCart = async (req: Request, res: Response) => {
         couponCode: couponCode || null,
         discount: appliedDiscount,
         totalPriceAfterDiscount: calculatedFinalTotal,
-        // ✅ Only meaningful for homemade; harmless for mealbox (stays empty string)
-        deliveryDate: serviceType === 'homemade' ? resolvedDeliveryDate : '',
-        deliverySlot: serviceType === 'homemade' ? resolvedDeliverySlot : '',
+        // ✅ Only meaningful for homemade / quickbites; harmless for mealbox (stays empty string)
+        deliveryDate: carriesDeliveryMeta ? resolvedDeliveryDate : '',
+        deliverySlot: carriesDeliveryMeta ? resolvedDeliverySlot : '',
         // ✅ NEW: Absolute timestamp for dynamic display in CartScreen
-        estimatedDeliveryAt: serviceType === 'homemade' ? resolvedEstimatedDeliveryAt : undefined,
-        deliveryWindowMinutes: serviceType === 'homemade' ? resolvedDeliveryWindowMinutes : 0,
-        isQuickBites: serviceType === 'homemade' ? resolvedIsQuickBites : false
+        estimatedDeliveryAt: carriesDeliveryMeta ? resolvedEstimatedDeliveryAt : undefined,
+        deliveryWindowMinutes: carriesDeliveryMeta ? resolvedDeliveryWindowMinutes : 0,
+        isQuickBites: carriesDeliveryMeta ? resolvedIsQuickBites : false
       });
 
       const savedHomemade = await newHomemadeCart.save();
@@ -198,7 +212,14 @@ export const updateCart = async (req: Request, res: Response) => {
     const { cartId } = req.params;
     const { serviceType, couponCode, discount } = req.body;
 
-    if (serviceType === 'homemade' || serviceType === 'mealbox') {
+    // ✅ ITEM-BASED FLOWS: homemade, mealbox and quickbites all share the
+    // same item-list-based structure. QuickBites is a sibling of homemade.
+    const isItemBasedFlow =
+      serviceType === 'homemade' ||
+      serviceType === 'mealbox' ||
+      serviceType === 'quickbites';
+
+    if (isItemBasedFlow) {
       const { chefId, chefName, items, totalItems, totalPrice, menu, selections, addons, orderDetails, userPhone, alternatePhone } = req.body;
       const appliedDiscount = Number(discount || 0);
       const calculatedFinalTotal = Math.max(0, Number(totalPrice || 0) - appliedDiscount);
@@ -206,7 +227,7 @@ export const updateCart = async (req: Request, res: Response) => {
       const resolvedUserPhone = userPhone || orderDetails?.contactPhone || '';
       const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
 
-      // ✅ Homemade-only: resolve delivery date & slot from top-level body OR nested orderDetails
+      // ✅ Homemade / QuickBites-only: resolve delivery date & slot from top-level body OR nested orderDetails
       const resolvedDeliveryDate = String(
         req.body.deliveryDate ||
         orderDetails?.deliveryDate ||
@@ -230,7 +251,13 @@ export const updateCart = async (req: Request, res: Response) => {
       const resolvedDeliveryWindowMinutes = Number(req.body.deliveryWindowMinutes) || 0;
       const resolvedIsQuickBites =
         String(req.body.isQuickBites || '').toLowerCase() === 'true' ||
-        String(orderDetails?.isQuickBites || '').toLowerCase() === 'true';
+        String(orderDetails?.isQuickBites || '').toLowerCase() === 'true' ||
+        serviceType === 'quickbites';
+
+      // ✅ Only homemade / quickbites flows carry the delivery date / slot /
+      // estimatedDeliveryAt info. Mealbox carts keep these fields empty.
+      const carriesDeliveryMeta =
+        serviceType === 'homemade' || serviceType === 'quickbites';
 
       const updatedHomemade = await Cart.findByIdAndUpdate(
         cartId,
@@ -250,13 +277,13 @@ export const updateCart = async (req: Request, res: Response) => {
           couponCode: couponCode || null,
           discount: appliedDiscount,
           totalPriceAfterDiscount: calculatedFinalTotal,
-          // ✅ Preserve delivery date & slot on every update for homemade; empty for mealbox
-          deliveryDate: serviceType === 'homemade' ? resolvedDeliveryDate : '',
-          deliverySlot: serviceType === 'homemade' ? resolvedDeliverySlot : '',
+          // ✅ Preserve delivery date & slot on every update for homemade / quickbites; empty for mealbox
+          deliveryDate: carriesDeliveryMeta ? resolvedDeliveryDate : '',
+          deliverySlot: carriesDeliveryMeta ? resolvedDeliverySlot : '',
           // ✅ NEW: Preserve the absolute timestamp fields
-          estimatedDeliveryAt: serviceType === 'homemade' ? resolvedEstimatedDeliveryAt : undefined,
-          deliveryWindowMinutes: serviceType === 'homemade' ? resolvedDeliveryWindowMinutes : 0,
-          isQuickBites: serviceType === 'homemade' ? resolvedIsQuickBites : false
+          estimatedDeliveryAt: carriesDeliveryMeta ? resolvedEstimatedDeliveryAt : undefined,
+          deliveryWindowMinutes: carriesDeliveryMeta ? resolvedDeliveryWindowMinutes : 0,
+          isQuickBites: carriesDeliveryMeta ? resolvedIsQuickBites : false
         },
         { new: true }
       );

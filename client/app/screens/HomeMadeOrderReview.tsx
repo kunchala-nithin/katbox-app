@@ -161,19 +161,25 @@ const HomeMadeOrderReview = () => {
   const userId = params.userId || '';
   const userName = params.userName || '';
 
+  // ✅ NEW: Preserve incoming serviceType from HomeMadeItemScreen.
+  // For Quick Bites categories, this arrives as 'quickbites'.
+  const incomingServiceType: string = String(params.serviceType || 'homemade').toLowerCase();
+
   // ─── QuickBites detection ────────────────────────────────────────────
-  // If the incoming flag is "true", OR the category/page title normalizes
-  // to "quickbites" (case- and space-insensitive), we switch into
-  // QuickBites flow: same-day delivery within 75 minutes of order,
-  // INCLUDING cooking time and delivery time.
-  // This does NOT affect homemade / mealbox / catering orders that don't
-  // match the QuickBites name.
+  // If the incoming flag is "true", OR serviceType is "quickbites", OR the
+  // category/page title normalizes to "quickbites" (case- and space-
+  // insensitive), we switch into QuickBites flow: same-day delivery within
+  // 75 minutes of order, INCLUDING cooking time and delivery time.
   const isQuickBites = useMemo(() => {
+    if (incomingServiceType === 'quickbites') return true;
     if (String(params.isQuickBites || '').toLowerCase() === 'true') return true;
     const raw = String(params.category || pageTitle || '');
     const normalized = raw.trim().toLowerCase().replace(/\s+/g, '');
     return normalized === 'quickbites';
-  }, [params.isQuickBites, params.category, pageTitle]);
+  }, [incomingServiceType, params.isQuickBites, params.category, pageTitle]);
+
+  // ✅ NEW: Final serviceType that we will persist on the cart + forward downstream.
+  const effectiveServiceType = isQuickBites ? 'quickbites' : (incomingServiceType || 'homemade');
 
   // Deadline display (now + 75 min, cooking + delivery included).
   // Recomputed on mount / when flow toggles.
@@ -260,7 +266,7 @@ const HomeMadeOrderReview = () => {
   }, [selectedDeliverySlotId]);
 
   // ─── QuickBites derived labels (same-day, within 75 minutes) ──────────
-  // ✅ NEW: The slot label is now just the clock time in "4:30 PM" format,
+  // ✅ The slot label is now just the clock time in "4:30 PM" format,
   // e.g. "4:30 PM". No long text — this is what gets stored in MongoDB
   // and displayed on the Cart, Checkout, and Order Confirmation screens.
   const quickBitesDateLabel = useMemo(() => {
@@ -511,7 +517,7 @@ const HomeMadeOrderReview = () => {
       // placement so the "within 75 minutes (cooking + delivery)" window is
       // anchored to now.
       //
-      // ✅ NEW: The slot label stored in MongoDB is now just the time
+      // ✅ The slot label stored in MongoDB is now just the time
       // string ("4:30 PM"). No "ASAP", no long description.
       let finalDeliveryDate = effectiveDeliveryDateLabel;
       let finalDeliverySlot = effectiveDeliverySlotLabel;
@@ -527,7 +533,9 @@ const HomeMadeOrderReview = () => {
       }
 
       const payload = {
-        serviceType: 'homemade',
+        // ✅ NEW: use the effective service type so Quick Bites persists as
+        // "quickbites" on the Cart document and later on the Order document.
+        serviceType: effectiveServiceType,
         userId: userId || currentUser?.id || currentUser?._id,
         userName: userName || currentUser?.name,
         chefId: chefId,
@@ -577,13 +585,15 @@ const HomeMadeOrderReview = () => {
         router.push({
           pathname: '/screens/CartScreen',
           params: {
-            serviceType: 'homemade',
+            // ✅ Preserve the effective serviceType downstream
+            serviceType: effectiveServiceType,
             userId: userId || currentUser?.id || currentUser?._id || '',
             userName: userName || currentUser?.name || '',
             chefId,
             chefName,
             phone: contactPhoneNumber,
             alternatePhone: alternatePhoneNumber,
+            isQuickBites: isQuickBites ? 'true' : 'false',
             // ✅ Pass through so CartScreen can immediately render even before
             // the API response is re-fetched
             deliveryDate: finalDeliveryDate,

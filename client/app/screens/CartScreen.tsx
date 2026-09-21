@@ -92,14 +92,31 @@ export default function CartScreen() {
     extrapolate: "clamp",
   });
 
+  // ✅ Detect QuickBites flow. Treat as a homemade-family flow (same UI) but
+  // keep the serviceType separate so it persists correctly downstream.
+  const isQuickBitesFlow =
+    params.serviceType === "quickbites" ||
+    cartData?.serviceType === "quickbites" ||
+    String(params.isQuickBites || "").toLowerCase() === "true";
+
   // CHECK IF CURRENT SERVICE FLOW CONTEXT IS HOMEMADE OR MEALBOX
-  const isHomemadeFlow = params.serviceType === "homemade" || cartData?.serviceType === "homemade";
+  const isHomemadeFlow =
+    params.serviceType === "homemade" ||
+    cartData?.serviceType === "homemade" ||
+    isQuickBitesFlow;
   const isMealBoxFlow = params.serviceType === "mealbox" || cartData?.serviceType === "mealbox";
   const isFromHome = params.fromHome === "true";
 
-  // ✅ Canonical cart service type used for coupon validation
+  // ✅ Canonical cart service type used for coupon validation.
+  // QuickBites gets its own bucket so coupon validation flows correctly.
   const derivedServiceType: "catering" | "mealbox" | "homemade" | "quickbites" =
-    isHomemadeFlow ? "homemade" : isMealBoxFlow ? "mealbox" : "catering";
+    isQuickBitesFlow
+      ? "quickbites"
+      : isHomemadeFlow
+      ? "homemade"
+      : isMealBoxFlow
+      ? "mealbox"
+      : "catering";
 
   const HEADER_HEIGHT = insets.top + 60;
 
@@ -264,7 +281,7 @@ export default function CartScreen() {
     return [];
   }, [orderDetails]);
 
-  // ✅ HOMEMADE ONLY: resolve the persisted delivery date & slot for display + downstream params
+  // ✅ HOMEMADE / QUICKBITES ONLY: resolve the persisted delivery date & slot for display + downstream params
   const homemadeDeliveryDate: string = React.useMemo(() => {
     return String(
       cartData?.deliveryDate ||
@@ -453,7 +470,14 @@ export default function CartScreen() {
     if (!cartData?._id) return;
     try {
       await api.put(`/api/cart/update/${cartData._id}`, {
-        serviceType: isHomemadeFlow ? "homemade" : (isMealBoxFlow ? "mealbox" : "catering"),
+        // ✅ Preserve quickbites serviceType when syncing
+        serviceType: isQuickBitesFlow
+          ? "quickbites"
+          : isHomemadeFlow
+          ? "homemade"
+          : isMealBoxFlow
+          ? "mealbox"
+          : "catering",
         chefId: cartData?.chefId,
         chefName: cartData?.chefName,
         userId: cartData?.userId || params.userId,
@@ -532,7 +556,7 @@ export default function CartScreen() {
     });
   };
 
-  // ✅ UPDATED: Apply chef coupon with service-type guard
+  // ✅ Apply chef coupon with service-type guard (quickbites now its own bucket)
   const applyCoupon = async (code: string) => {
     const targetChef =
       cartData?.chefId ||
@@ -566,12 +590,11 @@ export default function CartScreen() {
     }
 
     try {
-      // ✅ FIXED: URL corrected to match the deployed backend route
       const res = await api.post("/api/chefs/apply-coupon", {
         code,
         cartTotal: subtotal,
         chefId: targetChef,
-        // ✅ NEW: send the cart's service type so the backend can enforce it too
+        // ✅ send the cart's service type so the backend can enforce it too
         serviceType: derivedServiceType,
       });
 
@@ -686,7 +709,14 @@ export default function CartScreen() {
   const groupedPreviewDayItemsMap = getGroupedMealBoxItemsBySection(currentDaySelectionsArray);
 
   const handlePlaceOrderNavigation = () => {
-    const derivedServiceTypeLocal = isHomemadeFlow ? "homemade" : isMealBoxFlow ? "mealbox" : "catering";
+    // ✅ Ensure QuickBites is its own service type all the way to checkout
+    const derivedServiceTypeLocal = isQuickBitesFlow
+      ? "quickbites"
+      : isHomemadeFlow
+      ? "homemade"
+      : isMealBoxFlow
+      ? "mealbox"
+      : "catering";
 
     if (derivedServiceTypeLocal === "catering") {
       router.push({
@@ -767,7 +797,10 @@ export default function CartScreen() {
           : undefined,
         selections: cartData?.selections ? JSON.stringify(cartData.selections) : undefined,
         items: cartData?.items ? JSON.stringify(cartData.items) : undefined,
+        // ✅ Preserve service type. QuickBites stays "quickbites" all the way.
         serviceType: derivedServiceTypeLocal,
+        // ✅ Forward explicit QuickBites flag too for downstream screens
+        isQuickBites: isQuickBitesFlow ? "true" : "false",
       },
     });
   };
@@ -1282,7 +1315,7 @@ export default function CartScreen() {
                       ? `Flat ₹${coupons[0].value} OFF order`
                       : `${coupons[0].value}% OFF up to ₹${coupons[0].maxDiscount || 500}`}
                   </Text>
-                  {/* ✅ NEW: service-type chip */}
+                  {/* ✅ service-type chip */}
                   {!!coupons[0].serviceType && (
                     <View style={styles.couponServiceTypeChipRow}>
                       <Ionicons name="git-branch-outline" size={11} color="#0F382A" />
@@ -1362,7 +1395,7 @@ export default function CartScreen() {
                             ? `Flat ₹${coupon.value} OFF order`
                             : `${coupon.value}% OFF up to ₹${coupon.maxDiscount || 500}`}
                         </Text>
-                        {/* ✅ NEW: service-type chip */}
+                        {/* ✅ service-type chip */}
                         {!!coupon.serviceType && (
                           <View style={styles.couponServiceTypeChipRow}>
                             <Ionicons name="git-branch-outline" size={11} color="#0F382A" />
@@ -1514,7 +1547,11 @@ export default function CartScreen() {
               <View style={styles.priceModalInnerBox}>
                 <View style={styles.breakupRow}>
                   <Text style={styles.breakupLabel}>
-                    {isMealBoxFlow ? "MealBox Plan Base Subtotal" : "Homemade Subtotal"}
+                    {isMealBoxFlow
+                      ? "MealBox Plan Base Subtotal"
+                      : isQuickBitesFlow
+                      ? "Quick Bites Subtotal"
+                      : "Homemade Subtotal"}
                   </Text>
                   <Text style={styles.breakupValue}>₹{subtotal}</Text>
                 </View>
@@ -1876,7 +1913,7 @@ export default function CartScreen() {
         </Animated.View>
       </Modal>
 
-      {/* ✅ NEW: Katbox "Not Applicable" popup */}
+      {/* ✅ Katbox "Not Applicable" popup */}
       <Modal
         visible={!!notApplicable}
         transparent
@@ -2844,7 +2881,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  // ✅ NEW: service-type chip inside coupon cards
+  // ✅ service-type chip inside coupon cards
   couponServiceTypeChipRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -3003,7 +3040,7 @@ const styles = StyleSheet.create({
   b3: { backgroundColor: "rgba(22, 101, 52, 0.3)" },
   b4: { backgroundColor: "#5B756C" },
 
-  // ✅ NEW: Katbox not-applicable popup styles
+  // ✅ Katbox not-applicable popup styles
   katboxPopupCard: {
     position: "absolute",
     alignSelf: "center",

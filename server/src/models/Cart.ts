@@ -19,8 +19,8 @@ interface ICart extends Document {
   extraItems: number; // ✅ NEW
   type: 'veg' | 'nonveg';
   status: 'in-cart' | 'ordered';
-  // ✅ Homemade & Mealbox Fields Added Optional to Guarantee Backward Compatibility
-  serviceType?: 'catering' | 'homemade' | 'mealbox';
+  // ✅ Homemade, Mealbox & QuickBites Fields Added Optional to Guarantee Backward Compatibility
+  serviceType?: 'catering' | 'homemade' | 'mealbox' | 'quickbites';
   chefId?: string;
   chefName?: string;
   items?: Array<{
@@ -35,7 +35,7 @@ interface ICart extends Document {
   couponCode?: string;
   discount?: number;
   totalPriceAfterDiscount?: number;
-  // ✅ Homemade Delivery Date & Slot Fields (Optional, Only Used By Homemade Flow)
+  // ✅ Homemade Delivery Date & Slot Fields (Optional, Only Used By Homemade / QuickBites Flow)
   deliveryDate?: string;
   deliverySlot?: string;
   // ✅ NEW: absolute timestamps for the delivery window (only meaningful for homemade / QuickBites)
@@ -49,11 +49,11 @@ const CartSchema = new Schema<ICart>(
     user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     userPhone: { type: String, default: '' },
     alternatePhone: { type: String, default: '' },
-    restaurant: { type: Schema.Types.Mixed, required: false }, // Made optional for homemade / mealbox
-    menu: { type: Schema.Types.Mixed, required: false },       // Made optional for homemade / mealbox
-    selections: { type: Schema.Types.Mixed, required: false }, // Made optional for homemade / mealbox (stores weekday objects)
+    restaurant: { type: Schema.Types.Mixed, required: false }, // Made optional for homemade / mealbox / quickbites
+    menu: { type: Schema.Types.Mixed, required: false },       // Made optional for homemade / mealbox / quickbites
+    selections: { type: Schema.Types.Mixed, required: false }, // Made optional for homemade / mealbox / quickbites (stores weekday objects)
     addons: [{ type: Schema.Types.Mixed }],                     // ✅ ADDED MULTI-VENDOR CATERING ADDONS STATE INSTANCE
-    orderDetails: { type: Schema.Types.Mixed, required: false }, // Made optional for homemade / mealbox
+    orderDetails: { type: Schema.Types.Mixed, required: false }, // Made optional for homemade / mealbox / quickbites
 
     specialInstructions: {
       spice: { type: String, default: '' },
@@ -70,8 +70,8 @@ const CartSchema = new Schema<ICart>(
     type: { type: String, enum: ['veg', 'nonveg'], required: false, default: 'veg' },
     status: { type: String, enum: ['in-cart', 'ordered'], default: 'in-cart' },
 
-    // ✅ Homemade & Mealbox Structure Additions
-    serviceType: { type: String, enum: ['catering', 'homemade', 'mealbox'], default: 'catering' },
+    // ✅ Homemade, Mealbox & QuickBites Structure Additions
+    serviceType: { type: String, enum: ['catering', 'homemade', 'mealbox', 'quickbites'], default: 'catering' },
     chefId: { type: String },
     chefName: { type: String },
     items: { type: [Schema.Types.Mixed], default: [] },
@@ -82,7 +82,7 @@ const CartSchema = new Schema<ICart>(
     totalPriceAfterDiscount: { type: Number, default: 0 },
 
     // ✅ Homemade Delivery Date & Slot Field Definitions
-    // Only populated for the homemade flow. Left empty for mealbox & catering.
+    // Only populated for the homemade / quickbites flow. Left empty for mealbox & catering.
     deliveryDate: { type: String, default: '' },
     deliverySlot: { type: String, default: '' },
 
