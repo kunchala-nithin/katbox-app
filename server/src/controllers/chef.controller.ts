@@ -423,11 +423,6 @@ export const deleteChef = async (req: any, res: Response) => {
 // ============================================================
 // GET ALL CHEFS (CUSTOMER-FACING)
 // ============================================================
-// ✅ Filters out chefs whose linked User account has isChef === false.
-//    Chefs with no linked User, or with User.isChef true/undefined,
-//    remain visible. Blocked chefs disappear from Home.tsx,
-//    AllChefCards.tsx, ChefInfoScreen.tsx, etc.
-// ============================================================
 export const getChefs = async (_req: Request, res: Response) => {
   try {
     const chefs = await Chef.find().sort({ createdAt: -1 });
@@ -472,10 +467,6 @@ export const getChefs = async (_req: Request, res: Response) => {
 
 // ============================================================
 // GET ALL CHEFS (ADMIN VIEW)
-// ============================================================
-// ✅ Returns EVERY chef (including blocked ones) plus each linked
-//    User's isChef/email/phone so the admin screen can render the
-//    correct block-switch state.
 // ============================================================
 export const getAllChefsForAdmin = async (_req: Request, res: Response) => {
   try {
@@ -527,9 +518,6 @@ export const getAllChefsForAdmin = async (_req: Request, res: Response) => {
 
 // ============================================================
 // TOGGLE CHEF BLOCK STATUS (ADMIN ONLY)
-// ============================================================
-// ✅ Flips (or force-sets) the linked User's isChef flag.
-//    Body (optional): { isChef: boolean }
 // ============================================================
 export const toggleChefBlockStatus = async (req: any, res: Response) => {
   try {
@@ -598,11 +586,7 @@ export const toggleChefBlockStatus = async (req: any, res: Response) => {
 };
 
 // ============================================================
-// ✅ NEW: UPDATE CHEF BY ADMIN (full profile edit)
-// ============================================================
-// Handles PATCH /api/chefs/admin/:chefId
-// Only mutates the Chef document — never touches User.isChef.
-// That flag is controlled by the toggle-block route.
+// UPDATE CHEF BY ADMIN
 // ============================================================
 export const updateChefByAdmin = async (req: any, res: Response) => {
   try {
@@ -672,10 +656,7 @@ export const updateChefByAdmin = async (req: any, res: Response) => {
 };
 
 // ============================================================
-// ✅ NEW: DELETE CHEF BY ADMIN
-// ============================================================
-// Handles DELETE /api/chefs/admin/:chefId
-// Runs the same cleanupChefData used by the self-service delete.
+// DELETE CHEF BY ADMIN
 // ============================================================
 export const deleteChefByAdmin = async (req: any, res: Response) => {
   try {
@@ -709,6 +690,147 @@ export const deleteChefByAdmin = async (req: any, res: Response) => {
     return res.status(500).json({
       success: false,
       message: "Failed to delete chef.",
+    });
+  }
+};
+
+// ============================================================
+// ✅ NEW: ADD COUPON TO CHEF (ADMIN ONLY)
+// ============================================================
+export const addChefCouponByAdmin = async (req: any, res: Response) => {
+  try {
+    const rawChefId = req.params.chefId;
+    const chefId = Array.isArray(rawChefId) ? rawChefId[0] : rawChefId;
+    if (!chefId) {
+      return res.status(400).json({ success: false, message: "Chef ID is required" });
+    }
+
+    const query: any = {};
+    if (mongoose.Types.ObjectId.isValid(chefId)) {
+      query.$or = [{ _id: chefId }, { user: chefId }];
+    } else {
+      query.$or = [{ name: chefId }];
+    }
+
+    const chef = await Chef.findOne(query);
+    if (!chef) {
+      return res.status(404).json({ success: false, message: "Chef not found" });
+    }
+
+    const { code, type, value, description, serviceType } = req.body || {};
+
+    const cleanCode = String(code || "").trim().toUpperCase();
+    const cleanValue = String(value || "").trim();
+    const cleanType = type === "flat" ? "flat" : "percent";
+    const cleanDesc = String(description || "").trim();
+    const cleanService = normalizeCouponServiceType(serviceType);
+
+    if (!cleanCode) {
+      return res.status(400).json({ success: false, message: "Coupon code is required" });
+    }
+    if (!cleanValue || isNaN(Number(cleanValue)) || Number(cleanValue) <= 0) {
+      return res.status(400).json({ success: false, message: "Enter a valid discount value" });
+    }
+    if (cleanType === "percent" && Number(cleanValue) > 100) {
+      return res.status(400).json({ success: false, message: "Percent discount cannot exceed 100" });
+    }
+
+    const alreadyExists = (chef.coupons || []).some(
+      (c: any) => String(c.code || "").toUpperCase() === cleanCode
+    );
+    if (alreadyExists) {
+      return res.status(400).json({
+        success: false,
+        message: "This coupon code already exists for this chef",
+      });
+    }
+
+    const newCoupon = {
+      code: cleanCode,
+      type: cleanType,
+      value: cleanValue,
+      description:
+        cleanDesc ||
+        (cleanType === "percent" ? `${cleanValue}% OFF` : `Flat ₹${cleanValue} OFF`),
+      minOrder: 0,
+      maxDiscount: 500,
+      serviceType: cleanService,
+    };
+
+    chef.coupons.push(newCoupon as any);
+    await chef.save();
+
+    console.log(`🎟️ Admin added coupon '${cleanCode}' to chef '${chef.name}'`);
+
+    return res.json({
+      success: true,
+      message: "Coupon added successfully",
+      chef,
+      coupons: chef.coupons,
+    });
+  } catch (error: any) {
+    console.error("Add chef coupon (admin) error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to add coupon",
+    });
+  }
+};
+
+// ============================================================
+// ✅ NEW: DELETE COUPON FROM CHEF (ADMIN ONLY)
+// ============================================================
+export const deleteChefCouponByAdmin = async (req: any, res: Response) => {
+  try {
+    const rawChefId = req.params.chefId;
+    const chefId = Array.isArray(rawChefId) ? rawChefId[0] : rawChefId;
+    const rawCouponId = req.params.couponId;
+    const couponId = Array.isArray(rawCouponId) ? rawCouponId[0] : rawCouponId;
+
+    if (!chefId || !couponId) {
+      return res.status(400).json({
+        success: false,
+        message: "Chef ID and Coupon ID are required",
+      });
+    }
+
+    const query: any = {};
+    if (mongoose.Types.ObjectId.isValid(chefId)) {
+      query.$or = [{ _id: chefId }, { user: chefId }];
+    } else {
+      query.$or = [{ name: chefId }];
+    }
+
+    const chef = await Chef.findOne(query);
+    if (!chef) {
+      return res.status(404).json({ success: false, message: "Chef not found" });
+    }
+
+    const before = chef.coupons?.length || 0;
+    chef.coupons = (chef.coupons || []).filter(
+      (c: any) => String(c._id) !== String(couponId)
+    );
+    const after = chef.coupons?.length || 0;
+
+    if (before === after) {
+      return res.status(404).json({ success: false, message: "Coupon not found" });
+    }
+
+    await chef.save();
+
+    console.log(`🗑️ Admin deleted coupon ${couponId} from chef '${chef.name}'`);
+
+    return res.json({
+      success: true,
+      message: "Coupon deleted successfully",
+      chef,
+      coupons: chef.coupons,
+    });
+  } catch (error: any) {
+    console.error("Delete chef coupon (admin) error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete coupon",
     });
   }
 };
@@ -761,7 +883,6 @@ export const getChefCoupons = async (req: Request, res: Response) => {
       description: cp.description || (cp.type === "flat" ? `Flat ₹${cp.value} OFF` : `${cp.value}% OFF`),
       minOrder: Number(cp.minOrder) || 0,
       maxDiscount: Number(cp.maxDiscount) || 500,
-      // ✅ NEW: expose the service type (always lowercase, e.g. "catering")
       serviceType: normalizeCouponServiceType(cp.serviceType),
     }));
 
@@ -901,7 +1022,6 @@ export const applyChefCoupon = async (req: Request, res: Response) => {
       });
     }
 
-    // ✅ SERVICE-TYPE GUARD (case-insensitive)
     const cartService = String(serviceType || "").toLowerCase().trim();
     const couponService = normalizeCouponServiceType(matchedCoupon.serviceType);
 
@@ -910,8 +1030,8 @@ export const applyChefCoupon = async (req: Request, res: Response) => {
         success: false,
         notApplicable: true,
         couponCode: cleanCode,
-        couponServiceType: couponService,   // e.g. "catering"
-        cartServiceType: cartService,       // e.g. "mealbox"
+        couponServiceType: couponService,
+        cartServiceType: cartService,
         message: `Coupon '${cleanCode}' is only applicable for ${couponService.toUpperCase()} orders. Your cart is a ${cartService.toUpperCase()} order.`,
       });
     }

@@ -42,13 +42,21 @@ type AdminFilterTab = "All" | "Active" | "Blocked" | "Offline";
 
 const FILTER_TABS: AdminFilterTab[] = ["All", "Active", "Blocked", "Offline"];
 
-const formatFssai = (value: any): string => {
-  if (!value) return "";
-  const s = String(value).trim();
-  if (!s) return "";
-  if (s.length <= 8) return s;
-  return `${s.substring(0, 4)}…${s.substring(s.length - 4)}`;
+type CouponServiceType = "catering" | "mealbox" | "homemade" | "quickbites";
+
+const SERVICE_TYPE_LABEL: Record<CouponServiceType, string> = {
+  catering: "Catering",
+  mealbox: "MealBox",
+  homemade: "Homemade",
+  quickbites: "Quick Bites",
 };
+
+const SERVICE_TYPE_OPTIONS: CouponServiceType[] = [
+  "catering",
+  "mealbox",
+  "homemade",
+  "quickbites",
+];
 
 export default function AdminAllChefsScreen() {
   const router = useRouter();
@@ -78,6 +86,18 @@ export default function AdminAllChefsScreen() {
   const [editIsAvailable, setEditIsAvailable] = useState<boolean>(true);
 
   const [deletingChefId, setDeletingChefId] = useState<string | null>(null);
+
+  // ─── Coupon management state ───
+  const [expandedCouponsChefId, setExpandedCouponsChefId] = useState<string | null>(null);
+  const [addingCouponToChefId, setAddingCouponToChefId] = useState<string | null>(null);
+  const [newCouponCode, setNewCouponCode] = useState("");
+  const [newCouponType, setNewCouponType] = useState<"percent" | "flat">("percent");
+  const [newCouponValue, setNewCouponValue] = useState("");
+  const [newCouponDescription, setNewCouponDescription] = useState("");
+  const [newCouponServiceType, setNewCouponServiceType] =
+    useState<CouponServiceType>("catering");
+  const [savingCoupon, setSavingCoupon] = useState(false);
+  const [deletingCouponId, setDeletingCouponId] = useState<string | null>(null);
 
   const isFetchingRef = useRef<boolean>(false);
 
@@ -336,6 +356,139 @@ export default function AdminAllChefsScreen() {
     router.push("/chefManagement/add-chefs");
   };
 
+  // ─── Coupon form helpers ───
+  const resetCouponForm = () => {
+    setNewCouponCode("");
+    setNewCouponType("percent");
+    setNewCouponValue("");
+    setNewCouponDescription("");
+    setNewCouponServiceType("catering");
+  };
+
+  const handleToggleCouponsSection = (chefId: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    if (expandedCouponsChefId === chefId) {
+      setExpandedCouponsChefId(null);
+      setAddingCouponToChefId(null);
+      resetCouponForm();
+    } else {
+      setExpandedCouponsChefId(chefId);
+      setAddingCouponToChefId(null);
+      resetCouponForm();
+    }
+  };
+
+  const handleOpenAddCouponForm = (chefId: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setAddingCouponToChefId(chefId);
+    resetCouponForm();
+  };
+
+  const handleCancelAddCoupon = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setAddingCouponToChefId(null);
+    resetCouponForm();
+  };
+
+  const handleSaveNewCoupon = async (chefId: string) => {
+    const code = newCouponCode.trim().toUpperCase();
+    const value = newCouponValue.trim();
+
+    if (!code) {
+      Alert.alert("Missing code", "Enter a coupon code (e.g. WELCOME10).");
+      return;
+    }
+    if (!value || isNaN(Number(value)) || Number(value) <= 0) {
+      Alert.alert("Invalid value", "Enter a valid discount number.");
+      return;
+    }
+    if (newCouponType === "percent" && Number(value) > 100) {
+      Alert.alert("Invalid %", "Percent discount cannot exceed 100.");
+      return;
+    }
+
+    setSavingCoupon(true);
+    try {
+      const res = await api.post(`/api/chefs/admin/${chefId}/coupons`, {
+        code,
+        type: newCouponType,
+        value,
+        description: newCouponDescription.trim(),
+        serviceType: newCouponServiceType,
+      });
+
+      if (res.data && res.data.success) {
+        const updatedCoupons = Array.isArray(res.data.coupons) ? res.data.coupons : [];
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setChefs((prev) =>
+          prev.map((c) =>
+            (c._id || c.id) === chefId ? { ...c, coupons: updatedCoupons } : c
+          )
+        );
+        setAddingCouponToChefId(null);
+        resetCouponForm();
+        Alert.alert("Success", "Coupon added successfully.");
+      } else {
+        throw new Error(res.data?.message || "Add failed");
+      }
+    } catch (err: any) {
+      console.log("Add coupon error:", err?.response?.data || err?.message || err);
+      Alert.alert(
+        "Error",
+        err?.response?.data?.message || "Failed to add coupon."
+      );
+    } finally {
+      setSavingCoupon(false);
+    }
+  };
+
+  const handleDeleteCoupon = (chefId: string, couponId: string, couponCode: string) => {
+    if (!couponId) {
+      Alert.alert("Error", "This coupon cannot be deleted (missing ID).");
+      return;
+    }
+    Alert.alert(
+      "Delete Coupon",
+      `Are you sure you want to delete coupon "${couponCode}"?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setDeletingCouponId(couponId);
+            try {
+              const res = await api.delete(
+                `/api/chefs/admin/${chefId}/coupons/${couponId}`
+              );
+              if (res.data && res.data.success) {
+                const updatedCoupons = Array.isArray(res.data.coupons)
+                  ? res.data.coupons
+                  : [];
+                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                setChefs((prev) =>
+                  prev.map((c) =>
+                    (c._id || c.id) === chefId ? { ...c, coupons: updatedCoupons } : c
+                  )
+                );
+              } else {
+                throw new Error(res.data?.message || "Delete failed");
+              }
+            } catch (err: any) {
+              console.log("Delete coupon error:", err?.response?.data || err?.message || err);
+              Alert.alert(
+                "Error",
+                err?.response?.data?.message || "Failed to delete coupon."
+              );
+            } finally {
+              setDeletingCouponId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const renderChefCard = (chef: any) => {
     const chefId = chef._id || chef.id;
     const isBlocked = chef.userIsChef === false;
@@ -347,9 +500,13 @@ export default function AdminAllChefsScreen() {
       chef.avatar ||
       "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200";
 
-    const couponsCount = Array.isArray(chef.coupons) ? chef.coupons.length : 0;
+    const coupons: any[] = Array.isArray(chef.coupons) ? chef.coupons : [];
+    const couponsCount = coupons.length;
     const reviewsCount = Number(chef.totalReviews) || 0;
     const rating = Number(chef.averageRating || chef.rating || 0).toFixed(1);
+
+    const isCouponsExpanded = expandedCouponsChefId === chefId;
+    const isAddingCoupon = addingCouponToChefId === chefId;
 
     return (
       <View
@@ -424,32 +581,39 @@ export default function AdminAllChefsScreen() {
           </View>
         </View>
 
-        <View style={styles.metaGrid}>
-          <View style={styles.metaCell}>
-            <Feather name="phone" size={11} color="#2563EB" />
-            <Text style={styles.metaCellLabel}>Phone</Text>
-            <Text style={styles.metaCellValue} numberOfLines={1}>
+        {/* ─── CONTACT DETAILS ─── */}
+        <View style={styles.metaRowsContainer}>
+          <View style={styles.metaRow}>
+            <View style={styles.metaRowIconWrap}>
+              <Feather name="phone" size={11} color="#2563EB" />
+            </View>
+            <Text style={styles.metaRowLabel}>PHONE</Text>
+            <Text style={styles.metaRowValue} numberOfLines={1}>
               {chef.phone || chef.userPhone || "—"}
             </Text>
           </View>
 
-          <View style={styles.metaDivider} />
+          <View style={styles.metaRowDivider} />
 
-          <View style={styles.metaCell}>
-            <Feather name="mail" size={11} color="#2563EB" />
-            <Text style={styles.metaCellLabel}>Email</Text>
-            <Text style={styles.metaCellValue} numberOfLines={1}>
+          <View style={styles.metaRow}>
+            <View style={styles.metaRowIconWrap}>
+              <Feather name="mail" size={11} color="#2563EB" />
+            </View>
+            <Text style={styles.metaRowLabel}>EMAIL</Text>
+            <Text style={styles.metaRowValue} numberOfLines={1}>
               {chef.userEmail || "—"}
             </Text>
           </View>
 
-          <View style={styles.metaDivider} />
+          <View style={styles.metaRowDivider} />
 
-          <View style={styles.metaCell}>
-            <MaterialIcons name="verified-user" size={12} color="#2563EB" />
-            <Text style={styles.metaCellLabel}>FSSAI</Text>
-            <Text style={styles.metaCellValue} numberOfLines={1}>
-              {chef.fssaiNo ? formatFssai(chef.fssaiNo) : "—"}
+          <View style={styles.metaRow}>
+            <View style={styles.metaRowIconWrap}>
+              <MaterialIcons name="verified-user" size={12} color="#2563EB" />
+            </View>
+            <Text style={styles.metaRowLabel}>FSSAI</Text>
+            <Text style={styles.metaRowValue} numberOfLines={1}>
+              {chef.fssaiNo || "—"}
             </Text>
           </View>
         </View>
@@ -496,6 +660,228 @@ export default function AdminAllChefsScreen() {
             </Text>
           </View>
         </View>
+
+        {/* ─── COUPONS MANAGEMENT SECTION ─── */}
+        <TouchableOpacity
+          style={styles.couponsToggleRow}
+          activeOpacity={0.85}
+          onPress={() => handleToggleCouponsSection(chefId)}
+        >
+          <View style={styles.couponsToggleLeft}>
+            <View style={styles.couponsToggleIconWrap}>
+              <Ionicons name="pricetag" size={12} color="#D97706" />
+            </View>
+            <Text style={styles.couponsToggleText}>
+              Coupons ({couponsCount})
+            </Text>
+          </View>
+          <Ionicons
+            name={isCouponsExpanded ? "chevron-up" : "chevron-down"}
+            size={16}
+            color="#64748B"
+          />
+        </TouchableOpacity>
+
+        {isCouponsExpanded && (
+          <View style={styles.couponsExpandedContainer}>
+            {coupons.length > 0 ? (
+              <View style={styles.couponListContainer}>
+                {coupons.map((coupon: any, idx: number) => {
+                  const couponId = String(coupon._id || "");
+                  const isDeletingCoupon = deletingCouponId === couponId;
+                  const serviceLabel =
+                    SERVICE_TYPE_LABEL[
+                      (coupon.serviceType as CouponServiceType) || "catering"
+                    ] || "Catering";
+                  const valueLabel =
+                    coupon.type === "percent"
+                      ? `${coupon.value}% OFF`
+                      : `₹${coupon.value} OFF`;
+
+                  return (
+                    <View key={couponId || `cp-${idx}`} style={styles.couponRow}>
+                      <View style={styles.couponRowLeft}>
+                        <View style={styles.couponCodeBadge}>
+                          <Text style={styles.couponCodeBadgeText}>
+                            {coupon.code}
+                          </Text>
+                        </View>
+                        <Text style={styles.couponValueText}>{valueLabel}</Text>
+                        <View style={styles.couponServiceChip}>
+                          <Text style={styles.couponServiceChipText}>
+                            {serviceLabel}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <TouchableOpacity
+                        style={styles.couponDeleteBtn}
+                        activeOpacity={0.85}
+                        disabled={isDeletingCoupon}
+                        onPress={() =>
+                          handleDeleteCoupon(chefId, couponId, coupon.code)
+                        }
+                      >
+                        {isDeletingCoupon ? (
+                          <ActivityIndicator size="small" color="#DC2626" />
+                        ) : (
+                          <Feather name="trash-2" size={13} color="#DC2626" />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <View style={styles.couponsEmptyBox}>
+                <Ionicons name="ticket-outline" size={20} color="#94A3B8" />
+                <Text style={styles.couponsEmptyText}>
+                  No coupons yet for this chef
+                </Text>
+              </View>
+            )}
+
+            {!isAddingCoupon ? (
+              <TouchableOpacity
+                style={styles.addCouponBtn}
+                activeOpacity={0.85}
+                onPress={() => handleOpenAddCouponForm(chefId)}
+              >
+                <Ionicons name="add" size={14} color="#FFFFFF" />
+                <Text style={styles.addCouponBtnText}>Add Coupon</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.newCouponForm}>
+                <Text style={styles.newCouponFormTitle}>New Coupon</Text>
+
+                <Text style={styles.newCouponFieldLabel}>Coupon Code</Text>
+                <TextInput
+                  style={styles.newCouponInput}
+                  value={newCouponCode}
+                  onChangeText={setNewCouponCode}
+                  placeholder="e.g. WELCOME10"
+                  placeholderTextColor="#94A3B8"
+                  autoCapitalize="characters"
+                />
+
+                <Text style={styles.newCouponFieldLabel}>Discount Type</Text>
+                <View style={styles.newCouponTypeRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.newCouponTypeBtn,
+                      newCouponType === "percent" && styles.newCouponTypeBtnActive,
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => setNewCouponType("percent")}
+                  >
+                    <Text
+                      style={[
+                        styles.newCouponTypeText,
+                        newCouponType === "percent" && styles.newCouponTypeTextActive,
+                      ]}
+                    >
+                      % Off
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.newCouponTypeBtn,
+                      newCouponType === "flat" && styles.newCouponTypeBtnActive,
+                    ]}
+                    activeOpacity={0.8}
+                    onPress={() => setNewCouponType("flat")}
+                  >
+                    <Text
+                      style={[
+                        styles.newCouponTypeText,
+                        newCouponType === "flat" && styles.newCouponTypeTextActive,
+                      ]}
+                    >
+                      ₹ Flat
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.newCouponFieldLabel}>
+                  {newCouponType === "percent" ? "Percent Value" : "Amount (₹)"}
+                </Text>
+                <TextInput
+                  style={styles.newCouponInput}
+                  value={newCouponValue}
+                  onChangeText={(t) => setNewCouponValue(t.replace(/[^0-9]/g, ""))}
+                  placeholder={newCouponType === "percent" ? "e.g. 10" : "e.g. 50"}
+                  placeholderTextColor="#94A3B8"
+                  keyboardType="numeric"
+                />
+
+                <Text style={styles.newCouponFieldLabel}>Service Type</Text>
+                <View style={styles.newCouponServiceRow}>
+                  {SERVICE_TYPE_OPTIONS.map((st) => {
+                    const isSelected = newCouponServiceType === st;
+                    return (
+                      <TouchableOpacity
+                        key={st}
+                        style={[
+                          styles.newCouponServiceBtn,
+                          isSelected && styles.newCouponServiceBtnActive,
+                        ]}
+                        activeOpacity={0.8}
+                        onPress={() => setNewCouponServiceType(st)}
+                      >
+                        <Text
+                          style={[
+                            styles.newCouponServiceText,
+                            isSelected && styles.newCouponServiceTextActive,
+                          ]}
+                        >
+                          {SERVICE_TYPE_LABEL[st]}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={styles.newCouponFieldLabel}>
+                  Description (optional)
+                </Text>
+                <TextInput
+                  style={styles.newCouponInput}
+                  value={newCouponDescription}
+                  onChangeText={setNewCouponDescription}
+                  placeholder="e.g. First order only"
+                  placeholderTextColor="#94A3B8"
+                />
+
+                <View style={styles.newCouponActionsRow}>
+                  <TouchableOpacity
+                    style={styles.newCouponCancelBtn}
+                    activeOpacity={0.85}
+                    disabled={savingCoupon}
+                    onPress={handleCancelAddCoupon}
+                  >
+                    <Text style={styles.newCouponCancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.newCouponSaveBtn}
+                    activeOpacity={0.9}
+                    disabled={savingCoupon}
+                    onPress={() => handleSaveNewCoupon(chefId)}
+                  >
+                    {savingCoupon ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
+                        <Text style={styles.newCouponSaveBtnText}>Save Coupon</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
 
         <View style={styles.actionsRow}>
           <TouchableOpacity
@@ -599,7 +985,6 @@ export default function AdminAllChefsScreen() {
       </LinearGradient>
 
       <View style={styles.bodyCard}>
-        {/* ─── SEARCH + ADD ─── */}
         <View style={styles.searchWrapper}>
           <View style={styles.searchBox}>
             <Ionicons name="search" size={15} color="#2563EB" />
@@ -627,10 +1012,6 @@ export default function AdminAllChefsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ─── FILTER TABS (FIXED HEIGHT WRAPPER) ─── */}
-        {/* The wrapper pins a fixed 42px height and the ScrollView */}
-        {/* uses flexGrow: 0 so the pills hug their content instead  */}
-        {/* of stretching to fill the parent's cross-axis height.    */}
         <View style={styles.filterTabsWrapper}>
           <ScrollView
             horizontal
@@ -1019,7 +1400,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
 
-  /* ─── SEARCH + ADD ─── */
   searchWrapper: {
     flexDirection: "row",
     alignItems: "center",
@@ -1068,17 +1448,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  /* ─── FILTER TABS (fixed-height wrapper) ─── */
-  // Outer wrapper pins the cross-axis height to 42px. Without this,
-  // a horizontal ScrollView inside a flex parent stretches to fill
-  // the available vertical space, turning compact pills into tall
-  // boxes with vertically-centered text — the exact bug we just saw.
   filterTabsWrapper: {
     height: 42,
     justifyContent: "center",
   },
-  // flexGrow: 0 tells the ScrollView NOT to expand along the scroll
-  // axis either, keeping it snugly wrapped around its content.
   filterTabsScrollView: {
     flexGrow: 0,
   },
@@ -1097,8 +1470,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#E2E8F0",
-    // Explicit height so the pill never grows or shrinks regardless
-    // of the container — keeps every pill identical in size.
     height: 32,
   },
   filterTabPillActive: {
@@ -1324,37 +1695,47 @@ const styles = StyleSheet.create({
     marginVertical: -4,
   },
 
-  metaGrid: {
-    flexDirection: "row",
-    alignItems: "center",
+  metaRowsContainer: {
     backgroundColor: "#F8FAFC",
     borderRadius: 10,
     marginTop: 10,
-    paddingVertical: 8,
+    paddingVertical: 2,
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
-  metaCell: {
-    flex: 1,
+  metaRow: {
+    flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 4,
-    gap: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
   },
-  metaCellLabel: {
-    fontSize: 8.5,
+  metaRowIconWrap: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    backgroundColor: "#EFF6FF",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
+  metaRowLabel: {
+    fontSize: 9.5,
     fontWeight: "800",
     color: "#64748B",
-    letterSpacing: 0.4,
+    letterSpacing: 0.5,
+    width: 44,
   },
-  metaCellValue: {
-    fontSize: 10.5,
+  metaRowValue: {
+    flex: 1,
+    fontSize: 12,
     fontWeight: "700",
     color: "#0F172A",
+    letterSpacing: -0.1,
   },
-  metaDivider: {
-    width: 1,
-    height: 26,
+  metaRowDivider: {
+    height: 1,
     backgroundColor: "#E2E8F0",
+    marginHorizontal: 10,
   },
 
   statsStripRow: {
@@ -1387,6 +1768,266 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
+  },
+
+  /* ─── COUPONS TOGGLE ROW ─── */
+  couponsToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#FFFBEB",
+    borderRadius: 10,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  couponsToggleLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  couponsToggleIconWrap: {
+    width: 22,
+    height: 22,
+    borderRadius: 7,
+    backgroundColor: "#FEF3C7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  couponsToggleText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#92400E",
+  },
+
+  /* ─── COUPONS EXPANDED CONTAINER ─── */
+  couponsExpandedContainer: {
+    marginTop: 8,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  couponListContainer: {
+    gap: 6,
+  },
+  couponRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  couponRowLeft: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    flexWrap: "wrap",
+  },
+  couponCodeBadge: {
+    backgroundColor: "#166534",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  couponCodeBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 10.5,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+  },
+  couponValueText: {
+    fontSize: 12.5,
+    fontWeight: "900",
+    color: "#0F172A",
+  },
+  couponServiceChip: {
+    backgroundColor: "#F0FDF4",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+  },
+  couponServiceChipText: {
+    fontSize: 9.5,
+    fontWeight: "800",
+    color: "#166534",
+  },
+  couponDeleteBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    backgroundColor: "#FEF2F2",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    marginLeft: 6,
+  },
+
+  couponsEmptyBox: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 16,
+    gap: 6,
+  },
+  couponsEmptyText: {
+    fontSize: 11.5,
+    fontWeight: "600",
+    color: "#94A3B8",
+  },
+
+  addCouponBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    backgroundColor: "#166534",
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginTop: 8,
+  },
+  addCouponBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+
+  /* ─── NEW COUPON FORM ─── */
+  newCouponForm: {
+    marginTop: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  newCouponFormTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#0F172A",
+    marginBottom: 8,
+  },
+  newCouponFieldLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#1E293B",
+    marginBottom: 4,
+    marginTop: 2,
+  },
+  newCouponInput: {
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    fontSize: 13,
+    color: "#0F172A",
+    fontWeight: "600",
+  },
+  newCouponTypeRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 10,
+  },
+  newCouponTypeBtn: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  newCouponTypeBtnActive: {
+    backgroundColor: "#166534",
+    borderColor: "#166534",
+  },
+  newCouponTypeText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#64748B",
+  },
+  newCouponTypeTextActive: {
+    color: "#FFFFFF",
+  },
+  newCouponServiceRow: {
+    flexDirection: "row",
+    gap: 6,
+    flexWrap: "wrap",
+    marginBottom: 10,
+  },
+  newCouponServiceBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 9,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  newCouponServiceBtnActive: {
+    backgroundColor: "#166534",
+    borderColor: "#166534",
+  },
+  newCouponServiceText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#64748B",
+  },
+  newCouponServiceTextActive: {
+    color: "#FFFFFF",
+  },
+  newCouponActionsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 4,
+  },
+  newCouponCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  newCouponCancelBtnText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#475569",
+  },
+  newCouponSaveBtn: {
+    flex: 1.4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: "#166534",
+    shadowColor: "#166534",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.22,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  newCouponSaveBtnText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#FFFFFF",
   },
 
   actionsRow: {

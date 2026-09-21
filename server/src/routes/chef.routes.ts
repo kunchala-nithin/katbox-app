@@ -10,11 +10,14 @@ import {
   applyChefCoupon,
   deleteChefImage,
   protect,
-  // ✅ NEW: admin-only controller imports
+  // Admin-only controller imports
   getAllChefsForAdmin,
   toggleChefBlockStatus,
   updateChefByAdmin,
   deleteChefByAdmin,
+  // ✅ NEW: coupon management
+  addChefCouponByAdmin,
+  deleteChefCouponByAdmin,
 } from "../controllers/chef.controller";
 
 const router = express.Router();
@@ -58,16 +61,7 @@ router.post("/delete-image", protect, deleteChefImage);
 router.get("/", getChefs);
 
 // ============================================================
-// ✅ ADMIN ROUTES (must be declared BEFORE /:chefId/*)
-// ============================================================
-// Order matters here:
-//   1. /admin/all             → literal path, safe
-//   2. /admin/:chefId/toggle-block → 3 segments, unambiguous
-//   3. /admin/:chefId          → 2 segments, matches only admin edit
-//   4. /admin/:chefId (DELETE) → 2 segments, matches only admin delete
-//
-// None of these collide with /:chefId/coupons or /:chefId/reviews
-// because those require a literal second segment.
+// ✅ ADMIN ROUTES (declared BEFORE /:chefId/* to avoid collisions)
 // ============================================================
 
 // Admin: fetch EVERY chef (including blocked) with userIsChef/email/phone
@@ -79,8 +73,12 @@ router.patch("/admin/:chefId/toggle-block", protect, toggleChefBlockStatus);
 // Admin: full profile edit
 router.patch("/admin/:chefId", protect, updateChefByAdmin);
 
-// Admin: permanent delete (runs full Cloudinary + menu cleanup)
+// Admin: permanent delete
 router.delete("/admin/:chefId", protect, deleteChefByAdmin);
+
+// ✅ NEW: Admin coupon management
+router.post("/admin/:chefId/coupons", protect, addChefCouponByAdmin);
+router.delete("/admin/:chefId/coupons/:couponId", protect, deleteChefCouponByAdmin);
 
 // ============================================================
 // CHEF-LEVEL PUBLIC DATA
