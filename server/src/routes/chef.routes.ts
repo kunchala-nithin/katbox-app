@@ -13,6 +13,8 @@ import {
   // ✅ NEW: admin-only controller imports
   getAllChefsForAdmin,
   toggleChefBlockStatus,
+  updateChefByAdmin,
+  deleteChefByAdmin,
 } from "../controllers/chef.controller";
 
 const router = express.Router();
@@ -20,18 +22,12 @@ const router = express.Router();
 // ============================================================
 // MULTER — in-memory storage
 // ============================================================
-// Files are buffered in memory and then streamed straight to
-// Cloudinary by the controller. This avoids writing to disk
-// on the server (which is important for Render / Heroku).
-// ============================================================
 const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
   limits: {
-    // 8 MB per file — generous enough for banners
     fileSize: 8 * 1024 * 1024,
-    // 1 avatar + up to 20 banners
     files: 21,
   },
 });
@@ -40,8 +36,6 @@ const upload = multer({
 // PUBLIC / CHEF-SELF ROUTES
 // ============================================================
 
-// Create or update the logged-in chef's own profile
-// (multipart/form-data with optional avatar + banners)
 router.post(
   "/",
   protect,
@@ -52,55 +46,50 @@ router.post(
   createOrUpdateChef
 );
 
-// Get the logged-in chef's own profile
 router.get("/my-chef", protect, getMyChef);
 
-// Permanently delete the logged-in chef + ALL related data
 router.delete("/my-chef", protect, deleteChef);
 
-// Delete a single Cloudinary image by publicId
 router.post("/delete-image", protect, deleteChefImage);
 
 // ============================================================
 // CUSTOMER-FACING LIST
 // ============================================================
-// Returns ALL non-blocked chefs.
-// Chefs whose linked User.isChef === false are HIDDEN here.
-// Used by: Home.tsx, AllChefCards.tsx, ChefInfoScreen.tsx, etc.
-// ============================================================
 router.get("/", getChefs);
 
 // ============================================================
-// ✅ NEW: ADMIN ROUTES
+// ✅ ADMIN ROUTES (must be declared BEFORE /:chefId/*)
 // ============================================================
-// Both routes are protected by the same `protect` middleware
-// used elsewhere. If you later add a dedicated admin guard
-// (e.g. `requireAdmin`), insert it here:
+// Order matters here:
+//   1. /admin/all             → literal path, safe
+//   2. /admin/:chefId/toggle-block → 3 segments, unambiguous
+//   3. /admin/:chefId          → 2 segments, matches only admin edit
+//   4. /admin/:chefId (DELETE) → 2 segments, matches only admin delete
 //
-//   import { requireAdmin } from "../middleware/admin.middleware";
-//   router.get("/admin/all", protect, requireAdmin, getAllChefsForAdmin);
-//
+// None of these collide with /:chefId/coupons or /:chefId/reviews
+// because those require a literal second segment.
 // ============================================================
 
-// Admin: fetch EVERY chef including blocked ones, with
-// `userIsChef`, `userEmail`, `userPhone` attached.
+// Admin: fetch EVERY chef (including blocked) with userIsChef/email/phone
 router.get("/admin/all", protect, getAllChefsForAdmin);
 
-// Admin: toggle (or force-set) the linked User's isChef flag.
-// Body (optional): { isChef: boolean }
+// Admin: block / unblock a chef (toggles User.isChef)
 router.patch("/admin/:chefId/toggle-block", protect, toggleChefBlockStatus);
+
+// Admin: full profile edit
+router.patch("/admin/:chefId", protect, updateChefByAdmin);
+
+// Admin: permanent delete (runs full Cloudinary + menu cleanup)
+router.delete("/admin/:chefId", protect, deleteChefByAdmin);
 
 // ============================================================
 // CHEF-LEVEL PUBLIC DATA
 // ============================================================
 
-// Get a specific chef's active coupons
 router.get("/:chefId/coupons", getChefCoupons);
 
-// Get a specific chef's reviews + rating breakdown
 router.get("/:chefId/reviews", getChefReviews);
 
-// Apply a specific chef's coupon (with service-type guard)
 router.post("/apply-coupon", applyChefCoupon);
 
 export default router;

@@ -34,7 +34,6 @@ import api from "@/src/lib/api";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
-// Android LayoutAnimation enable (same pattern as the rest of the app)
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
@@ -43,16 +42,6 @@ type AdminFilterTab = "All" | "Active" | "Blocked" | "Offline";
 
 const FILTER_TABS: AdminFilterTab[] = ["All", "Active", "Blocked", "Offline"];
 
-// ─── Small helper: safe initials for avatar fallback ───
-const getInitials = (name: string): string => {
-  const clean = (name || "").trim();
-  if (!clean) return "C";
-  const parts = clean.split(/\s+/);
-  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-};
-
-// ─── Small helper: mask a long FSSAI number for compact display ───
 const formatFssai = (value: any): string => {
   if (!value) return "";
   const s = String(value).trim();
@@ -65,22 +54,18 @@ export default function AdminAllChefsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  // ─── Data state ───
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [chefs, setChefs] = useState<any[]>([]);
   const [filterTab, setFilterTab] = useState<AdminFilterTab>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // ─── Per-chef action loading (block toggle in-flight) ───
   const [togglingChefId, setTogglingChefId] = useState<string | null>(null);
 
-  // ─── Edit modal state ───
   const [showEditModal, setShowEditModal] = useState<boolean>(false);
   const [editingChef, setEditingChef] = useState<any>(null);
   const [savingEdit, setSavingEdit] = useState<boolean>(false);
 
-  // ─── Edit form fields ───
   const [editName, setEditName] = useState<string>("");
   const [editExp, setEditExp] = useState<string>("");
   const [editPhone, setEditPhone] = useState<string>("");
@@ -92,15 +77,10 @@ export default function AdminAllChefsScreen() {
   const [editFssaiNo, setEditFssaiNo] = useState<string>("");
   const [editIsAvailable, setEditIsAvailable] = useState<boolean>(true);
 
-  // ─── Delete in-flight guard ───
   const [deletingChefId, setDeletingChefId] = useState<string | null>(null);
 
-  // ─── Avoid overlapping fetches on rapid focus ───
   const isFetchingRef = useRef<boolean>(false);
 
-  // ============================================================
-  // FETCH: ALL CHEFS (ADMIN VIEW)
-  // ============================================================
   const fetchAllChefs = async (silent: boolean = false) => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
@@ -129,7 +109,6 @@ export default function AdminAllChefsScreen() {
     }
   };
 
-  // ─── Initial load + focus reload ───
   useFocusEffect(
     useCallback(() => {
       fetchAllChefs(true);
@@ -140,20 +119,15 @@ export default function AdminAllChefsScreen() {
     fetchAllChefs();
   }, []);
 
-  // ─── Pull-to-refresh ───
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchAllChefs(true);
   }, []);
 
-  // ============================================================
-  // FILTERS + SEARCH
-  // ============================================================
   const filteredChefs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
     return chefs.filter((chef) => {
-      // 1. Tab filter
       const isBlocked = chef.userIsChef === false;
       const isOffline = chef.isAvailable === false;
 
@@ -161,7 +135,6 @@ export default function AdminAllChefsScreen() {
       if (filterTab === "Blocked" && !isBlocked) return false;
       if (filterTab === "Offline" && !isOffline) return false;
 
-      // 2. Search filter
       if (q) {
         const haystack = [
           chef.name,
@@ -190,16 +163,12 @@ export default function AdminAllChefsScreen() {
     return { total, active, blocked, offline };
   }, [chefs]);
 
-  // ============================================================
-  // BLOCK / UNBLOCK TOGGLE
-  // ============================================================
   const handleToggleBlock = async (chef: any, nextValue: boolean) => {
     const chefId = chef?._id || chef?.id;
     if (!chefId) return;
 
     if (togglingChefId === chefId) return;
 
-    // Optimistic UI update
     const previousValue = chef.userIsChef !== false;
     setTogglingChefId(chefId);
 
@@ -217,7 +186,6 @@ export default function AdminAllChefsScreen() {
       });
 
       if (res.data && res.data.success) {
-        // Reconcile with server response
         const serverValue = res.data.isChef !== false;
         setChefs((prev) =>
           prev.map((c) =>
@@ -230,7 +198,6 @@ export default function AdminAllChefsScreen() {
     } catch (err: any) {
       console.log("Toggle block error:", err?.response?.data || err?.message || err);
 
-      // Roll back on failure
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setChefs((prev) =>
         prev.map((c) =>
@@ -248,9 +215,6 @@ export default function AdminAllChefsScreen() {
     }
   };
 
-  // ============================================================
-  // EDIT MODAL
-  // ============================================================
   const openEditModal = (chef: any) => {
     setEditingChef(chef);
     setEditName(chef.name || "");
@@ -329,9 +293,6 @@ export default function AdminAllChefsScreen() {
     }
   };
 
-  // ============================================================
-  // DELETE CHEF
-  // ============================================================
   const handleDeleteChef = (chef: any) => {
     const chefId = chef?._id || chef?.id;
     if (!chefId) return;
@@ -371,16 +332,10 @@ export default function AdminAllChefsScreen() {
     );
   };
 
-  // ============================================================
-  // ADD NEW CHEF
-  // ============================================================
   const handleAddNewChef = () => {
     router.push("/chefManagement/add-chefs");
   };
 
-  // ============================================================
-  // RENDER: CHEF CARD
-  // ============================================================
   const renderChefCard = (chef: any) => {
     const chefId = chef._id || chef.id;
     const isBlocked = chef.userIsChef === false;
@@ -404,26 +359,25 @@ export default function AdminAllChefsScreen() {
           isBlocked && styles.chefCardBlocked,
         ]}
       >
-        {/* ─── TOP ROW: Avatar + Name + Block Switch ─── */}
         <View style={styles.chefCardTopRow}>
           <View style={styles.avatarWrapper}>
             <Image source={{ uri: avatarUri }} style={styles.avatarImg} />
             {isOffline && !isBlocked && <View style={styles.avatarOfflineDot} />}
           </View>
 
-          <View style={{ flex: 1, marginLeft: 12, marginRight: 8 }}>
+          <View style={styles.identityCol}>
             <View style={styles.nameRow}>
               <Text style={styles.chefNameText} numberOfLines={1}>
                 {chef.name || "Chef"}
               </Text>
               {isBlocked ? (
                 <View style={styles.blockedPill}>
-                  <Ionicons name="ban" size={10} color="#DC2626" />
+                  <Ionicons name="ban" size={9} color="#DC2626" />
                   <Text style={styles.blockedPillText}>Blocked</Text>
                 </View>
               ) : (
                 <View style={styles.activePill}>
-                  <Ionicons name="checkmark-circle" size={10} color="#2563EB" />
+                  <Ionicons name="checkmark-circle" size={9} color="#2563EB" />
                   <Text style={styles.activePillText}>Active</Text>
                 </View>
               )}
@@ -434,19 +388,18 @@ export default function AdminAllChefsScreen() {
             </Text>
 
             <View style={styles.metaInlineRow}>
-              <Ionicons name="location-outline" size={11} color="#64748B" />
+              <Ionicons name="location-outline" size={10} color="#64748B" />
               <Text style={styles.metaInlineText} numberOfLines={1}>
                 {chef.location || "Location not set"}
               </Text>
               <Text style={styles.metaDot}>•</Text>
-              <Feather name="award" size={11} color="#64748B" />
+              <Feather name="award" size={10} color="#64748B" />
               <Text style={styles.metaInlineText} numberOfLines={1}>
                 {chef.exp ? `${chef.exp} yrs` : "— yrs"}
               </Text>
             </View>
           </View>
 
-          {/* ─── BLOCK / UNBLOCK SWITCH ─── */}
           <View style={styles.blockSwitchCol}>
             <Text
               style={[
@@ -471,10 +424,9 @@ export default function AdminAllChefsScreen() {
           </View>
         </View>
 
-        {/* ─── META GRID ─── */}
         <View style={styles.metaGrid}>
           <View style={styles.metaCell}>
-            <Feather name="phone" size={12} color="#2563EB" />
+            <Feather name="phone" size={11} color="#2563EB" />
             <Text style={styles.metaCellLabel}>Phone</Text>
             <Text style={styles.metaCellValue} numberOfLines={1}>
               {chef.phone || chef.userPhone || "—"}
@@ -484,7 +436,7 @@ export default function AdminAllChefsScreen() {
           <View style={styles.metaDivider} />
 
           <View style={styles.metaCell}>
-            <Feather name="mail" size={12} color="#2563EB" />
+            <Feather name="mail" size={11} color="#2563EB" />
             <Text style={styles.metaCellLabel}>Email</Text>
             <Text style={styles.metaCellValue} numberOfLines={1}>
               {chef.userEmail || "—"}
@@ -494,7 +446,7 @@ export default function AdminAllChefsScreen() {
           <View style={styles.metaDivider} />
 
           <View style={styles.metaCell}>
-            <MaterialIcons name="verified-user" size={13} color="#2563EB" />
+            <MaterialIcons name="verified-user" size={12} color="#2563EB" />
             <Text style={styles.metaCellLabel}>FSSAI</Text>
             <Text style={styles.metaCellValue} numberOfLines={1}>
               {chef.fssaiNo ? formatFssai(chef.fssaiNo) : "—"}
@@ -502,22 +454,21 @@ export default function AdminAllChefsScreen() {
           </View>
         </View>
 
-        {/* ─── STATS STRIP ─── */}
         <View style={styles.statsStripRow}>
           <View style={styles.statChip}>
-            <Ionicons name="star" size={11} color="#F59E0B" />
+            <Ionicons name="star" size={10} color="#F59E0B" />
             <Text style={styles.statChipText}>{rating}</Text>
           </View>
 
           <View style={styles.statChip}>
-            <Ionicons name="chatbubble-outline" size={11} color="#2563EB" />
+            <Ionicons name="chatbubble-outline" size={10} color="#2563EB" />
             <Text style={styles.statChipText}>
               {reviewsCount} review{reviewsCount === 1 ? "" : "s"}
             </Text>
           </View>
 
           <View style={styles.statChip}>
-            <Ionicons name="pricetag-outline" size={11} color="#2563EB" />
+            <Ionicons name="pricetag-outline" size={10} color="#2563EB" />
             <Text style={styles.statChipText}>
               {couponsCount} coupon{couponsCount === 1 ? "" : "s"}
             </Text>
@@ -546,7 +497,6 @@ export default function AdminAllChefsScreen() {
           </View>
         </View>
 
-        {/* ─── ACTIONS ROW ─── */}
         <View style={styles.actionsRow}>
           <TouchableOpacity
             style={[styles.actionBtn, styles.actionBtnEdit]}
@@ -554,7 +504,7 @@ export default function AdminAllChefsScreen() {
             disabled={isDeleting}
             onPress={() => openEditModal(chef)}
           >
-            <Feather name="edit-2" size={13} color="#2563EB" />
+            <Feather name="edit-2" size={12} color="#2563EB" />
             <Text style={styles.actionBtnEditText}>Edit</Text>
           </TouchableOpacity>
 
@@ -568,7 +518,7 @@ export default function AdminAllChefsScreen() {
               <ActivityIndicator size="small" color="#DC2626" />
             ) : (
               <>
-                <Feather name="trash-2" size={13} color="#DC2626" />
+                <Feather name="trash-2" size={12} color="#DC2626" />
                 <Text style={styles.actionBtnDeleteText}>Delete</Text>
               </>
             )}
@@ -578,15 +528,11 @@ export default function AdminAllChefsScreen() {
     );
   };
 
-  // ============================================================
-  // MAIN RENDER
-  // ============================================================
   return (
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
 
-      {/* ─── ADMIN HEADER ─── */}
       <LinearGradient colors={["#0F172A", "#1E293B", "#0F172A"]} style={styles.darkHeader}>
         <SafeAreaView edges={["top"]}>
           <View style={styles.headerInner}>
@@ -597,7 +543,7 @@ export default function AdminAllChefsScreen() {
                 onPress={() => router.back()}
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               >
-                <Feather name="chevron-left" size={22} color="#FFFFFF" />
+                <Feather name="chevron-left" size={20} color="#FFFFFF" />
               </TouchableOpacity>
 
               <View style={styles.headerBrandCol}>
@@ -617,11 +563,10 @@ export default function AdminAllChefsScreen() {
                 activeOpacity={0.8}
                 onPress={() => fetchAllChefs()}
               >
-                <Ionicons name="refresh-outline" size={20} color="#FFFFFF" />
+                <Ionicons name="refresh-outline" size={18} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
 
-            {/* ─── STATS STRIP ─── */}
             <View style={styles.statsBanner}>
               <View style={styles.statsBannerItem}>
                 <Text style={styles.statsBannerValue}>{stats.total}</Text>
@@ -629,7 +574,9 @@ export default function AdminAllChefsScreen() {
               </View>
               <View style={styles.statsBannerDivider} />
               <View style={styles.statsBannerItem}>
-                <Text style={styles.statsBannerValue}>{stats.active}</Text>
+                <Text style={[styles.statsBannerValue, { color: "#60A5FA" }]}>
+                  {stats.active}
+                </Text>
                 <Text style={styles.statsBannerLabel}>Active</Text>
               </View>
               <View style={styles.statsBannerDivider} />
@@ -651,22 +598,21 @@ export default function AdminAllChefsScreen() {
         </SafeAreaView>
       </LinearGradient>
 
-      {/* ─── BODY ─── */}
       <View style={styles.bodyCard}>
-        {/* ─── SEARCH ─── */}
+        {/* ─── SEARCH + ADD ─── */}
         <View style={styles.searchWrapper}>
           <View style={styles.searchBox}>
-            <Ionicons name="search" size={16} color="#2563EB" />
+            <Ionicons name="search" size={15} color="#2563EB" />
             <TextInput
               style={styles.searchInput}
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder="Search by name, phone, email, FSSAI..."
+              placeholder="Search name, phone, email..."
               placeholderTextColor="#94A3B8"
             />
             {searchQuery.length > 0 && (
               <TouchableOpacity onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                <Ionicons name="close-circle" size={15} color="#94A3B8" />
               </TouchableOpacity>
             )}
           </View>
@@ -676,51 +622,56 @@ export default function AdminAllChefsScreen() {
             activeOpacity={0.85}
             onPress={handleAddNewChef}
           >
-            <Ionicons name="add" size={18} color="#FFFFFF" />
-            <Text style={styles.addChefBtnText}>Add Chef</Text>
+            <Ionicons name="add" size={16} color="#FFFFFF" />
+            <Text style={styles.addChefBtnText}>Add</Text>
           </TouchableOpacity>
         </View>
 
-        {/* ─── FILTER TABS ─── */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterTabsScroll}
-        >
-          {FILTER_TABS.map((tab) => {
-            const isActive = filterTab === tab;
-            const countForTab =
-              tab === "All"
-                ? stats.total
-                : tab === "Active"
-                ? stats.active
-                : tab === "Blocked"
-                ? stats.blocked
-                : stats.offline;
-            return (
-              <TouchableOpacity
-                key={tab}
-                style={[styles.filterTabPill, isActive && styles.filterTabPillActive]}
-                activeOpacity={0.85}
-                onPress={() => {
-                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                  setFilterTab(tab);
-                }}
-              >
-                <Text style={[styles.filterTabText, isActive && styles.filterTabTextActive]}>
-                  {tab}
-                </Text>
-                <View style={[styles.filterTabBadge, isActive && styles.filterTabBadgeActive]}>
-                  <Text style={[styles.filterTabBadgeText, isActive && styles.filterTabBadgeTextActive]}>
-                    {countForTab}
+        {/* ─── FILTER TABS (FIXED HEIGHT WRAPPER) ─── */}
+        {/* The wrapper pins a fixed 42px height and the ScrollView */}
+        {/* uses flexGrow: 0 so the pills hug their content instead  */}
+        {/* of stretching to fill the parent's cross-axis height.    */}
+        <View style={styles.filterTabsWrapper}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterTabsScrollView}
+            contentContainerStyle={styles.filterTabsScroll}
+          >
+            {FILTER_TABS.map((tab) => {
+              const isActive = filterTab === tab;
+              const countForTab =
+                tab === "All"
+                  ? stats.total
+                  : tab === "Active"
+                  ? stats.active
+                  : tab === "Blocked"
+                  ? stats.blocked
+                  : stats.offline;
+              return (
+                <TouchableOpacity
+                  key={tab}
+                  style={[styles.filterTabPill, isActive && styles.filterTabPillActive]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                    setFilterTab(tab);
+                  }}
+                >
+                  <Text style={[styles.filterTabText, isActive && styles.filterTabTextActive]}>
+                    {tab}
                   </Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+                  <View style={[styles.filterTabBadge, isActive && styles.filterTabBadgeActive]}>
+                    <Text style={[styles.filterTabBadgeText, isActive && styles.filterTabBadgeTextActive]}>
+                      {countForTab}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
 
-        {/* ─── LIST ─── */}
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#2563EB" />
@@ -745,7 +696,7 @@ export default function AdminAllChefsScreen() {
             {filteredChefs.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <View style={styles.emptyIconCircle}>
-                  <MaterialCommunityIcons name="chef-hat" size={40} color="#2563EB" />
+                  <MaterialCommunityIcons name="chef-hat" size={36} color="#2563EB" />
                 </View>
                 <Text style={styles.emptyTitle}>
                   {searchQuery.trim() || filterTab !== "All"
@@ -765,7 +716,6 @@ export default function AdminAllChefsScreen() {
         )}
       </View>
 
-      {/* ─── EDIT CHEF MODAL ─── */}
       <Modal
         visible={showEditModal}
         transparent
@@ -952,7 +902,7 @@ export default function AdminAllChefsScreen() {
                     <ActivityIndicator size="small" color="#FFFFFF" />
                   ) : (
                     <>
-                      <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" />
+                      <Ionicons name="checkmark-circle" size={15} color="#FFFFFF" />
                       <Text style={styles.editSaveBtnText}>Save Changes</Text>
                     </>
                   )}
@@ -972,104 +922,100 @@ const styles = StyleSheet.create({
     backgroundColor: "#0F172A",
   },
 
-  /* ─── DARK HEADER ─── */
-  darkHeader: { paddingBottom: 16 },
-  headerInner: { paddingHorizontal: 18, paddingTop: 6 },
+  darkHeader: { paddingBottom: 12 },
+  headerInner: { paddingHorizontal: 16, paddingTop: 4 },
 
   headerTopRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    marginBottom: 10,
   },
   headerBackBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.1)",
     marginRight: 10,
-    marginTop: 4,
   },
   headerBrandCol: { flex: 1 },
-  eyebrowRow: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
+  eyebrowRow: { flexDirection: "row", alignItems: "center", marginBottom: 3 },
   liveDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: "#3B82F6",
-    marginRight: 6,
+    marginRight: 5,
   },
   headerEyebrow: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: "800",
     color: "#93C5FD",
-    letterSpacing: 1.2,
+    letterSpacing: 1,
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: "900",
     color: "#FFFFFF",
     letterSpacing: -0.4,
   },
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: "#94A3B8",
     marginTop: 2,
     fontWeight: "500",
   },
   headerSubtitleBold: { color: "#60A5FA", fontWeight: "800" },
   headerIconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "rgba(255, 255, 255, 0.08)",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.1)",
-    marginLeft: 10,
-    marginTop: 4,
+    marginLeft: 8,
   },
 
   statsBanner: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(255, 255, 255, 0.05)",
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.08)",
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   statsBannerItem: { flex: 1, alignItems: "center" },
   statsBannerValue: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "900",
     color: "#FFFFFF",
     letterSpacing: -0.3,
   },
   statsBannerLabel: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: "#94A3B8",
     fontWeight: "700",
-    marginTop: 2,
-    letterSpacing: 0.4,
+    marginTop: 1,
+    letterSpacing: 0.3,
   },
   statsBannerDivider: {
     width: 1,
-    height: 28,
+    height: 24,
     backgroundColor: "rgba(255, 255, 255, 0.1)",
   },
 
-  /* ─── BODY ─── */
   bodyCard: {
     flex: 1,
     backgroundColor: "#F8FAFC",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     overflow: "hidden",
   },
 
@@ -1077,26 +1023,26 @@ const styles = StyleSheet.create({
   searchWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 10,
-    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 8,
+    gap: 8,
   },
   searchBox: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    height: 44,
+    borderRadius: 12,
+    paddingHorizontal: 11,
+    height: 40,
     borderWidth: 1,
     borderColor: "#E2E8F0",
-    gap: 8,
+    gap: 7,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: "600",
     color: "#0F172A",
     paddingVertical: 0,
@@ -1104,78 +1050,96 @@ const styles = StyleSheet.create({
   addChefBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 4,
     backgroundColor: "#2563EB",
-    paddingHorizontal: 14,
-    height: 44,
-    borderRadius: 14,
+    paddingHorizontal: 12,
+    height: 40,
+    borderRadius: 12,
     shadowColor: "#2563EB",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.22,
+    shadowRadius: 5,
     elevation: 3,
   },
   addChefBtnText: {
     color: "#FFFFFF",
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0.2,
   },
 
-  /* ─── FILTER TABS ─── */
+  /* ─── FILTER TABS (fixed-height wrapper) ─── */
+  // Outer wrapper pins the cross-axis height to 42px. Without this,
+  // a horizontal ScrollView inside a flex parent stretches to fill
+  // the available vertical space, turning compact pills into tall
+  // boxes with vertically-centered text — the exact bug we just saw.
+  filterTabsWrapper: {
+    height: 42,
+    justifyContent: "center",
+  },
+  // flexGrow: 0 tells the ScrollView NOT to expand along the scroll
+  // axis either, keeping it snugly wrapped around its content.
+  filterTabsScrollView: {
+    flexGrow: 0,
+  },
   filterTabsScroll: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    gap: 7,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    gap: 6,
   },
   filterTabPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 12,
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "#E2E8F0",
+    // Explicit height so the pill never grows or shrinks regardless
+    // of the container — keeps every pill identical in size.
+    height: 32,
   },
   filterTabPillActive: {
     backgroundColor: "#2563EB",
     borderColor: "#2563EB",
   },
   filterTabText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: "700",
     color: "#334155",
+    lineHeight: 14,
   },
   filterTabTextActive: {
     color: "#FFFFFF",
   },
   filterTabBadge: {
     backgroundColor: "#F1F5F9",
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 8,
-    minWidth: 20,
+    paddingHorizontal: 5,
+    borderRadius: 6,
+    minWidth: 16,
+    height: 16,
     alignItems: "center",
+    justifyContent: "center",
   },
   filterTabBadgeActive: {
     backgroundColor: "rgba(255, 255, 255, 0.25)",
   },
   filterTabBadgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: "800",
     color: "#475569",
+    lineHeight: 11,
   },
   filterTabBadgeTextActive: {
     color: "#FFFFFF",
   },
 
-  /* ─── LIST ─── */
   listScroll: { flex: 1 },
   listContent: {
-    paddingHorizontal: 16,
-    paddingTop: 2,
+    paddingHorizontal: 14,
+    paddingTop: 6,
   },
 
   loadingContainer: {
@@ -1186,7 +1150,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 12,
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: "700",
     color: "#475569",
   },
@@ -1198,42 +1162,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 30,
   },
   emptyIconCircle: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: "#DBEAFE",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: "#BFDBFE",
   },
   emptyTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "800",
     color: "#0F172A",
-    marginBottom: 6,
+    marginBottom: 5,
   },
   emptySubtitle: {
-    fontSize: 12.5,
+    fontSize: 12,
     color: "#64748B",
     textAlign: "center",
     fontWeight: "500",
-    lineHeight: 18,
+    lineHeight: 17,
   },
 
-  /* ─── CHEF CARD ─── */
   chefCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 18,
+    padding: 12,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: "#E2E8F0",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
     elevation: 2,
   },
   chefCardBlocked: {
@@ -1246,9 +1209,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   avatarWrapper: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: "#F1F5F9",
     borderWidth: 1.5,
     borderColor: "#DBEAFE",
@@ -1258,28 +1221,33 @@ const styles = StyleSheet.create({
   avatarImg: {
     width: "100%",
     height: "100%",
-    borderRadius: 26,
+    borderRadius: 23,
     resizeMode: "cover",
   },
   avatarOfflineDot: {
     position: "absolute",
     bottom: 0,
     right: 0,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: "#DC2626",
     borderWidth: 2,
     borderColor: "#FFFFFF",
   },
 
+  identityCol: {
+    flex: 1,
+    marginLeft: 10,
+    marginRight: 6,
+  },
   nameRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 5,
   },
   chefNameText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "900",
     color: "#0F172A",
     letterSpacing: -0.2,
@@ -1288,47 +1256,47 @@ const styles = StyleSheet.create({
   blockedPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 3,
+    gap: 2,
     backgroundColor: "#FEE2E2",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 5,
   },
   blockedPillText: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: "800",
     color: "#DC2626",
   },
   activePill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 3,
+    gap: 2,
     backgroundColor: "#DBEAFE",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 5,
   },
   activePillText: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: "800",
     color: "#2563EB",
   },
 
   chefSpecialtyText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: "#475569",
     fontWeight: "600",
-    marginTop: 3,
+    marginTop: 2,
   },
   metaInlineRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginTop: 4,
+    gap: 3,
+    marginTop: 3,
     flexShrink: 1,
   },
   metaInlineText: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: "#64748B",
     fontWeight: "600",
     flexShrink: 1,
@@ -1336,32 +1304,33 @@ const styles = StyleSheet.create({
   metaDot: {
     fontSize: 10,
     color: "#94A3B8",
-    marginHorizontal: 2,
+    marginHorizontal: 1,
   },
 
   blockSwitchCol: {
     alignItems: "center",
-    gap: 3,
+    gap: 2,
+    minWidth: 56,
   },
   blockSwitchLabel: {
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: "800",
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
   blockSwitchLabelActive: { color: "#2563EB" },
   blockSwitchLabelBlocked: { color: "#DC2626" },
   blockSwitchStyle: {
-    transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }],
+    transform: [{ scaleX: 0.7 }, { scaleY: 0.7 }],
+    marginVertical: -4,
   },
 
-  /* ─── META GRID ─── */
   metaGrid: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#F8FAFC",
-    borderRadius: 12,
-    marginTop: 12,
-    paddingVertical: 10,
+    borderRadius: 10,
+    marginTop: 10,
+    paddingVertical: 8,
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
@@ -1369,41 +1338,38 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     paddingHorizontal: 4,
-    gap: 3,
+    gap: 2,
   },
   metaCellLabel: {
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: "800",
     color: "#64748B",
     letterSpacing: 0.4,
-    marginTop: 1,
   },
   metaCellValue: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: "700",
     color: "#0F172A",
-    marginTop: 1,
   },
   metaDivider: {
     width: 1,
-    height: 30,
+    height: 26,
     backgroundColor: "#E2E8F0",
   },
 
-  /* ─── STATS STRIP ─── */
   statsStripRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 6,
-    marginTop: 10,
+    gap: 5,
+    marginTop: 8,
   },
   statChip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
     backgroundColor: "#F1F5F9",
   },
   statChipOnline: {
@@ -1413,30 +1379,29 @@ const styles = StyleSheet.create({
     backgroundColor: "#FEE2E2",
   },
   statChipText: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: "800",
     color: "#334155",
   },
   statChipDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
   },
 
-  /* ─── ACTIONS ─── */
   actionsRow: {
     flexDirection: "row",
-    gap: 8,
-    marginTop: 12,
+    gap: 7,
+    marginTop: 10,
   },
   actionBtn: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 5,
-    paddingVertical: 10,
-    borderRadius: 12,
+    gap: 4,
+    paddingVertical: 8.5,
+    borderRadius: 10,
     borderWidth: 1,
   },
   actionBtnEdit: {
@@ -1444,7 +1409,7 @@ const styles = StyleSheet.create({
     borderColor: "#BFDBFE",
   },
   actionBtnEditText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: "800",
     color: "#2563EB",
   },
@@ -1453,12 +1418,11 @@ const styles = StyleSheet.create({
     borderColor: "#FECACA",
   },
   actionBtnDeleteText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: "800",
     color: "#DC2626",
   },
 
-  /* ─── EDIT MODAL ─── */
   modalRoot: {
     flex: 1,
     justifyContent: "flex-end",
@@ -1471,11 +1435,11 @@ const styles = StyleSheet.create({
   },
   editModalSheet: {
     backgroundColor: "#FFFFFF",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    paddingHorizontal: 18,
     paddingTop: 10,
-    paddingBottom: 20,
+    paddingBottom: 18,
     maxHeight: "92%",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -8 },
@@ -1484,34 +1448,34 @@ const styles = StyleSheet.create({
     elevation: 25,
   },
   editModalHandle: {
-    width: 40,
-    height: 4.5,
+    width: 38,
+    height: 4,
     backgroundColor: "#CBD5E1",
     borderRadius: 3,
     alignSelf: "center",
-    marginBottom: 14,
+    marginBottom: 12,
   },
   editModalHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 14,
+    marginBottom: 12,
   },
   editModalTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "900",
     color: "#0F172A",
     letterSpacing: -0.3,
   },
   editModalSubtitle: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: "#64748B",
     fontWeight: "600",
-    marginTop: 2,
+    marginTop: 1,
   },
   editModalCloseBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: "#F1F5F9",
     alignItems: "center",
     justifyContent: "center",
@@ -1521,35 +1485,35 @@ const styles = StyleSheet.create({
     maxHeight: 480,
   },
   fieldLabel: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: "800",
     color: "#1E293B",
-    marginBottom: 6,
-    marginTop: 4,
+    marginBottom: 5,
+    marginTop: 2,
     marginLeft: 2,
   },
   fieldInput: {
     backgroundColor: "#F8FAFC",
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    borderRadius: 12,
-    marginBottom: 12,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderRadius: 11,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: "#E2E8F0",
-    fontSize: 14,
+    fontSize: 13.5,
     color: "#0F172A",
     fontWeight: "600",
   },
 
   foodTypeRow: {
     flexDirection: "row",
-    gap: 10,
-    marginBottom: 14,
+    gap: 8,
+    marginBottom: 12,
   },
   foodTypeBtn: {
     flex: 1,
-    paddingVertical: 11,
-    borderRadius: 12,
+    paddingVertical: 10,
+    borderRadius: 11,
     backgroundColor: "#F8FAFC",
     borderWidth: 1,
     borderColor: "#E2E8F0",
@@ -1561,7 +1525,7 @@ const styles = StyleSheet.create({
     borderColor: "#2563EB",
   },
   foodTypeBtnText: {
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: "800",
     color: "#64748B",
   },
@@ -1573,15 +1537,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#F8FAFC",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderRadius: 11,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
     borderWidth: 1,
     borderColor: "#E2E8F0",
     marginBottom: 6,
   },
   availabilityHint: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: "#64748B",
     fontWeight: "500",
     marginTop: 2,
@@ -1589,13 +1553,13 @@ const styles = StyleSheet.create({
 
   editFooterRow: {
     flexDirection: "row",
-    gap: 10,
-    marginTop: 14,
+    gap: 9,
+    marginTop: 12,
   },
   editCancelBtn: {
     flex: 1,
-    paddingVertical: 13,
-    borderRadius: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
     backgroundColor: "#F1F5F9",
     alignItems: "center",
     justifyContent: "center",
@@ -1603,7 +1567,7 @@ const styles = StyleSheet.create({
     borderColor: "#E2E8F0",
   },
   editCancelBtnText: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: "800",
     color: "#475569",
   },
@@ -1612,18 +1576,18 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    paddingVertical: 13,
-    borderRadius: 14,
+    gap: 5,
+    paddingVertical: 12,
+    borderRadius: 12,
     backgroundColor: "#2563EB",
     shadowColor: "#2563EB",
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
+    shadowOpacity: 0.22,
+    shadowRadius: 5,
     elevation: 3,
   },
   editSaveBtnText: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: "800",
     color: "#FFFFFF",
   },
