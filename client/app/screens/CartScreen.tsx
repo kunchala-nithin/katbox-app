@@ -566,7 +566,8 @@ export default function CartScreen() {
     }
 
     try {
-      const res = await api.post("/api/chefs/coupons/apply", {
+      // ✅ FIXED: URL corrected to match the deployed backend route
+      const res = await api.post("/api/chefs/apply-coupon", {
         code,
         cartTotal: subtotal,
         chefId: targetChef,

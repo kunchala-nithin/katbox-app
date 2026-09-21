@@ -72,6 +72,62 @@ const buildUserResponse = (user: any) => ({
 
 /*
  * ============================================================
+ * ✅ NEW: requireAdmin middleware
+ * ============================================================
+ *
+ * Inline admin check for the new admin-only endpoints.
+ * Loads the user from MongoDB and verifies isAdmin === true.
+ * Any non-admin request receives 403 with a clear message.
+ * ============================================================
+ */
+const requireAdmin = async (
+  req: AuthRequest,
+  res: any,
+  next: any
+) => {
+  try {
+    const userId =
+      req.user?.userId ||
+      req.user?._id ||
+      req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    const adminUser = await User.findById(userId);
+    if (!adminUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!adminUser.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Admin access required",
+      });
+    }
+
+    // Attach for downstream handlers (optional convenience)
+    (req as any).adminUser = adminUser;
+
+    next();
+  } catch (err: any) {
+    console.error("requireAdmin error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Admin check failed",
+    });
+  }
+};
+
+/*
+ * ============================================================
  * CLERK GOOGLE LOGIN
  * ============================================================
  *
@@ -1697,6 +1753,260 @@ router.put(
         message:
           "Error updating profile",
         error: err.message,
+      });
+    }
+  }
+);
+
+/*
+ * ============================================================
+ * ✅ NEW: ADMIN — LIST ALL USERS (with order history)
+ * ============================================================
+ *
+ * GET /auth/admin/users
+ * GET /auth/users  (legacy alias)
+ *
+ * Returns every user with their full order history populated
+ * from `User.orderHistory` (refs to Order documents).
+ *
+ * Response shape per user:
+ *   {
+ *     _id, name, phone, email, isChef, isAdmin, createdAt,
+ *     orderCount,  // number of orders placed
+ *     totalSpent,  // sum of totalAmount across all orders
+ *     orders: [ { orderId, totalAmount, orderStatus,
+ *                 serviceType, createdAt } ]
+ *   }
+ * ============================================================
+ */
+const getAllUsersHandler = async (
+  req: AuthRequest,
+  res: any
+) => {
+  try {
+    const users = await User.find({})
+      .populate({
+        path: "orderHistory",
+        select:
+          "orderId totalAmount orderStatus serviceType createdAt",
+        options: { sort: { createdAt: -1 } },
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const enrichedUsers = users.map((u: any) => {
+      const orders: any[] = Array.isArray(u.orderHistory)
+        ? u.orderHistory.filter(Boolean)
+        : [];
+
+      const orderCount = orders.length;
+      const totalSpent = orders.reduce(
+        (sum, o) => sum + (Number(o.totalAmount) || 0),
+        0
+      );
+
+      return {
+        _id: u._id,
+        name: u.name || "User",
+        phone: u.phone || "",
+        email: u.email || "",
+        isChef: !!u.isChef,
+        isAdmin: !!u.isAdmin,
+        createdAt: u.createdAt,
+        orderCount,
+        totalSpent,
+        orders: orders.map((o: any) => ({
+          _id: o._id,
+          orderId: o.orderId || "",
+          totalAmount: Number(o.totalAmount) || 0,
+          orderStatus: o.orderStatus || "Placed",
+          serviceType: o.serviceType || "",
+          createdAt: o.createdAt,
+        })),
+      };
+    });
+
+    return res.json({
+      success: true,
+      users: enrichedUsers,
+      total: enrichedUsers.length,
+    });
+  } catch (err: any) {
+    console.error("Get all users (admin) error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch users",
+    });
+  }
+};
+
+// Primary admin endpoint
+router.get("/admin/users", protect, requireAdmin, getAllUsersHandler);
+
+// Legacy alias — some older client builds hit /auth/users
+router.get("/users", protect, requireAdmin, getAllUsersHandler);
+
+/*
+ * ============================================================
+ * ✅ NEW: ADMIN — TOGGLE USER isChef
+ * ============================================================
+ *
+ * PATCH /auth/admin/users/:userId/toggle-chef
+ *
+ * Body (optional): { isChef: boolean }
+ *   - If provided → force-sets the value (idempotent)
+ *   - If omitted  → flips the current value
+ *
+ * Returns the updated user payload so the client can
+ * reconcile with the server without a second round-trip.
+ *
+ * ⚠️ Cannot toggle the caller's own isChef (safety guard).
+ * ============================================================
+ */
+router.patch(
+  "/admin/users/:userId/toggle-chef",
+  protect,
+  requireAdmin,
+  async (req: AuthRequest, res) => {
+    try {
+      const { userId } = req.params;
+      const callerId =
+        req.user?.userId || req.user?._id || req.user?.id;
+
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required",
+        });
+      }
+
+      if (String(callerId) === String(userId)) {
+        return res.status(400).json({
+          success: false,
+          message: "You cannot change your own chef status",
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const { isChef: forceValue } = req.body || {};
+      const nextIsChef =
+        typeof forceValue === "boolean" ? forceValue : !user.isChef;
+
+      user.isChef = nextIsChef;
+      await user.save();
+
+      console.log(
+        `🔐 Admin ${nextIsChef ? "GRANTED" : "REVOKED"} chef status for '${
+          user.name
+        }' (${user._id})`
+      );
+
+      return res.json({
+        success: true,
+        message: nextIsChef
+          ? `Chef access granted to ${user.name}.`
+          : `Chef access revoked from ${user.name}.`,
+        user: {
+          _id: user._id,
+          name: user.name,
+          phone: user.phone,
+          email: user.email,
+          isChef: user.isChef,
+          isAdmin: user.isAdmin,
+        },
+      });
+    } catch (err: any) {
+      console.error("Toggle chef error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update chef status",
+      });
+    }
+  }
+);
+
+/*
+ * ============================================================
+ * ✅ NEW: ADMIN — TOGGLE USER isAdmin
+ * ============================================================
+ *
+ * PATCH /auth/admin/users/:userId/toggle-admin
+ *
+ * ⚠️ Cannot toggle the caller's own isAdmin (safety guard)
+ *    → prevents an admin from accidentally locking themselves out.
+ * ============================================================
+ */
+router.patch(
+  "/admin/users/:userId/toggle-admin",
+  protect,
+  requireAdmin,
+  async (req: AuthRequest, res) => {
+    try {
+      const { userId } = req.params;
+      const callerId =
+        req.user?.userId || req.user?._id || req.user?.id;
+
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required",
+        });
+      }
+
+      if (String(callerId) === String(userId)) {
+        return res.status(400).json({
+          success: false,
+          message: "You cannot change your own admin status",
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const { isAdmin: forceValue } = req.body || {};
+      const nextIsAdmin =
+        typeof forceValue === "boolean" ? forceValue : !user.isAdmin;
+
+      user.isAdmin = nextIsAdmin;
+      await user.save();
+
+      console.log(
+        `🔐 Admin ${nextIsAdmin ? "GRANTED" : "REVOKED"} admin status for '${
+          user.name
+        }' (${user._id})`
+      );
+
+      return res.json({
+        success: true,
+        message: nextIsAdmin
+          ? `Admin access granted to ${user.name}.`
+          : `Admin access revoked from ${user.name}.`,
+        user: {
+          _id: user._id,
+          name: user.name,
+          phone: user.phone,
+          email: user.email,
+          isChef: user.isChef,
+          isAdmin: user.isAdmin,
+        },
+      });
+    } catch (err: any) {
+      console.error("Toggle admin error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update admin status",
       });
     }
   }
