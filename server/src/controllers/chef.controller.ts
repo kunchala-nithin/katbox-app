@@ -260,7 +260,6 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
             description: String(c.description || "").trim(),
             minOrder: Number(c.minOrder) || 0,
             maxDiscount: Number(c.maxDiscount) || 500,
-            // ✅ NEW: normalize service type (accepts "Catering", "CATERING", "catering" etc.)
             serviceType: normalizeCouponServiceType(c.serviceType),
           }));
         }
@@ -313,13 +312,11 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
 
       // ─── AVATAR REPLACEMENT ───
       if (avatarFiles.length > 0) {
-        // Destroy OLD avatar first
         if (existingChef.avatarCloudinaryId) {
           await cloudinary.uploader
             .destroy(existingChef.avatarCloudinaryId)
             .catch(() => {});
         }
-        // Upload NEW avatar with strict compression
         const upload: any = await uploadFromBuffer(avatarFiles[0].buffer, "avatar");
         avatarUrl = upload.secure_url;
         avatarCloudinaryId = upload.public_id;
@@ -327,7 +324,6 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
         String(removeAvatarOnSave) === "true" &&
         existingChef.avatarCloudinaryId
       ) {
-        // User explicitly removed avatar without uploading a new one
         await cloudinary.uploader
           .destroy(existingChef.avatarCloudinaryId)
           .catch(() => {});
@@ -468,9 +464,27 @@ export const getChefs = async (_req: Request, res: Response) => {
 // ============================================================
 // GET ALL CHEFS (ADMIN VIEW)
 // ============================================================
+// ✅ UPDATED: Now populates `orderHistory` on every chef doc so
+//    the admin screen can render each chef's received orders.
+//
+//    Adds these computed fields per chef:
+//      • orderCount   → total orders received (all statuses)
+//      • deliveredCount → orders that were delivered/completed
+//      • totalEarned  → sum of totalAmount for delivered orders
+//      • receivedOrders → normalized array of { _id, orderId,
+//                          totalAmount, orderStatus, serviceType,
+//                          createdAt, userName, userPhone }
+// ============================================================
 export const getAllChefsForAdmin = async (_req: Request, res: Response) => {
   try {
-    const chefs = await Chef.find().sort({ createdAt: -1 });
+    const chefs = await Chef.find()
+      .populate({
+        path: "orderHistory",
+        select:
+          "orderId totalAmount orderStatus serviceType createdAt userName userPhone chefName",
+        options: { sort: { createdAt: -1 } },
+      })
+      .sort({ createdAt: -1 });
 
     const userIds = chefs
       .map((c: any) => c.user)
@@ -494,11 +508,51 @@ export const getAllChefsForAdmin = async (_req: Request, res: Response) => {
           ? true
           : linkedUser?.isChef !== false;
 
+      // Normalize every order into a compact payload
+      const rawOrders: any[] = Array.isArray(chefObj.orderHistory)
+        ? chefObj.orderHistory.filter(Boolean)
+        : [];
+
+      const receivedOrders = rawOrders.map((o: any) => ({
+        _id: o._id,
+        orderId: o.orderId || "",
+        totalAmount: Number(o.totalAmount) || 0,
+        orderStatus: o.orderStatus || "Placed",
+        serviceType: o.serviceType || "",
+        createdAt: o.createdAt || null,
+        userName: o.userName || "",
+        userPhone: o.userPhone || "",
+      }));
+
+      const isDelivered = (status: string) => {
+        const s = String(status || "").toLowerCase();
+        return (
+          s === "delivered" ||
+          s === "completed" ||
+          s.includes("cash collected") ||
+          s.includes("amount collected")
+        );
+      };
+
+      const deliveredOrders = receivedOrders.filter((o: any) =>
+        isDelivered(o.orderStatus)
+      );
+
+      const totalEarned = deliveredOrders.reduce(
+        (sum: number, o: any) => sum + o.totalAmount,
+        0
+      );
+
       return {
         ...chefObj,
         userIsChef,
         userEmail: linkedUser?.email || "",
         userPhone: linkedUser?.phone || "",
+        // ✅ NEW: order-history fields consumed by admin UI
+        orderCount: receivedOrders.length,
+        deliveredCount: deliveredOrders.length,
+        totalEarned,
+        receivedOrders,
       };
     });
 
@@ -695,7 +749,7 @@ export const deleteChefByAdmin = async (req: any, res: Response) => {
 };
 
 // ============================================================
-// ✅ NEW: ADD COUPON TO CHEF (ADMIN ONLY)
+// ADD COUPON TO CHEF (ADMIN ONLY)
 // ============================================================
 export const addChefCouponByAdmin = async (req: any, res: Response) => {
   try {
@@ -778,7 +832,7 @@ export const addChefCouponByAdmin = async (req: any, res: Response) => {
 };
 
 // ============================================================
-// ✅ NEW: DELETE COUPON FROM CHEF (ADMIN ONLY)
+// DELETE COUPON FROM CHEF (ADMIN ONLY)
 // ============================================================
 export const deleteChefCouponByAdmin = async (req: any, res: Response) => {
   try {

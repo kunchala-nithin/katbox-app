@@ -38,9 +38,6 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 type UserFilterTab = 'All' | 'Chefs' | 'Admins' | 'Customers';
 
-// ✅ NEW: Tabs inside the user detail modal for order history
-type OrderHistoryTab = 'placed' | 'received';
-
 interface UserOrderSummary {
   _id?: string;
   orderId: string;
@@ -61,7 +58,7 @@ interface UserItem {
   orderCount?: number;
   totalSpent?: number;
   orders?: UserOrderSummary[];
-  // ✅ NEW: Orders received as a chef (populated from Chef.orderHistory)
+  // Orders received as a chef (populated from Chef.orderHistory)
   receivedOrderCount?: number;
   totalEarned?: number;
   receivedOrders?: UserOrderSummary[];
@@ -137,9 +134,6 @@ export default function AllUsersScreen() {
 
   // ─── User detail modal (order history) ───
   const [selectedUser, setSelectedUser] = useState<UserItem | null>(null);
-
-  // ✅ NEW: active tab inside the modal (only relevant for chefs)
-  const [activeOrderTab, setActiveOrderTab] = useState<OrderHistoryTab>('placed');
 
   // ─── Current admin's own id — used to lock their own switches ───
   const [myId, setMyId] = useState<string>('');
@@ -229,8 +223,7 @@ export default function AllUsersScreen() {
               : u
           )
         );
-        // ✅ After granting/revoking chef access, refresh the list
-        //    so the newly populated receivedOrders appear (or disappear).
+        // Refresh so freshly populated receivedOrders appear
         fetchUsers();
       } else {
         throw new Error(res.data?.message || 'Toggle failed');
@@ -348,12 +341,10 @@ export default function AllUsersScreen() {
   const filteredUsers = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     return users.filter((u) => {
-      // Tab filter
       if (filterTab === 'Chefs' && !u.isChef) return false;
       if (filterTab === 'Admins' && !u.isAdmin) return false;
       if (filterTab === 'Customers' && (u.isChef || u.isAdmin)) return false;
 
-      // Search filter
       if (!q) return true;
       return (
         (u.name && u.name.toLowerCase().includes(q)) ||
@@ -364,28 +355,24 @@ export default function AllUsersScreen() {
   }, [users, filterTab, searchQuery]);
 
   /* ─────────────────────────────────────────────────────────
-     ✅ NEW: compute which order array the modal should render,
-     based on the currently selected tab. Non-chef users always
-     render the "placed" list.
+     ✅ For chefs: always show received orders.
+     ✅ For non-chefs: always show placed orders.
      ───────────────────────────────────────────────────────── */
   const ordersToDisplay: UserOrderSummary[] = useMemo(() => {
     if (!selectedUser) return [];
-    if (selectedUser.isChef && activeOrderTab === 'received') {
+    if (selectedUser.isChef) {
       return selectedUser.receivedOrders || [];
     }
     return selectedUser.orders || [];
-  }, [selectedUser, activeOrderTab]);
+  }, [selectedUser]);
 
-  // Reset the modal tab whenever a different user is opened
   const openUserModal = (user: UserItem) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setActiveOrderTab('placed');
     setSelectedUser(user);
   };
 
   const closeUserModal = () => {
     setSelectedUser(null);
-    setActiveOrderTab('placed');
   };
 
   const renderUserCard = ({ item }: { item: UserItem }) => {
@@ -448,8 +435,19 @@ export default function AllUsersScreen() {
           </View>
 
           <View style={styles.orderCountChip}>
-            <MaterialCommunityIcons name="receipt" size={12} color="#4ADE80" />
-            <Text style={styles.orderCountChipText}>{orderCount}</Text>
+            <MaterialCommunityIcons
+              name={item.isChef ? 'chef-hat' : 'receipt'}
+              size={12}
+              color={item.isChef ? '#FBBF24' : '#4ADE80'}
+            />
+            <Text
+              style={[
+                styles.orderCountChipText,
+                item.isChef && { color: '#FBBF24' },
+              ]}
+            >
+              {item.isChef ? receivedOrderCount : orderCount}
+            </Text>
           </View>
         </View>
 
@@ -471,29 +469,10 @@ export default function AllUsersScreen() {
           </View>
         )}
 
-        {/* ─── ORDERS SUMMARY ─── */}
-        <View style={styles.ordersSummaryRow}>
-          <View style={styles.ordersSummaryLeft}>
-            <Feather name="shopping-bag" size={11} color="#94A3B8" />
-            <Text style={styles.ordersSummaryText}>
-              {orderCount === 0
-                ? 'No orders placed yet'
-                : `${orderCount} order${orderCount === 1 ? '' : 's'} placed`}
-            </Text>
-          </View>
-          {orderCount > 0 && (
-            <View style={styles.spendChip}>
-              <Text style={styles.spendChipText}>
-                ₹{totalSpent.toLocaleString('en-IN')}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* ─── CHEF RECEIVED ORDERS STRIP (only when isChef) ─── */}
-        {item.isChef && (
-          <View style={styles.receivedSummaryRow}>
-            <View style={styles.receivedSummaryLeft}>
+        {/* ─── SUMMARY ROW (chef = received, non-chef = placed) ─── */}
+        {item.isChef ? (
+          <View style={styles.ordersSummaryRow}>
+            <View style={styles.ordersSummaryLeft}>
               <MaterialCommunityIcons name="chef-hat" size={11} color="#FBBF24" />
               <Text style={styles.receivedSummaryText}>
                 {receivedOrderCount === 0
@@ -505,6 +484,24 @@ export default function AllUsersScreen() {
               <View style={styles.earnedChip}>
                 <Text style={styles.earnedChipText}>
                   ₹{totalEarned.toLocaleString('en-IN')}
+                </Text>
+              </View>
+            )}
+          </View>
+        ) : (
+          <View style={styles.ordersSummaryRow}>
+            <View style={styles.ordersSummaryLeft}>
+              <Feather name="shopping-bag" size={11} color="#94A3B8" />
+              <Text style={styles.ordersSummaryText}>
+                {orderCount === 0
+                  ? 'No orders placed yet'
+                  : `${orderCount} order${orderCount === 1 ? '' : 's'} placed`}
+              </Text>
+            </View>
+            {orderCount > 0 && (
+              <View style={styles.spendChip}>
+                <Text style={styles.spendChipText}>
+                  ₹{totalSpent.toLocaleString('en-IN')}
                 </Text>
               </View>
             )}
@@ -531,7 +528,7 @@ export default function AllUsersScreen() {
             </View>
             <Switch
               value={!!item.isChef}
-              disabled={Boolean(isToggling || isSelf)}
+              disabled={isToggling || isSelf}
               onValueChange={(val) => handleToggleChef(item, val)}
               trackColor={{
                 false: 'rgba(100, 116, 139, 0.35)',
@@ -579,8 +576,12 @@ export default function AllUsersScreen() {
         {/* ─── TAP HINT ─── */}
         <View style={styles.tapHintRow}>
           <Text style={styles.tapHintText}>
-            {orderCount > 0 || (item.isChef && receivedOrderCount > 0)
-              ? 'View orders'
+            {item.isChef
+              ? receivedOrderCount > 0
+                ? 'View received orders'
+                : 'View details'
+              : orderCount > 0
+              ? 'View placed orders'
               : 'View details'}
           </Text>
           <Feather name="chevron-right" size={13} color="#64748B" />
@@ -879,18 +880,9 @@ export default function AllUsersScreen() {
                 </View>
               </View>
 
-              {/* ─── ORDERS SUMMARY ─── */}
-              {/* Non-chef: 2 columns (Placed | Spend).                  */}
-              {/* Chef: 3 columns (Placed | Received | Total Earned).    */}
+              {/* ─── SUMMARY ─── */}
               {selectedUser.isChef ? (
                 <View style={styles.modalOrdersSummary}>
-                  <View style={styles.modalOrdersSummaryCell}>
-                    <Text style={styles.modalOrdersSummaryLabel}>PLACED</Text>
-                    <Text style={styles.modalOrdersSummaryValue}>
-                      {Number(selectedUser.orderCount) || 0}
-                    </Text>
-                  </View>
-                  <View style={styles.modalOrdersSummarySep} />
                   <View style={styles.modalOrdersSummaryCell}>
                     <Text style={styles.modalOrdersSummaryLabel}>RECEIVED</Text>
                     <Text
@@ -908,7 +900,7 @@ export default function AllUsersScreen() {
                     <Text
                       style={[
                         styles.modalOrdersSummaryValue,
-                        { color: '#4ADE80', fontSize: 18 },
+                        { color: '#4ADE80' },
                       ]}
                     >
                       ₹{(Number(selectedUser.totalEarned) || 0).toLocaleString('en-IN')}
@@ -938,73 +930,10 @@ export default function AllUsersScreen() {
                 </View>
               )}
 
-              {/* ─── ✅ NEW: ORDER HISTORY TABS (chefs only) ─── */}
-              {selectedUser.isChef && (
-                <View style={styles.orderHistoryTabsRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.orderHistoryTabBtn,
-                      activeOrderTab === 'placed' && styles.orderHistoryTabBtnActive,
-                    ]}
-                    activeOpacity={0.85}
-                    onPress={() => {
-                      LayoutAnimation.configureNext(
-                        LayoutAnimation.Presets.easeInEaseOut
-                      );
-                      setActiveOrderTab('placed');
-                    }}
-                  >
-                    <Feather
-                      name="shopping-bag"
-                      size={12}
-                      color={activeOrderTab === 'placed' ? '#0F1A13' : '#94A3B8'}
-                    />
-                    <Text
-                      style={[
-                        styles.orderHistoryTabBtnText,
-                        activeOrderTab === 'placed' && styles.orderHistoryTabBtnTextActive,
-                      ]}
-                    >
-                      Placed ({Number(selectedUser.orderCount) || 0})
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.orderHistoryTabBtn,
-                      activeOrderTab === 'received' && styles.orderHistoryTabBtnActive,
-                    ]}
-                    activeOpacity={0.85}
-                    onPress={() => {
-                      LayoutAnimation.configureNext(
-                        LayoutAnimation.Presets.easeInEaseOut
-                      );
-                      setActiveOrderTab('received');
-                    }}
-                  >
-                    <MaterialCommunityIcons
-                      name="chef-hat"
-                      size={13}
-                      color={activeOrderTab === 'received' ? '#0F1A13' : '#94A3B8'}
-                    />
-                    <Text
-                      style={[
-                        styles.orderHistoryTabBtnText,
-                        activeOrderTab === 'received' && styles.orderHistoryTabBtnTextActive,
-                      ]}
-                    >
-                      Received ({Number(selectedUser.receivedOrderCount) || 0})
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
               {/* ─── ORDER LIST HEADER ─── */}
               <View style={styles.modalSectionHeader}>
                 <Text style={styles.modalSectionTitle}>
-                  {selectedUser.isChef && activeOrderTab === 'received'
-                    ? 'Orders Received'
-                    : 'Orders Placed'}
+                  {selectedUser.isChef ? 'Orders Received' : 'Orders Placed'}
                 </Text>
                 {ordersToDisplay.length > 0 && (
                   <View style={styles.modalSectionCountPill}>
@@ -1024,22 +953,18 @@ export default function AllUsersScreen() {
                   <View style={styles.modalEmptyOrders}>
                     <View style={styles.modalEmptyOrdersIconCircle}>
                       <MaterialCommunityIcons
-                        name={
-                          selectedUser.isChef && activeOrderTab === 'received'
-                            ? 'chef-hat'
-                            : 'shopping-outline'
-                        }
+                        name={selectedUser.isChef ? 'chef-hat' : 'shopping-outline'}
                         size={30}
                         color="#4ADE80"
                       />
                     </View>
                     <Text style={styles.modalEmptyOrdersTitle}>
-                      {selectedUser.isChef && activeOrderTab === 'received'
+                      {selectedUser.isChef
                         ? 'No orders received yet'
                         : 'No orders placed yet'}
                     </Text>
                     <Text style={styles.modalEmptyOrdersText}>
-                      {selectedUser.isChef && activeOrderTab === 'received'
+                      {selectedUser.isChef
                         ? 'Orders placed to this chef will appear here.'
                         : 'Once this user places an order, it will appear here.'}
                     </Text>
@@ -1107,9 +1032,7 @@ export default function AllUsersScreen() {
 
                         <View style={styles.orderCardBottomRow}>
                           <Text style={styles.orderAmountLabel}>
-                            {selectedUser.isChef && activeOrderTab === 'received'
-                              ? 'Order Value'
-                              : 'Total Amount'}
+                            {selectedUser.isChef ? 'Order Value' : 'Total Amount'}
                           </Text>
                           <Text style={styles.orderAmountText}>
                             ₹{(Number(o.totalAmount) || 0).toLocaleString('en-IN')}
@@ -1486,7 +1409,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  /* ─── ORDERS SUMMARY ─── */
+  /* ─── SUMMARY ROW ─── */
   ordersSummaryRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1507,6 +1430,11 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontWeight: '700',
   },
+  receivedSummaryText: {
+    fontSize: 11.5,
+    color: '#FBBF24',
+    fontWeight: '700',
+  },
   spendChip: {
     paddingHorizontal: 9,
     paddingVertical: 4,
@@ -1520,28 +1448,6 @@ const styles = StyleSheet.create({
     color: '#4ADE80',
     fontWeight: '900',
     letterSpacing: -0.1,
-  },
-
-  /* ✅ NEW: RECEIVED ORDERS STRIP (chefs only) */
-  receivedSummaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  receivedSummaryLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexShrink: 1,
-  },
-  receivedSummaryText: {
-    fontSize: 11.5,
-    color: '#FBBF24',
-    fontWeight: '700',
   },
   earnedChip: {
     paddingHorizontal: 9,
@@ -1802,39 +1708,6 @@ const styles = StyleSheet.create({
     height: 38,
     backgroundColor: 'rgba(74, 222, 128, 0.15)',
     marginHorizontal: 10,
-  },
-
-  /* ─── ✅ NEW: ORDER HISTORY TABS (inside modal, chefs only) ─── */
-  orderHistoryTabsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  orderHistoryTabBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 9,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  orderHistoryTabBtnActive: {
-    backgroundColor: '#4ADE80',
-    borderColor: '#4ADE80',
-  },
-  orderHistoryTabBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#94A3B8',
-    letterSpacing: 0.1,
-  },
-  orderHistoryTabBtnTextActive: {
-    color: '#0F1A13',
-    fontWeight: '900',
   },
 
   modalSectionHeader: {

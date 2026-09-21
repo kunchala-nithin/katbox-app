@@ -27,8 +27,8 @@ import {
   MaterialCommunityIcons,
   MaterialIcons,
 } from "@expo/vector-icons";
-import { Stack, useRouter, useFocusEffect } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import { Stack, useRouter, useFocusEffect } from "expo-router";
 import { BlurView } from "expo-blur";
 import api from "@/src/lib/api";
 
@@ -58,6 +58,63 @@ const SERVICE_TYPE_OPTIONS: CouponServiceType[] = [
   "quickbites",
 ];
 
+// ✅ NEW: Order service icon map for the order-history modal
+const ORDER_SERVICE_ICON: Record<string, any> = {
+  catering: "silverware-fork-knife",
+  mealbox: "food-takeout-box-outline",
+  homemade: "home-outline",
+  quickbites: "flash-outline",
+};
+
+const ORDER_SERVICE_LABEL: Record<string, string> = {
+  catering: "Catering",
+  mealbox: "MealBox",
+  homemade: "Homemade",
+  quickbites: "Quick Bites",
+};
+
+// ✅ NEW: Status pill tone for order cards
+const orderStatusTone = (status: string) => {
+  const s = String(status || "").toLowerCase();
+  if (s.includes("delivered") || s.includes("completed") || s.includes("collected")) {
+    return { bg: "rgba(34, 197, 94, 0.14)", fg: "#22C55E", label: "Delivered" };
+  }
+  if (s.includes("cancel")) {
+    return { bg: "rgba(239, 68, 68, 0.14)", fg: "#EF4444", label: status };
+  }
+  if (s.includes("prep") || s.includes("pack")) {
+    return { bg: "rgba(37, 99, 235, 0.14)", fg: "#2563EB", label: status };
+  }
+  if (s.includes("out") || s.includes("delivery")) {
+    return { bg: "rgba(217, 119, 6, 0.14)", fg: "#D97706", label: status };
+  }
+  return { bg: "rgba(100, 116, 139, 0.14)", fg: "#64748B", label: status || "Placed" };
+};
+
+// ✅ NEW: Format a raw ISO string into "21 Sept 2026"
+const formatOrderDate = (iso?: string) => {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+};
+
+const formatFssai = (value: any): string => {
+  if (!value) return "";
+  const s = String(value).trim();
+  if (!s) return "";
+  if (s.length <= 8) return s;
+  return `${s.substring(0, 4)}…${s.substring(s.length - 4)}`;
+};
+
 export default function AdminAllChefsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -70,6 +127,7 @@ export default function AdminAllChefsScreen() {
 
   const [togglingChefId, setTogglingChefId] = useState<string | null>(null);
 
+  // ─── Edit modal state ───
   const [showEditModal, setShowEditModal] = useState<boolean>(false);
   const [editingChef, setEditingChef] = useState<any>(null);
   const [savingEdit, setSavingEdit] = useState<boolean>(false);
@@ -98,6 +156,10 @@ export default function AdminAllChefsScreen() {
     useState<CouponServiceType>("catering");
   const [savingCoupon, setSavingCoupon] = useState(false);
   const [deletingCouponId, setDeletingCouponId] = useState<string | null>(null);
+
+  // ✅ NEW: Order-history modal state
+  const [showOrdersModal, setShowOrdersModal] = useState<boolean>(false);
+  const [ordersChef, setOrdersChef] = useState<any>(null);
 
   const isFetchingRef = useRef<boolean>(false);
 
@@ -254,6 +316,18 @@ export default function AdminAllChefsScreen() {
     if (savingEdit) return;
     setShowEditModal(false);
     setEditingChef(null);
+  };
+
+  // ✅ NEW: Open the order-history modal
+  const openOrdersModal = (chef: any) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setOrdersChef(chef);
+    setShowOrdersModal(true);
+  };
+
+  const closeOrdersModal = () => {
+    setShowOrdersModal(false);
+    setOrdersChef(null);
   };
 
   const handleSaveEdit = async () => {
@@ -505,6 +579,10 @@ export default function AdminAllChefsScreen() {
     const reviewsCount = Number(chef.totalReviews) || 0;
     const rating = Number(chef.averageRating || chef.rating || 0).toFixed(1);
 
+    const orderCount = Number(chef.orderCount) || 0;
+    const deliveredCount = Number(chef.deliveredCount) || 0;
+    const totalEarned = Number(chef.totalEarned) || 0;
+
     const isCouponsExpanded = expandedCouponsChefId === chefId;
     const isAddingCoupon = addingCouponToChefId === chefId;
 
@@ -613,11 +691,12 @@ export default function AdminAllChefsScreen() {
             </View>
             <Text style={styles.metaRowLabel}>FSSAI</Text>
             <Text style={styles.metaRowValue} numberOfLines={1}>
-              {chef.fssaiNo || "—"}
+              {chef.fssaiNo ? formatFssai(chef.fssaiNo) : "—"}
             </Text>
           </View>
         </View>
 
+        {/* ─── STATS STRIP (rating / reviews / coupons / kitchen) ─── */}
         <View style={styles.statsStripRow}>
           <View style={styles.statChip}>
             <Ionicons name="star" size={10} color="#F59E0B" />
@@ -660,6 +739,42 @@ export default function AdminAllChefsScreen() {
             </Text>
           </View>
         </View>
+
+        {/* ─── ✅ NEW: ORDERS SUMMARY STRIP ─── */}
+        <TouchableOpacity
+          style={styles.ordersSummaryRow}
+          activeOpacity={0.85}
+          onPress={() => openOrdersModal(chef)}
+        >
+          <View style={styles.ordersSummaryLeft}>
+            <View style={styles.ordersSummaryIconCircle}>
+              <MaterialCommunityIcons name="receipt" size={12} color="#16A34A" />
+            </View>
+            <View>
+              <Text style={styles.ordersSummaryTitle}>
+                {orderCount === 0
+                  ? "No orders received yet"
+                  : `${orderCount} order${orderCount === 1 ? "" : "s"} received`}
+              </Text>
+              {orderCount > 0 && (
+                <Text style={styles.ordersSummarySubtitle}>
+                  {deliveredCount} delivered
+                </Text>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.ordersSummaryRight}>
+            {orderCount > 0 && (
+              <View style={styles.earnedChip}>
+                <Text style={styles.earnedChipText}>
+                  ₹{totalEarned.toLocaleString("en-IN")}
+                </Text>
+              </View>
+            )}
+            <Feather name="chevron-right" size={14} color="#64748B" />
+          </View>
+        </TouchableOpacity>
 
         {/* ─── COUPONS MANAGEMENT SECTION ─── */}
         <TouchableOpacity
@@ -1097,6 +1212,7 @@ export default function AdminAllChefsScreen() {
         )}
       </View>
 
+      {/* ─── EDIT CHEF MODAL ─── */}
       <Modal
         visible={showEditModal}
         transparent
@@ -1293,6 +1409,200 @@ export default function AdminAllChefsScreen() {
           </KeyboardAvoidingView>
         </View>
       </Modal>
+
+      {/* ─── ✅ NEW: ORDER HISTORY MODAL ─── */}
+      <Modal
+        visible={showOrdersModal}
+        transparent
+        animationType="fade"
+        onRequestClose={closeOrdersModal}
+      >
+        <View style={styles.modalRoot}>
+          <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
+
+          <Pressable style={styles.modalBackdrop} onPress={closeOrdersModal} />
+
+          <View style={styles.ordersModalSheet}>
+            <View style={styles.editModalHandle} />
+
+            {/* ─── MODAL HEADER ─── */}
+            <View style={styles.ordersModalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.ordersModalTitle}>Order History</Text>
+                <Text style={styles.ordersModalSubtitle} numberOfLines={1}>
+                  {ordersChef?.name || ""}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.editModalCloseBtn}
+                onPress={closeOrdersModal}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={18} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+
+            {/* ─── SUMMARY STRIP ─── */}
+            <View style={styles.ordersModalSummary}>
+              <View style={styles.ordersModalSummaryCell}>
+                <Text style={styles.ordersModalSummaryLabel}>RECEIVED</Text>
+                <Text style={styles.ordersModalSummaryValue}>
+                  {Number(ordersChef?.orderCount) || 0}
+                </Text>
+              </View>
+              <View style={styles.ordersModalSummarySep} />
+              <View style={styles.ordersModalSummaryCell}>
+                <Text style={styles.ordersModalSummaryLabel}>DELIVERED</Text>
+                <Text
+                  style={[
+                    styles.ordersModalSummaryValue,
+                    { color: "#22C55E" },
+                  ]}
+                >
+                  {Number(ordersChef?.deliveredCount) || 0}
+                </Text>
+              </View>
+              <View style={styles.ordersModalSummarySep} />
+              <View style={styles.ordersModalSummaryCell}>
+                <Text style={styles.ordersModalSummaryLabel}>EARNED</Text>
+                <Text
+                  style={[
+                    styles.ordersModalSummaryValue,
+                    { color: "#16A34A", fontSize: 18 },
+                  ]}
+                >
+                  ₹{(Number(ordersChef?.totalEarned) || 0).toLocaleString("en-IN")}
+                </Text>
+              </View>
+            </View>
+
+            {/* ─── ORDER LIST ─── */}
+            <ScrollView
+              style={styles.ordersModalScroll}
+              contentContainerStyle={{ paddingBottom: 16 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {!ordersChef?.receivedOrders || ordersChef.receivedOrders.length === 0 ? (
+                <View style={styles.ordersModalEmpty}>
+                  <View style={styles.ordersModalEmptyIconCircle}>
+                    <MaterialCommunityIcons
+                      name="receipt"
+                      size={28}
+                      color="#2563EB"
+                    />
+                  </View>
+                  <Text style={styles.ordersModalEmptyTitle}>
+                    No orders received yet
+                  </Text>
+                  <Text style={styles.ordersModalEmptyText}>
+                    Once customers place orders to this chef, they will appear here.
+                  </Text>
+                </View>
+              ) : (
+                ordersChef.receivedOrders.map((o: any, idx: number) => {
+                  const tone = orderStatusTone(o.orderStatus);
+                  const svcKey = String(o.serviceType || "").toLowerCase();
+                  const svcLabel =
+                    ORDER_SERVICE_LABEL[svcKey] || o.serviceType || "—";
+                  const svcIcon =
+                    ORDER_SERVICE_ICON[svcKey] || "silverware-fork-knife";
+
+                  return (
+                    <View key={o._id || `order-${idx}`} style={styles.orderCard}>
+                      <View style={styles.orderCardTopRow}>
+                        <View style={styles.orderIdBadge}>
+                          <MaterialCommunityIcons
+                            name="receipt"
+                            size={11}
+                            color="#16A34A"
+                          />
+                          <Text
+                            style={styles.orderIdBadgeText}
+                            numberOfLines={1}
+                          >
+                            #{o.orderId || "——"}
+                          </Text>
+                        </View>
+
+                        <View
+                          style={[
+                            styles.orderStatusPill,
+                            { backgroundColor: tone.bg },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.orderStatusPillText,
+                              { color: tone.fg },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {tone.label}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.orderCardMiddleRow}>
+                        <View style={styles.orderServiceChip}>
+                          <MaterialCommunityIcons
+                            name={svcIcon}
+                            size={11}
+                            color="#475569"
+                          />
+                          <Text style={styles.orderServiceChipText}>
+                            {svcLabel}
+                          </Text>
+                        </View>
+
+                        <View style={styles.orderDateRow}>
+                          <Feather name="calendar" size={10} color="#64748B" />
+                          <Text style={styles.orderDateText}>
+                            {formatOrderDate(o.createdAt)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {(o.userName || o.userPhone) && (
+                        <View style={styles.orderCustomerRow}>
+                          <Ionicons
+                            name="person-outline"
+                            size={11}
+                            color="#64748B"
+                          />
+                          <Text
+                            style={styles.orderCustomerText}
+                            numberOfLines={1}
+                          >
+                            {o.userName || "Customer"}
+                            {o.userPhone ? ` • ${o.userPhone}` : ""}
+                          </Text>
+                        </View>
+                      )}
+
+                      <View style={styles.orderCardBottomRow}>
+                        <Text style={styles.orderAmountLabel}>
+                          Order Value
+                        </Text>
+                        <Text style={styles.orderAmountText}>
+                          ₹{(Number(o.totalAmount) || 0).toLocaleString("en-IN")}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.ordersModalDoneBtn}
+              activeOpacity={0.9}
+              onPress={closeOrdersModal}
+            >
+              <Text style={styles.ordersModalDoneBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1303,6 +1613,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#0F172A",
   },
 
+  /* ─── DARK HEADER ─── */
   darkHeader: { paddingBottom: 12 },
   headerInner: { paddingHorizontal: 16, paddingTop: 4 },
 
@@ -1770,6 +2081,66 @@ const styles = StyleSheet.create({
     borderRadius: 2.5,
   },
 
+  /* ─── ✅ NEW: ORDERS SUMMARY STRIP ─── */
+  ordersSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    backgroundColor: "#F0FDF4",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+  },
+  ordersSummaryLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+    paddingRight: 6,
+  },
+  ordersSummaryIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#DCFCE7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ordersSummaryTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#14532D",
+    letterSpacing: -0.1,
+  },
+  ordersSummarySubtitle: {
+    fontSize: 10.5,
+    fontWeight: "600",
+    color: "#16A34A",
+    marginTop: 1,
+  },
+  ordersSummaryRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  earnedChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: "#DCFCE7",
+    borderWidth: 1,
+    borderColor: "#86EFAC",
+  },
+  earnedChipText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#14532D",
+    letterSpacing: -0.1,
+  },
+
   /* ─── COUPONS TOGGLE ROW ─── */
   couponsToggleRow: {
     flexDirection: "row",
@@ -1802,7 +2173,6 @@ const styles = StyleSheet.create({
     color: "#92400E",
   },
 
-  /* ─── COUPONS EXPANDED CONTAINER ─── */
   couponsExpandedContainer: {
     marginTop: 8,
     backgroundColor: "#F8FAFC",
@@ -1902,7 +2272,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  /* ─── NEW COUPON FORM ─── */
   newCouponForm: {
     marginTop: 8,
     backgroundColor: "#FFFFFF",
@@ -2231,5 +2600,233 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: "800",
     color: "#FFFFFF",
+  },
+
+  /* ─── ✅ NEW: ORDER HISTORY MODAL ─── */
+  ordersModalSheet: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 18,
+    maxHeight: "88%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 25,
+  },
+  ordersModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  ordersModalTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: -0.3,
+  },
+  ordersModalSubtitle: {
+    fontSize: 11.5,
+    color: "#64748B",
+    fontWeight: "600",
+    marginTop: 1,
+  },
+  ordersModalSummary: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F0FDF4",
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    marginBottom: 12,
+  },
+  ordersModalSummaryCell: {
+    flex: 1,
+    alignItems: "center",
+  },
+  ordersModalSummaryLabel: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#14532D",
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  ordersModalSummaryValue: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: -0.5,
+  },
+  ordersModalSummarySep: {
+    width: 1,
+    height: 34,
+    backgroundColor: "#86EFAC",
+    marginHorizontal: 8,
+  },
+  ordersModalScroll: {
+    maxHeight: 380,
+  },
+  ordersModalEmpty: {
+    alignItems: "center",
+    paddingVertical: 34,
+    gap: 8,
+  },
+  ordersModalEmptyIconCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 6,
+  },
+  ordersModalEmptyTitle: {
+    color: "#0F172A",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  ordersModalEmptyText: {
+    color: "#64748B",
+    fontSize: 11.5,
+    fontWeight: "600",
+    textAlign: "center",
+    paddingHorizontal: 20,
+    lineHeight: 16,
+  },
+
+  orderCard: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginBottom: 8,
+  },
+  orderCardTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  orderIdBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#F0FDF4",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    flexShrink: 1,
+  },
+  orderIdBadgeText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#14532D",
+    letterSpacing: 0.2,
+  },
+  orderStatusPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 7,
+    marginLeft: 6,
+  },
+  orderStatusPillText: {
+    fontSize: 9.5,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
+  },
+  orderCardMiddleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  orderServiceChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  orderServiceChipText: {
+    fontSize: 10.5,
+    fontWeight: "700",
+    color: "#334155",
+  },
+  orderDateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  orderDateText: {
+    fontSize: 10.5,
+    color: "#64748B",
+    fontWeight: "600",
+  },
+  orderCustomerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 8,
+  },
+  orderCustomerText: {
+    fontSize: 10.5,
+    color: "#64748B",
+    fontWeight: "600",
+    flexShrink: 1,
+  },
+  orderCardBottomRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
+  },
+  orderAmountLabel: {
+    fontSize: 10.5,
+    color: "#64748B",
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  orderAmountText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: -0.3,
+  },
+
+  ordersModalDoneBtn: {
+    marginTop: 12,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: "#166534",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#166534",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  ordersModalDoneBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "900",
+    letterSpacing: 0.3,
   },
 });
