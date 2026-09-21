@@ -418,6 +418,16 @@ export default function ChefInfoScreen() {
   const resolvedSpecialty = (specialty as string) || chefProfile?.specialty || "Royal Awadh Biryani, Andhra Meals, Tandoori";
   const resolvedExpText = (expText as string) || (chefProfile?.exp ? `${chefProfile.exp} yrs experience` : "14+ yrs experience");
 
+  // ⭐ NEW: Pull the FSSAI number stored on the chef document (set via AddChefs → /api/chefs).
+  // Returned by getChefs/getMyChef as `fssaiNo`. Falls back to empty string so we can
+  // show a graceful default instead of "undefined".
+  const resolvedFssaiNo = useMemo(() => {
+    const raw = chefProfile?.fssaiNo;
+    if (raw === undefined || raw === null) return "";
+    const trimmed = String(raw).trim();
+    return trimmed;
+  }, [chefProfile]);
+
   const resolvedPrice = useMemo(() => {
     let minPrice = Infinity;
     if (chefMenus && chefMenus.length > 0) {
@@ -799,7 +809,14 @@ export default function ChefInfoScreen() {
                 <MaterialIcons name="verified-user" size={18} color={KATBOX.primary} />
               </View>
               <Text style={styles.highlightTitle}>FSSAI Certified</Text>
-              <Text style={styles.highlightSub}>Strict hygiene checks</Text>
+              {/* ⭐ FSSAI number now comes from the respective chef's stored document.
+                  Falls back gracefully to the old static copy if the chef hasn't
+                  provided an FSSAI number yet. */}
+              <Text style={styles.highlightSub} numberOfLines={2}>
+                {resolvedFssaiNo
+                  ? `Lic. ${resolvedFssaiNo}`
+                  : "Strict hygiene checks"}
+              </Text>
             </View>
             <View style={styles.highlightCard}>
               <View style={styles.highlightIconWrap}>

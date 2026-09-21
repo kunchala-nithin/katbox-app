@@ -76,7 +76,7 @@ export default function CateringMenuItemScreen() {
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [selections, setSelections] = useState<Record<number, Set<string>>>({});
   const [triggeredItemPrice, setTriggeredItemPrice] = useState(0);
-  // ✅ NEW: Track the exact item that triggered the limit modal so we can activate it immediately
+  // ✅ Track the exact item that triggered the limit modal so we can activate it immediately
   const [triggeredItemId, setTriggeredItemId] = useState<string | null>(null);
   const [editingAddonId, setEditingAddonId] = useState<string | null>(null);
   const [showSkeleton, setShowSkeleton] = useState(false);
@@ -100,6 +100,29 @@ export default function CateringMenuItemScreen() {
       itemScaleAnims[id] = new Animated.Value(1);
     }
     return itemScaleAnims[id];
+  };
+
+  // ✅ NEW: Per-category animated value used to shake / pulse the "Choose any N" pill
+  //    whenever the user tries to push a zero-priced dish into the paid extra slot.
+  const choosePillAnims = useRef<Record<number, Animated.Value>>({}).current;
+
+  const getChoosePillAnim = (catIndex: number) => {
+    if (!choosePillAnims[catIndex]) {
+      choosePillAnims[catIndex] = new Animated.Value(0);
+    }
+    return choosePillAnims[catIndex];
+  };
+
+  const triggerChoosePillShake = (catIndex: number) => {
+    const anim = getChoosePillAnim(catIndex);
+    anim.setValue(0);
+    Animated.sequence([
+      Animated.timing(anim, { toValue: 1, duration: 70, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: -1, duration: 70, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: 1, duration: 70, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: -1, duration: 70, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: 0, duration: 70, useNativeDriver: true }),
+    ]).start();
   };
 
   let menuParam: any = null;
@@ -180,6 +203,17 @@ export default function CateringMenuItemScreen() {
   const daawathCategories = effectiveMenu?.daawathCategories || [];
   const daawathAddons = effectiveMenu?.daawathAddons || [];
 
+  // ✅ NEW: Resolves the *effective* per-plate extra price for a dish.
+  //    A dish explicitly priced at 0 (or "0"/"0.00") stays at ₹0 instead of
+  //    falling back to the plan level `extraPrice`. This is what lets us
+  //    detect "free" extra dishes and refuse to push them into a paid slot.
+  const getItemExtraPrice = (item: any): number => {
+    if (!item) return safeParsePrice(extraPrice);
+    const raw = item.price;
+    if (raw === null || raw === undefined || raw === "") return safeParsePrice(extraPrice);
+    return safeParsePrice(raw);
+  };
+
   const getMaxForCategory = (catIndex: number) => {
     const cat = daawathCategories[catIndex];
     if (cat?.maxItems !== undefined && cat?.maxItems !== null && cat?.maxItems !== "") {
@@ -198,7 +232,7 @@ export default function CateringMenuItemScreen() {
   const totalSelectedItems = Object.values(selections)
     .reduce((sum: number, set: any) => sum + set.size, 0);
 
-  // ✅ NEW: Gate the "Preview Items" action behind full completion of every course.
+  // ✅ Gate the "Preview Items" action behind full completion of every course.
   //    A category is considered "complete" once its base max selection count is reached.
   const requiredCategoryCount = daawathCategories.length;
   const completedCategoryCount = daawathCategories.reduce((count: number, _cat: any, index: number) => {
@@ -260,10 +294,12 @@ export default function CateringMenuItemScreen() {
     return FALLBACK_PLATE_DATA;
   };
 
+  // ✅ CHANGED: We now render ALL platter items dynamically.
+  //    The old `VISIBLE_PLATE_COUNT = 4` slice + `overflowCount` "+N More" pill
+  //    has been removed so every item is available in both the compact sticky
+  //    header (horizontally scrollable) and the main "What's in the Platter"
+  //    horizontal strip.
   const allPlateItems = parseDynamicPlateItems();
-  const VISIBLE_PLATE_COUNT = 4;
-  const visiblePlateItems = allPlateItems.slice(0, VISIBLE_PLATE_COUNT);
-  const overflowCount = allPlateItems.length > VISIBLE_PLATE_COUNT ? allPlateItems.length - VISIBLE_PLATE_COUNT : 0;
 
   const resolveHeaderImageSource = () => {
     if (effectiveMenu && effectiveMenu.heroImageUrl) {
@@ -329,6 +365,12 @@ export default function CateringMenuItemScreen() {
   // ✅ UPDATED: Accepts an optional `forceAck` flag.
   //    When true, the acknowledgment gate is bypassed so the item is added
   //    immediately (used by the "Continue Adding" button in the limit modal).
+  //
+  // ✅ NEW ZERO-PRICE GUARD:
+  //    If the course limit is already reached AND the tapped dish resolves to a
+  //    ₹0 extra price, we do NOT open the limit modal and we do NOT add the dish.
+  //    Instead we shake the "Choose any N" pill of that category so the user
+  //    understands they must pick from the already-allowed selection.
   const toggleAdded = (catIndex: number, itemId: string, forceAck: boolean = false) => {
     const scaleAnim = getItemScaleAnim(itemId);
     Animated.sequence([
@@ -343,12 +385,20 @@ export default function CateringMenuItemScreen() {
     const currentSet = selections[catIndex] || new Set<string>();
     const items = cat.items || [];
 
+    const item = items.find((p: any, i: number) => (p.id || i.toString()) === itemId);
+    const itemExtraPrice = getItemExtraPrice(item);
+
     if (!currentSet.has(itemId) && currentSet.size >= max) {
+      // ✅ Zero-priced dishes can never be promoted into the paid "extra" slot.
+      if (itemExtraPrice <= 0) {
+        setSelectedCategoryIndex(catIndex);
+        triggerChoosePillShake(catIndex);
+        return;
+      }
+
       const isAcked = forceAck || !!limitAcknowledged[catIndex];
       if (!isAcked) {
-        const item = items.find((p: any, i: number) => (p.id || i.toString()) === itemId);
-        const itemPrice = safeParsePrice(item?.price || extraPrice);
-        setTriggeredItemPrice(itemPrice);
+        setTriggeredItemPrice(itemExtraPrice);
         // ✅ Store the exact item that needs to be activated on Continue
         setTriggeredItemId(itemId);
         setSelectedCategoryIndex(catIndex);
@@ -359,9 +409,7 @@ export default function CateringMenuItemScreen() {
           ...prev,
           [catIndex]: (prev[catIndex] || 0) + 1,
         }));
-        const item = items.find((p: any, i: number) => (p.id || i.toString()) === itemId);
-        const itemPrice = safeParsePrice(item?.price || extraPrice);
-        setTotalExtraPrice((prev) => safeParsePrice(prev) + itemPrice);
+        setTotalExtraPrice((prev) => safeParsePrice(prev) + itemExtraPrice);
       }
     }
 
@@ -372,14 +420,13 @@ export default function CateringMenuItemScreen() {
       if (newSet.has(itemId)) {
         const prevSize = newSet.size;
         newSet.delete(itemId);
-        const item = items.find((p: any, i: number) => (p.id || i.toString()) === itemId);
-        const itemPrice = safeParsePrice(item?.price || extraPrice);
+        const removedItemPrice = getItemExtraPrice(item);
         if (prevSize > baseMax) {
           setExtraItemsCount((prevExtra) => ({
             ...prevExtra,
             [catIndex]: Math.max(0, (prevExtra[catIndex] || 0) - 1),
           }));
-          setTotalExtraPrice((prevExtraTotal) => Math.max(0, safeParsePrice(prevExtraTotal) - itemPrice));
+          setTotalExtraPrice((prevExtraTotal) => Math.max(0, safeParsePrice(prevExtraTotal) - removedItemPrice));
         }
         if (newSet.size <= baseMax) {
           setLimitAcknowledged((prevAck) => ({
@@ -389,7 +436,6 @@ export default function CateringMenuItemScreen() {
         }
       } else {
         newSet.add(itemId);
-        const item = items.find((p: any, i: number) => (p.id || i.toString()) === itemId);
         if (item?.imageUrl) {
           triggerCartFlyAnimation(item.imageUrl);
         }
@@ -398,7 +444,7 @@ export default function CateringMenuItemScreen() {
     });
   };
 
-  // ✅ NEW: Centralised dismiss handler that also clears the trigger state.
+  // ✅ Centralised dismiss handler that also clears the trigger state.
   const dismissLimitModal = () => {
     setShowLimitModal(false);
     setTriggeredItemPrice(0);
@@ -449,7 +495,7 @@ export default function CateringMenuItemScreen() {
           breakdown.push({
             name: item?.name || cat.name,
             categoryName: cat.name || `Course ${index + 1}`,
-            price: safeParsePrice(item?.price || extraPrice),
+            price: getItemExtraPrice(item),
           });
         }
       });
@@ -500,7 +546,7 @@ export default function CateringMenuItemScreen() {
         const extra = selectedItems.length - baseMaxLocal;
         extraCounts[index] = extra;
         selectedItems.slice(baseMaxLocal).forEach((item: any) => {
-          totalExtra += safeParsePrice(item?.price || extraPrice);
+          totalExtra += getItemExtraPrice(item);
         });
       }
     });
@@ -634,12 +680,19 @@ export default function CateringMenuItemScreen() {
           </View>
           <View style={styles.compactBackBtnPlaceholder} />
         </View>
+        {/* ✅ CHANGED: Every platter item is rendered here in a horizontally scrollable strip.
+            No more "+N More" overflow pill. */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.stickyPlateContainer}
+          scrollEnabled={true}
+          nestedScrollEnabled={true}
+          keyboardShouldPersistTaps="handled"
+          bounces={false}
+          overScrollMode="never"
         >
-          {visiblePlateItems.map((dish) => (
+          {allPlateItems.map((dish) => (
             <View key={dish.id} style={styles.stickyDishItem}>
               <View style={styles.dishOuterCircle}>
                 <Image
@@ -650,14 +703,6 @@ export default function CateringMenuItemScreen() {
               <Text style={styles.dishItemLabel} numberOfLines={1}>{dish.name}</Text>
             </View>
           ))}
-          {overflowCount > 0 && (
-            <View style={styles.stickyDishItem}>
-              <View style={styles.moreItemsOuterCircle}>
-                <Text style={styles.moreItemsCountText}>+{overflowCount}</Text>
-              </View>
-              <Text style={styles.dishItemLabel} numberOfLines={1}>More</Text>
-            </View>
-          )}
         </ScrollView>
       </Animated.View>
 
@@ -770,12 +815,18 @@ export default function CateringMenuItemScreen() {
             {loadingItems ? (
               <ActivityIndicator size="small" color="#0F382A" style={{ marginVertical: 14 }} />
             ) : (
+              /* ✅ CHANGED: Shows ALL platter items in a horizontal scroll — no truncation. */
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.dishesHorizontalScroll}
+                scrollEnabled={true}
+                nestedScrollEnabled={true}
+                keyboardShouldPersistTaps="handled"
+                bounces={false}
+                overScrollMode="never"
               >
-                {visiblePlateItems.map((dish) => (
+                {allPlateItems.map((dish) => (
                   <View key={dish.id} style={styles.dishCardItem}>
                     <View style={styles.dishOuterCircle}>
                       <Image
@@ -788,14 +839,6 @@ export default function CateringMenuItemScreen() {
                     </Text>
                   </View>
                 ))}
-                {overflowCount > 0 && (
-                  <View style={styles.dishCardItem}>
-                    <View style={styles.moreItemsOuterCircle}>
-                      <Text style={styles.moreItemsCountText}>+{overflowCount}</Text>
-                    </View>
-                    <Text style={styles.dishItemLabel} numberOfLines={2}>More Items</Text>
-                  </View>
-                )}
               </ScrollView>
             )}
           </View>
@@ -817,6 +860,8 @@ export default function CateringMenuItemScreen() {
             const selectedArray = Array.from(currentSelections);
             const extraSelectedIds = new Set(selectedArray.slice(maxCount));
             const scaleAnim = getItemScaleAnim;
+            // ✅ NEW: animated value driving the shake / pulse of the "Choose any N" pill
+            const choosePillAnim = getChoosePillAnim(catIndex);
 
             return (
               <View key={catIndex} style={styles.categoryCardBlock}>
@@ -827,9 +872,30 @@ export default function CateringMenuItemScreen() {
                     </View>
                     <Text style={styles.categoryHeaderTitleText}>{category.name}</Text>
                   </View>
-                  <View style={styles.chooseTagBadge}>
+                  {/* ✅ NEW: Animated "Choose any N" pill — shakes when a ₹0 extra dish is tapped */}
+                  <Animated.View
+                    style={[
+                      styles.chooseTagBadge,
+                      {
+                        transform: [
+                          {
+                            translateX: choosePillAnim.interpolate({
+                              inputRange: [-1, 1],
+                              outputRange: [-6, 6],
+                            }),
+                          },
+                          {
+                            scale: choosePillAnim.interpolate({
+                              inputRange: [-1, 0, 1],
+                              outputRange: [1.06, 1, 1.06],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  >
                     <Text style={styles.simpleChooseText}>Choose any {maxCount}</Text>
-                  </View>
+                  </Animated.View>
                 </View>
 
                 <View style={styles.itemListGroup}>
@@ -837,7 +903,7 @@ export default function CateringMenuItemScreen() {
                     const itemId = item._id || item.id || index.toString();
                     const isAdded = currentSelections.has(itemId);
                     const isExtraItem = isAdded && extraSelectedIds.has(itemId);
-                    const itemPrice = safeParsePrice(item.price || extraPrice);
+                    const itemPrice = getItemExtraPrice(item);
                     const itemScale = scaleAnim(itemId);
 
                     return (
@@ -1081,7 +1147,7 @@ export default function CateringMenuItemScreen() {
                             <Text style={styles.previewItemName}>{item.name}</Text>
                             {isExtra && (
                               <View style={styles.extraTag}>
-                                <Text style={styles.extraTagText}>+₹{safeParsePrice(item.price || extraPrice)}/plate</Text>
+                                <Text style={styles.extraTagText}>+₹{getItemExtraPrice(item)}/plate</Text>
                               </View>
                             )}
                             <Feather
@@ -1951,7 +2017,7 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  // ✅ NEW: Disabled visual state for the gated "Preview Items" button
+  // ✅ Disabled visual state for the gated "Preview Items" button
   footerActionSubmitBtnDisabled: {
     backgroundColor: "#E3EAE6",
     shadowOpacity: 0,
@@ -1964,7 +2030,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.2,
   },
-  // ✅ NEW: Disabled text state for the gated "Preview Items" button
+  // ✅ Disabled text state for the gated "Preview Items" button
   footerSubmitBtnTextDisabled: {
     color: "#7A8F86",
   },

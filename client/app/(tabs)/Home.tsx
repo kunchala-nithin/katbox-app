@@ -153,13 +153,13 @@ const BANNER_SLIDES: BannerSlide[] = [
   },
 ];
 
-// ✅ UPDATED: Quick Bites (with "45 MIN" badge) inserted at position 5, View All moved to position 6
+// ✅ UPDATED: Quick Bites (with "75 MIN" badge) inserted at position 5, View All moved to position 6
 const CATEGORIES: CategoryItem[] = [
   { id: '1', name: 'Meal Boxes', icon: 'food-takeout-box-outline', type: 'mci', badge: 'HOT' },
   { id: '2', name: 'Catering', icon: 'silverware-fork-knife', type: 'mci' },
   { id: '3', name: 'Hire Chef', icon: 'user-tie', type: 'fa5', badge: 'SOON' },
   { id: '4', name: 'Food & Cravings', icon: 'silverware-variant', type: 'mci' },
-  { id: '5', name: 'Quick Bites', icon: 'lightning-bolt', type: 'mci', badge: '45 MIN' },
+  { id: '5', name: 'Quick Bites', icon: 'lightning-bolt', type: 'mci', badge: '75 MIN' },
   { id: '6', name: 'View All', icon: 'grid', type: 'feather' },
 ];
 
@@ -1548,7 +1548,7 @@ export default function HomeScreen() {
                           style={[
                             styles.categoryHotBadge,
                             item.badge === 'SOON' && styles.categorySoonBadge,
-                            item.badge === '45 MIN' && styles.categoryQuickBadge,
+                            item.badge === '75 MIN' && styles.categoryQuickBadge,
                           ]}
                         >
                           <Text style={styles.categoryHotBadgeText}>{item.badge}</Text>
@@ -2799,7 +2799,7 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   // ✅ UPDATED: premium badge with white ring, shadow, and proper alignment.
-  //    Sized so short labels (HOT / SOON) and longer labels (45 MIN) both
+  //    Sized so short labels (HOT / SOON) and longer labels (75 MIN) both
   //    render cleanly without overlapping adjacent categories.
   categoryHotBadge: {
     position: 'absolute',
@@ -2825,7 +2825,7 @@ const styles = StyleSheet.create({
   categorySoonBadge: {
     backgroundColor: '#D97706',
   },
-  // ✅ NEW: distinct premium green for the "45 MIN" Quick Bites speed badge
+  // ✅ NEW: distinct premium green for the "75 MIN" Quick Bites speed badge
   categoryQuickBadge: {
     backgroundColor: '#15803D',
   },

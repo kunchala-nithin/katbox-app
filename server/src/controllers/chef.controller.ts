@@ -420,20 +420,218 @@ export const deleteChef = async (req: any, res: Response) => {
   }
 };
 
-// GET ALL CHEFS
+// ============================================================
+// GET ALL CHEFS (CUSTOMER-FACING)
+// ============================================================
+// ✅ UPDATED: Now filters out chefs whose linked User account
+//    has been blocked by admin (User.isChef === false).
+//
+//    Behavior contract:
+//      • Chef docs with no linked User  → still visible (safe default)
+//      • Chef docs with User.isChef=true → visible
+//      • Chef docs with User.isChef=undefined → visible (legacy data)
+//      • Chef docs with User.isChef=false → HIDDEN (blocked by admin)
+//
+//    This makes the admin "Block" switch immediately hide the chef
+//    from Home.tsx, AllChefCards.tsx, and every other customer
+//    screen that reads from this endpoint.
+// ============================================================
 export const getChefs = async (_req: Request, res: Response) => {
   try {
     const chefs = await Chef.find().sort({ createdAt: -1 });
 
+    // Collect all linked user IDs so we can resolve isChef in ONE query
+    const userIds = chefs
+      .map((c: any) => c.user)
+      .filter(Boolean);
+
+    if (userIds.length === 0) {
+      return res.json({
+        success: true,
+        chefs,
+      });
+    }
+
+    const users = await User.find({ _id: { $in: userIds } })
+      .select("_id isChef")
+      .lean();
+
+    // Only users explicitly flagged as isChef === false are blocked.
+    // Undefined / null / true are all treated as "not blocked".
+    const blockedUserIds = new Set<string>(
+      users
+        .filter((u: any) => u?.isChef === false)
+        .map((u: any) => String(u._id))
+    );
+
+    const visibleChefs = chefs.filter(
+      (c: any) => !blockedUserIds.has(String(c.user))
+    );
+
     return res.json({
       success: true,
-      chefs,
+      chefs: visibleChefs,
     });
   } catch (error) {
     console.error("Get chefs error:", error);
 
     return res.status(500).json({
       message: "Server error",
+    });
+  }
+};
+
+// ============================================================
+// GET ALL CHEFS (ADMIN VIEW)
+// ============================================================
+// ✅ NEW: Returns EVERY chef (including blocked ones) along with
+//    the linked User account's `isChef` flag, email and phone so
+//    the admin screen can render a Block / Unblock switch that
+//    reflects the real database state.
+//
+//    Response shape adds these fields per chef:
+//      • userIsChef  → boolean (true = active, false = blocked)
+//      • userEmail   → string
+//      • userPhone   → string
+// ============================================================
+export const getAllChefsForAdmin = async (_req: Request, res: Response) => {
+  try {
+    const chefs = await Chef.find().sort({ createdAt: -1 });
+
+    const userIds = chefs
+      .map((c: any) => c.user)
+      .filter(Boolean);
+
+    const users = await User.find({ _id: { $in: userIds } })
+      .select("_id isChef email name phone")
+      .lean();
+
+    // Build a lookup map for O(1) access per chef
+    const userMap = new Map<string, any>();
+    users.forEach((u: any) => {
+      userMap.set(String(u._id), u);
+    });
+
+    const enrichedChefs = chefs.map((chef: any) => {
+      const chefObj = typeof chef.toObject === "function" ? chef.toObject() : chef;
+      const linkedUser = userMap.get(String(chef.user));
+
+      // ✅ `userIsChef` is the actual source of truth for the switch.
+      //    If no linked user exists (orphan chef doc), default to true
+      //    so the admin sees the chef as "active" — the switch will
+      //    then simply fail gracefully on toggle because User is missing.
+      const userIsChef =
+        linkedUser === undefined
+          ? true
+          : linkedUser?.isChef !== false;
+
+      return {
+        ...chefObj,
+        userIsChef,
+        userEmail: linkedUser?.email || "",
+        userPhone: linkedUser?.phone || linkedUser?.name ? linkedUser?.phone || "" : "",
+      };
+    });
+
+    return res.json({
+      success: true,
+      chefs: enrichedChefs,
+      total: enrichedChefs.length,
+    });
+  } catch (error: any) {
+    console.error("Get all chefs (admin) error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch chefs for admin",
+    });
+  }
+};
+
+// ============================================================
+// TOGGLE CHEF BLOCK STATUS (ADMIN ONLY)
+// ============================================================
+// ✅ NEW: Flips the `isChef` flag on the linked User document.
+//
+//    • isChef = true  → chef is ACTIVE (visible to customers)
+//    • isChef = false → chef is BLOCKED (hidden from customers)
+//
+//    Body (optional):
+//      { isChef: boolean }
+//        - If provided, force-sets the value (idempotent write).
+//        - If omitted, toggles the current value.
+//
+//    Accepts EITHER:
+//      • Chef._id
+//      • Chef's linked User._id
+//      • Chef's name (fallback)
+// ============================================================
+export const toggleChefBlockStatus = async (req: any, res: Response) => {
+  try {
+    const rawChefId = req.params.chefId;
+    const chefId = Array.isArray(rawChefId) ? rawChefId[0] : rawChefId;
+
+    if (!chefId) {
+      return res.status(400).json({
+        success: false,
+        message: "Chef ID is required",
+      });
+    }
+
+    const { isChef: forceValue } = req.body || {};
+
+    // Find the chef document — accept either _id or linked user _id
+    const query: any = {};
+    if (mongoose.Types.ObjectId.isValid(chefId)) {
+      query.$or = [{ _id: chefId }, { user: chefId }];
+    } else {
+      query.$or = [{ name: chefId }];
+    }
+
+    const chef = await Chef.findOne(query);
+    if (!chef) {
+      return res.status(404).json({
+        success: false,
+        message: "Chef not found",
+      });
+    }
+
+    // Fetch the linked User document
+    const user = await User.findById(chef.user);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Linked user account not found for this chef",
+      });
+    }
+
+    // Determine the new value:
+    //   - If the admin sent an explicit boolean → use it (idempotent).
+    //   - Otherwise → toggle current value.
+    const nextIsChef =
+      typeof forceValue === "boolean" ? forceValue : !user.isChef;
+
+    user.isChef = nextIsChef;
+    await user.save();
+
+    console.log(
+      `🔐 Admin ${nextIsChef ? "UNBLOCKED" : "BLOCKED"} chef '${chef.name}' (chef:${chef._id}, user:${user._id})`
+    );
+
+    return res.json({
+      success: true,
+      message: nextIsChef
+        ? `Chef '${chef.name}' has been unblocked and is now active.`
+        : `Chef '${chef.name}' has been blocked.`,
+      chefId: chef._id,
+      chefName: chef.name,
+      userId: user._id,
+      isChef: user.isChef,
+    });
+  } catch (error: any) {
+    console.error("Toggle chef block status error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update chef block status",
     });
   }
 };

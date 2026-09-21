@@ -10,6 +10,8 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  LayoutAnimation,
+  UIManager,
 } from "react-native";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -21,6 +23,30 @@ import { useNavigationStore } from "@/src/store/navigationStore";
 const filterCategories = ["Breakfast", "Lunch", "Dinner", "Snacks"];
 const STATUS_BAR_PADDING = Platform.OS === "ios" ? 48 : (StatusBar.currentHeight || 24);
 const SCROLL_THRESHOLD = 70;
+
+// Needed on legacy Android architecture for LayoutAnimation to actually run.
+// (No-op / already enabled by default on the New Architecture and on iOS.)
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// ─── Collapsed-header geometry ───
+// The sticky header sits at `top: STATUS_BAR_PADDING + STICKY_TOP_OFFSET`
+// with a height of STICKY_HEIGHT, so its bottom edge sits at
+// `STATUS_BAR_PADDING + STICKY_TOP_OFFSET + STICKY_HEIGHT`. Adding PILLS_GAP
+// gives the exact spot (in content-local coordinates, i.e. below the
+// container's own STATUS_BAR_PADDING) where the pills should rest once the
+// header is collapsed.
+const STICKY_TOP_OFFSET = 4;
+const STICKY_HEIGHT = 50;
+const PILLS_GAP = 6;
+const TARGET_PILLS_TOP_IN_CONTENT = STICKY_TOP_OFFSET + STICKY_HEIGHT + PILLS_GAP; // 60
+
+const LAYOUT_ANIM_CONFIG = LayoutAnimation.create(
+  220,
+  LayoutAnimation.Types.easeInEaseOut,
+  LayoutAnimation.Properties.opacity
+);
 
 export default function HomeChefDetail() {
   const router = useRouter();
@@ -79,9 +105,13 @@ export default function HomeChefDetail() {
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const [headerHeight, setHeaderHeight] = useState(Platform.OS === "ios" ? 220 : 205);
 
-  // Tracks whether the header is collapsed. We only flip this when the
-  // threshold is crossed so that re-renders stay minimal (and animations
-  // remain on the native driver / smooth).
+  // Tracks whether the header is collapsed. This is the ONLY thing that
+  // decides the header's real layout below (full header vs. a small fixed
+  // spacer). Because it's real layout — not a manually-computed transform —
+  // the container's onLayout below always measures the correct height,
+  // which headerHeight feeds straight into the scroll content's paddingTop.
+  // There is exactly one source of truth, so no separate calculation can
+  // ever drift out of sync and leave a gap.
   const [isCollapsed, setIsCollapsed] = useState(false);
   const isCollapsedRef = useRef(false);
 
@@ -141,7 +171,10 @@ export default function HomeChefDetail() {
 
   // Animated scroll event that also notifies us when the collapse threshold
   // is crossed. setState is only fired on threshold changes → no per-frame
-  // re-renders, so scrolling animation stays perfectly smooth.
+  // re-renders, so scrolling animation stays perfectly smooth. When the
+  // threshold flips we ask LayoutAnimation to smoothly animate the resulting
+  // real layout change (header shrinking/growing, pills + content sliding),
+  // instead of us trying to hand-compute a matching pixel offset ourselves.
   const onScroll = useCallback(
     Animated.event(
       [{ nativeEvent: { contentOffset: { y: scrollY } } }],
@@ -152,6 +185,7 @@ export default function HomeChefDetail() {
           const collapsed = y >= SCROLL_THRESHOLD;
           if (collapsed !== isCollapsedRef.current) {
             isCollapsedRef.current = collapsed;
+            LayoutAnimation.configureNext(LAYOUT_ANIM_CONFIG);
             setIsCollapsed(collapsed);
           }
         },
@@ -190,16 +224,16 @@ export default function HomeChefDetail() {
     : { uri: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?q=80&w=150" };
   const displayRating = rating ? (rating as string) : "4.8";
 
-  // ── Smoother / longer interpolation ranges for a gentler collapse ──
+  // ── Smoother / longer interpolation ranges for a gentler fade ──
   const titleTranslateY = scrollY.interpolate({
-    inputRange: [0, 95],
-    outputRange: [0, -34],
+    inputRange: [0, 55],
+    outputRange: [0, -20],
     extrapolate: "clamp",
   });
 
   const titleScale = scrollY.interpolate({
-    inputRange: [0, 95],
-    outputRange: [1, 0.92],
+    inputRange: [0, 55],
+    outputRange: [1, 0.94],
     extrapolate: "clamp",
   });
 
@@ -362,40 +396,55 @@ export default function HomeChefDetail() {
           }
         }}
       >
-        <Animated.View style={[styles.headerShadowOverlay, { opacity: shadowBorderOpacity }]} />
-
         <Animated.View
           style={[
-            styles.mainHeaderWrapper,
-            {
-              opacity: mainHeaderOpacity,
-              transform: [{ translateY: titleTranslateY }, { scale: titleScale }],
-            },
+            styles.headerShadowOverlay,
+            { opacity: shadowBorderOpacity },
           ]}
-          pointerEvents={isCollapsed ? "none" : "auto"}
-        >
-          <View style={styles.mainTitleRow}>
-            <TouchableOpacity
-              style={styles.actionIconButton}
-              onPress={handleBack}
-              activeOpacity={0.75}
-            >
-              <Ionicons name="chevron-back" size={20} color="#0D2E22" />
-            </TouchableOpacity>
-            {renderVegToggle(false)}
-          </View>
+        />
 
-          <View style={styles.heroTextContainer}>
-            <Text style={styles.screenTitle} numberOfLines={1}>
-              Choose Your Platter
-            </Text>
-            <Text style={styles.screenSubtitle} numberOfLines={1}>
-              {effectiveChefName
-                ? `Fresh homemade ${showVegOnly ? "veg " : ""}meals by ${effectiveChefName}`
-                : `Delicious ${showVegOnly ? "veg " : ""}meals prepared with care`}
-            </Text>
-          </View>
-        </Animated.View>
+        {isCollapsed ? (
+          // Fully collapsed: swap the tall "Choose Your Platter" block for a
+          // small fixed-height spacer. This is REAL layout (not a faked
+          // transform), so the container's onLayout above measures the true
+          // shrunk height, which flows straight into headerHeight → the
+          // scroll content's paddingTop. That's the only place the "gap"
+          // could ever come from, and now there's nothing left to miscalculate.
+          <View style={styles.collapsedHeaderSpacer} pointerEvents="none" />
+        ) : (
+          <Animated.View
+            style={[
+              styles.mainHeaderWrapper,
+              {
+                opacity: mainHeaderOpacity,
+                transform: [{ translateY: titleTranslateY }, { scale: titleScale }],
+              },
+            ]}
+            pointerEvents="auto"
+          >
+            <View style={styles.mainTitleRow}>
+              <TouchableOpacity
+                style={styles.actionIconButton}
+                onPress={handleBack}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="chevron-back" size={20} color="#0D2E22" />
+              </TouchableOpacity>
+              {renderVegToggle(false)}
+            </View>
+
+            <View style={styles.heroTextContainer}>
+              <Text style={styles.screenTitle} numberOfLines={1}>
+                Choose Your Platter
+              </Text>
+              <Text style={styles.screenSubtitle} numberOfLines={1}>
+                {effectiveChefName
+                  ? `Fresh homemade ${showVegOnly ? "veg " : ""}meals by ${effectiveChefName}`
+                  : `Delicious ${showVegOnly ? "veg " : ""}meals prepared with care`}
+              </Text>
+            </View>
+          </Animated.View>
+        )}
 
         <Animated.View
           style={[
@@ -574,6 +623,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 8,
     paddingBottom: 8,
+  },
+  collapsedHeaderSpacer: {
+    // Exactly the space needed so the pills row (rendered right after this)
+    // lands at content-local y = TARGET_PILLS_TOP_IN_CONTENT — precisely
+    // below the sticky header + its gap. Real height, so onLayout on the
+    // parent container picks it up automatically; nothing else to sync.
+    width: "100%",
+    height: TARGET_PILLS_TOP_IN_CONTENT,
   },
   mainTitleRow: {
     flexDirection: "row",
