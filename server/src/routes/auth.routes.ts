@@ -8,6 +8,8 @@ import User, {
   ISavedAddress,
   IActiveAddress,
 } from "../models/User";
+// ✅ NEW: Chef model import — needed to join Chef.orderHistory for chef users
+import Chef from "../models/Chef";
 // import { otpRateLimiter } from "../middleware/otpRateLimit"; // ⭐ Twilio rate limiter commented out
 import {
   AuthRequest,
@@ -75,7 +77,7 @@ const buildUserResponse = (user: any) => ({
  * ✅ NEW: requireAdmin middleware
  * ============================================================
  *
- * Inline admin check for the new admin-only endpoints.
+ * Inline admin check for the admin-only endpoints.
  * Loads the user from MongoDB and verifies isAdmin === true.
  * Any non-admin request receives 403 with a clear message.
  * ============================================================
@@ -1760,22 +1762,31 @@ router.put(
 
 /*
  * ============================================================
- * ✅ NEW: ADMIN — LIST ALL USERS (with order history)
+ * ✅ UPDATED: ADMIN — LIST ALL USERS (with order history)
  * ============================================================
  *
  * GET /auth/admin/users
  * GET /auth/users  (legacy alias)
  *
- * Returns every user with their full order history populated
- * from `User.orderHistory` (refs to Order documents).
+ * NEW (this update):
+ *   For every user whose isChef === true, we ALSO look up the
+ *   linked Chef document and populate its orderHistory. This
+ *   returns the orders that were PLACED TO that user as a chef
+ *   (which are stored on Chef.orderHistory, not User.orderHistory).
  *
  * Response shape per user:
  *   {
  *     _id, name, phone, email, isChef, isAdmin, createdAt,
- *     orderCount,  // number of orders placed
- *     totalSpent,  // sum of totalAmount across all orders
+ *
+ *     // Orders PLACED by this user (as customer):
+ *     orderCount, totalSpent,
  *     orders: [ { orderId, totalAmount, orderStatus,
- *                 serviceType, createdAt } ]
+ *                 serviceType, createdAt } ],
+ *
+ *     // ✅ NEW — Orders RECEIVED by this user (as chef):
+ *     receivedOrderCount, totalEarned,
+ *     receivedOrders: [ same shape as orders ],
+ *     chefId: <chef._id | null>
  *   }
  * ============================================================
  */
@@ -1794,14 +1805,74 @@ const getAllUsersHandler = async (
       .sort({ createdAt: -1 })
       .lean();
 
+    /* ─────────────────────────────────────────────────────────
+       ✅ NEW: Fetch Chef documents for every chef user in a single
+       batched query, then populate their orderHistory too.
+       This is the join that makes "received orders" available.
+       ───────────────────────────────────────────────────────── */
+    const chefUserIds = users
+      .filter((u: any) => u?.isChef && u?._id)
+      .map((u: any) => u._id);
+
+    const chefDocMap = new Map<string, any>();
+
+    if (chefUserIds.length > 0) {
+      const chefDocs = await Chef.find({ user: { $in: chefUserIds } })
+        .populate({
+          path: "orderHistory",
+          select:
+            "orderId totalAmount orderStatus serviceType createdAt",
+          options: { sort: { createdAt: -1 } },
+        })
+        .lean();
+
+      chefDocs.forEach((c: any) => {
+        if (c?.user) {
+          chefDocMap.set(String(c.user), c);
+        }
+      });
+    }
+
+    /* ─────────────────────────────────────────────────────────
+       Normalize a raw order document into a minimal payload
+       the client can safely render without a second fetch.
+       ───────────────────────────────────────────────────────── */
+    const normalizeOrder = (o: any) => ({
+      _id: o?._id,
+      orderId: o?.orderId || "",
+      totalAmount: Number(o?.totalAmount) || 0,
+      orderStatus: o?.orderStatus || "Placed",
+      serviceType: o?.serviceType || "",
+      createdAt: o?.createdAt || null,
+    });
+
     const enrichedUsers = users.map((u: any) => {
-      const orders: any[] = Array.isArray(u.orderHistory)
+      // Orders PLACED by this user (as a customer)
+      const placedRaw: any[] = Array.isArray(u.orderHistory)
         ? u.orderHistory.filter(Boolean)
         : [];
+      const placedOrders = placedRaw.map(normalizeOrder);
 
-      const orderCount = orders.length;
-      const totalSpent = orders.reduce(
-        (sum, o) => sum + (Number(o.totalAmount) || 0),
+      // Orders RECEIVED by this user (as a chef) — only for chefs
+      const chefDoc = chefDocMap.get(String(u._id));
+      const receivedRaw: any[] =
+        chefDoc && Array.isArray(chefDoc.orderHistory)
+          ? chefDoc.orderHistory.filter(Boolean)
+          : [];
+      const receivedOrders = receivedRaw.map(normalizeOrder);
+
+      // Deduplicate (rare case: a chef orders from themselves)
+      const placedIds = new Set(placedOrders.map((o: any) => String(o._id)));
+      const dedupedReceived = receivedOrders.filter(
+        (o: any) => !placedIds.has(String(o._id))
+      );
+
+      const totalSpent = placedOrders.reduce(
+        (sum, o) => sum + o.totalAmount,
+        0
+      );
+      const totalEarned = dedupedReceived.reduce(
+        (sum, o) => sum + o.totalAmount,
         0
       );
 
@@ -1813,16 +1884,19 @@ const getAllUsersHandler = async (
         isChef: !!u.isChef,
         isAdmin: !!u.isAdmin,
         createdAt: u.createdAt,
-        orderCount,
+
+        // Placed (as customer)
+        orderCount: placedOrders.length,
         totalSpent,
-        orders: orders.map((o: any) => ({
-          _id: o._id,
-          orderId: o.orderId || "",
-          totalAmount: Number(o.totalAmount) || 0,
-          orderStatus: o.orderStatus || "Placed",
-          serviceType: o.serviceType || "",
-          createdAt: o.createdAt,
-        })),
+        orders: placedOrders,
+
+        // Received (as chef) — zero/empty for non-chef users
+        receivedOrderCount: dedupedReceived.length,
+        totalEarned,
+        receivedOrders: dedupedReceived,
+
+        // Chef profile _id (useful for deep-linking to /admin/all-chefs)
+        chefId: chefDoc?._id || null,
       };
     });
 
@@ -2012,4 +2086,3 @@ router.patch(
   }
 );
 
-export default router;

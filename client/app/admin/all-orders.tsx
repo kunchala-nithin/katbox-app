@@ -18,6 +18,7 @@ import {
   LayoutAnimation,
   UIManager,
   Easing,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -269,6 +270,9 @@ export default function AdminAllOrdersScreen() {
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(0);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
 
+  // ✅ NEW: Search query state
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   // Filter tabs
   const [statusFilter, setStatusFilter] = useState<'All' | 'Placed' | 'Accepted' | 'Preparing' | 'Delivered' | 'Cancelled'>('All');
 
@@ -493,12 +497,45 @@ export default function AdminAllOrdersScreen() {
   }, []);
 
   // ─── Filtered orders ───
+  // ✅ UPDATED: Now applies BOTH the status filter AND the search query.
+  //    Search matches against orderId, customer name, chef name,
+  //    restaurant name, user/chef phone numbers and menu name.
   const filteredOrders = useMemo(() => {
-    if (statusFilter === 'All') return orders;
-    return orders.filter(
-      (o) => (o.orderStatus || 'Placed').toLowerCase() === statusFilter.toLowerCase()
-    );
-  }, [orders, statusFilter]);
+    let list = orders;
+
+    if (statusFilter !== 'All') {
+      list = list.filter(
+        (o) => (o.orderStatus || 'Placed').toLowerCase() === statusFilter.toLowerCase()
+      );
+    }
+
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((o) => {
+        const orderId = String(o.orderId || '').toLowerCase();
+        const userName = String(o.userName || '').toLowerCase();
+        const chefName = String(o.chefName || '').toLowerCase();
+        const restaurantName = String(o.restaurantName || '').toLowerCase();
+        const userPhone = String(o.userPhone || o.phone || o.customerPhone || '').toLowerCase();
+        const chefPhone = String(o.chefPhone || '').toLowerCase();
+        const menuName = String(o.menuName || '').toLowerCase();
+        const addressDetails = String(o.addressDetails || o.deliveryAddress || '').toLowerCase();
+
+        return (
+          orderId.includes(q) ||
+          userName.includes(q) ||
+          chefName.includes(q) ||
+          restaurantName.includes(q) ||
+          userPhone.includes(q) ||
+          chefPhone.includes(q) ||
+          menuName.includes(q) ||
+          addressDetails.includes(q)
+        );
+      });
+    }
+
+    return list;
+  }, [orders, statusFilter, searchQuery]);
 
   const activeOrder = filteredOrders[selectedOrderIndex] || filteredOrders[0] || null;
 
@@ -507,6 +544,12 @@ export default function AdminAllOrdersScreen() {
       setSelectedOrderIndex(0);
     }
   }, [filteredOrders.length]);
+
+  // ✅ NEW: Whenever the search query changes, jump back to the first
+  //    matching order so the user immediately sees the top result.
+  useEffect(() => {
+    setSelectedOrderIndex(0);
+  }, [searchQuery]);
 
   const orderTimeFormatted = activeOrder?.createdAt
     ? new Date(activeOrder.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -1197,6 +1240,34 @@ export default function AdminAllOrdersScreen() {
               </TouchableOpacity>
             </View>
 
+            {/* ✅ NEW: SEARCH BAR — filters orders live by order ID, customer,
+                chef, phone numbers and menu name. Works in harmony with the
+                status filter tabs below. */}
+            <View style={styles.searchBarWrapper}>
+              <View style={styles.searchBarContainer}>
+                <Ionicons name="search" size={16} color="#60A5FA" />
+                <TextInput
+                  style={styles.searchBarInput}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search order ID, customer, chef, phone..."
+                  placeholderTextColor="#64748B"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                  keyboardAppearance="dark"
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => setSearchQuery('')}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close-circle" size={16} color="#64748B" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             {/* Filter Tabs */}
             <ScrollView
               horizontal
@@ -1302,12 +1373,30 @@ export default function AdminAllOrdersScreen() {
           {filteredOrders.length === 0 ? (
             <View style={styles.emptyContainer}>
               <View style={styles.emptyIconCircle}>
-                <Ionicons name="receipt-outline" size={40} color="#2563EB" />
+                <Ionicons
+                  name={searchQuery.trim() ? 'search-outline' : 'receipt-outline'}
+                  size={40}
+                  color="#2563EB"
+                />
               </View>
-              <Text style={styles.emptyTitle}>No Orders Found</Text>
-              <Text style={styles.emptySubtitle}>
-                No orders match the selected filter. Tap refresh to reload.
+              <Text style={styles.emptyTitle}>
+                {searchQuery.trim() ? 'No Matching Orders' : 'No Orders Found'}
               </Text>
+              <Text style={styles.emptySubtitle}>
+                {searchQuery.trim()
+                  ? `No orders match "${searchQuery.trim()}". Try a different keyword or clear the search.`
+                  : 'No orders match the selected filter. Tap refresh to reload.'}
+              </Text>
+              {searchQuery.trim() ? (
+                <TouchableOpacity
+                  style={styles.emptyClearSearchBtn}
+                  activeOpacity={0.85}
+                  onPress={() => setSearchQuery('')}
+                >
+                  <Ionicons name="close-circle" size={14} color="#FFFFFF" />
+                  <Text style={styles.emptyClearSearchBtnText}>Clear Search</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           ) : (
             <>
@@ -2313,6 +2402,29 @@ const styles = StyleSheet.create({
   },
   notificationBadgeText: { color: '#FFFFFF', fontSize: 8.5, fontWeight: '900' },
 
+  /* ─── ✅ NEW: SEARCH BAR (Admin Blue Theme) ─── */
+  searchBarWrapper: {
+    marginBottom: 12,
+  },
+  searchBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 12,
+    height: 42,
+    gap: 8,
+  },
+  searchBarInput: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '500',
+    color: '#F3F4F6',
+    paddingVertical: 0,
+  },
+
   filterTabPill: { paddingHorizontal: 12, paddingVertical: 7, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: 'rgba(255, 255, 255, 0.06)' },
   filterTabPillActive: { backgroundColor: '#2563EB' },
   filterTabText: { fontSize: 12, fontWeight: '600', color: '#94A3B8' },
@@ -2343,7 +2455,30 @@ const styles = StyleSheet.create({
   emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 90, paddingHorizontal: 20 },
   emptyIconCircle: { width: 76, height: 76, borderRadius: 38, backgroundColor: '#DBEAFE', alignItems: 'center', justifyContent: 'center', marginBottom: 16, borderWidth: 1, borderColor: '#BFDBFE' },
   emptyTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
-  emptySubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center', fontWeight: '500' },
+  emptySubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center', fontWeight: '500', lineHeight: 18 },
+
+  /* ✅ NEW: Empty-state "clear search" CTA button */
+  emptyClearSearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginTop: 16,
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  emptyClearSearchBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
 
   card: {
     backgroundColor: '#FFFFFF', borderRadius: 22, padding: 16, marginBottom: 14,
