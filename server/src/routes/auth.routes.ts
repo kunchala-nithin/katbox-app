@@ -3,14 +3,14 @@ dotenv.config();
 
 import express from "express";
 import jwt from "jsonwebtoken";
-// import twilio from "twilio"; // ⭐ Twilio commented out for future use
+import twilio from "twilio"; // ⭐ Twilio is now ACTIVE again
 import User, {
   ISavedAddress,
   IActiveAddress,
 } from "../models/User";
-// ✅ NEW: Chef model import — needed to join Chef.orderHistory for chef users
+// ✅ Chef model import — needed to join Chef.orderHistory for chef users
 import Chef from "../models/Chef";
-// import { otpRateLimiter } from "../middleware/otpRateLimit"; // ⭐ Twilio rate limiter commented out
+import { otpRateLimiter } from "../middleware/otpRateLimit"; // ⭐ Twilio rate limiter is ACTIVE
 import {
   AuthRequest,
   protect,
@@ -37,11 +37,10 @@ const normalizeEmail = (email: unknown): string => {
 };
 
 /**
- * Initialize Twilio Client safely.
+ * Initialize Twilio Client.
  *
- * Kept commented out for future OTP login.
+ * Used for the OTP-based phone login flow.
  */
-/*
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
@@ -50,7 +49,6 @@ const twilioClient =
   accountSid && authToken
     ? twilio(accountSid, authToken)
     : null;
-*/
 
 /**
  * Helper: build consistent user response payload.
@@ -74,7 +72,7 @@ const buildUserResponse = (user: any) => ({
 
 /*
  * ============================================================
- * ✅ NEW: requireAdmin middleware
+ * requireAdmin middleware
  * ============================================================
  *
  * Inline admin check for the admin-only endpoints.
@@ -130,187 +128,219 @@ const requireAdmin = async (
 
 /*
  * ============================================================
- * CLERK GOOGLE LOGIN
+ * SEND OTP VIA TWILIO VERIFY API v2
  * ============================================================
  *
- * ACCOUNT RULE:
+ * Mobile-number-based login flow.
  *
- *   ONE MOBILE NUMBER
- *          ↓
- *   ONE GOOGLE EMAIL
- *          ↓
- *   ONE MONGODB USER
+ *   POST /auth/send-otp
+ *   Body: { phone: "+919133450555" | "9133450555", name?: string }
  *
- * The mobile number is checked FIRST.
+ * Twilio Verify handles:
+ *   - SMS delivery
+ *   - rate limiting (in addition to our own rateLimiter)
+ *   - code expiry
+ *   - code hashing
  *
- * This prevents:
- *
- *   Same mobile + Google account A
- *
- * from becoming:
- *
- *   Same mobile + Google account B
- *
+ * The user is NOT created here. That happens inside /verify-otp
+ * once the OTP is confirmed approved by Twilio.
  * ============================================================
  */
+router.post(
+  "/send-otp",
+  otpRateLimiter,
+  async (req, res) => {
+    try {
+      const { phone } = req.body;
 
-router.post("/clerk-login", async (req, res) => {
-  try {
-    const {
-      email,
-      name,
-      phone,
-      clerkId,
-    } = req.body;
-
-    /*
-     * --------------------------------------------------------
-     * BASIC VALIDATION
-     * --------------------------------------------------------
-     */
-
-    const normalizedEmail =
-      normalizeEmail(email);
-
-    const normalizedPhone = phone
-      ? normalizeIndianPhone(phone)
-      : "";
-
-    const cleanName =
-      name &&
-      typeof name === "string"
-        ? name.trim()
-        : "User";
-
-    /*
-     * Google login must provide:
-     *
-     * - real Google email
-     * - real Clerk ID
-     * - mobile number
-     */
-    if (!normalizedEmail) {
-      return res.status(400).json({
-        code: "EMAIL_REQUIRED",
-        message:
-          "Google email is required.",
-      });
-    }
-
-    if (!clerkId || typeof clerkId !== "string") {
-      return res.status(400).json({
-        code: "CLERK_ID_REQUIRED",
-        message:
-          "Clerk user ID is required.",
-      });
-    }
-
-    if (!normalizedPhone) {
-      return res.status(400).json({
-        code: "PHONE_REQUIRED",
-        message:
-          "Valid mobile number is required.",
-      });
-    }
-
-    console.log(
-      "🔐 Katbox Clerk login request:",
-      {
-        email: normalizedEmail,
-        phone: normalizedPhone,
-        clerkId,
-      }
-    );
-
-    /*
-     * ========================================================
-     * STEP 1 — FIND USER BY MOBILE FIRST
-     * ========================================================
-     *
-     * This is the most important change.
-     */
-
-    let user = await User.findOne({
-      phone: normalizedPhone,
-    });
-
-    /*
-     * ========================================================
-     * EXISTING MOBILE NUMBER
-     * ========================================================
-     */
-
-    if (user) {
-      console.log(
-        `🔎 Existing Katbox user found for mobile ${normalizedPhone}`
-      );
-
-      const existingEmail =
-        normalizeEmail(user.email);
-
-      /*
-       * ------------------------------------------------------
-       * EXISTING MOBILE + EXISTING EMAIL
-       * ------------------------------------------------------
-       *
-       * If the stored Google email differs from the newly
-       * selected Google email, reject the login.
-       */
-
-      if (
-        existingEmail &&
-        existingEmail !== normalizedEmail
-      ) {
-        console.log(
-          "🚫 Google email mismatch for existing mobile:",
-          {
-            phone: normalizedPhone,
-            registeredEmail: existingEmail,
-            attemptedEmail: normalizedEmail,
-          }
-        );
-
-        return res.status(409).json({
-          code: "EMAIL_MISMATCH",
-          message:
-            "This mobile number is already registered with a different Google email.",
-          registeredEmail: existingEmail,
+      if (!phone) {
+        return res.status(400).json({
+          message: "Phone required",
         });
       }
 
-      /*
-       * ------------------------------------------------------
-       * EXISTING MOBILE + SAME EMAIL
-       * ------------------------------------------------------
-       *
-       * Login is allowed.
-       *
-       * We can safely update missing Clerk ID/name/email.
-       */
+      const normalizedPhone =
+        normalizeIndianPhone(phone);
 
-      let updated = false;
-
-      /*
-       * If the old user has no email, save the verified
-       * Google email.
-       */
-      if (!existingEmail) {
-        user.email = normalizedEmail;
-        updated = true;
+      if (!normalizedPhone) {
+        return res.status(400).json({
+          message: "Invalid mobile number",
+        });
       }
 
-      /*
-       * If Clerk ID is missing, attach the current Clerk ID.
-       */
-      if (!user.clerkId || user.clerkId !== clerkId) {
-        user.clerkId = clerkId;
-        updated = true;
-      }
-
-      /*
-       * If the user's name is empty/default, update it.
-       */
       if (
+        !twilioClient ||
+        !verifyServiceSid
+      ) {
+        console.error(
+          "❌ Twilio credentials are not properly configured on the server."
+        );
+
+        return res.status(500).json({
+          message:
+            "Twilio service temporarily unavailable",
+        });
+      }
+
+      console.log(
+        `📱 Requesting Twilio OTP verification for ${normalizedPhone}`
+      );
+
+      const verification =
+        await twilioClient.verify.v2
+          .services(verifyServiceSid)
+          .verifications.create({
+            to: normalizedPhone,
+            channel: "sms",
+          });
+
+      console.log(
+        `✅ Twilio verification SID created: ${verification.sid}`
+      );
+
+      return res.json({
+        message:
+          "OTP sent successfully via SMS",
+      });
+    } catch (error: any) {
+      console.error(
+        "❌ Twilio send-otp error:",
+        error?.message || error
+      );
+
+      if (
+        error?.code === 60200 ||
+        error?.status === 400
+      ) {
+        return res.status(400).json({
+          message:
+            "Invalid mobile number format",
+        });
+      }
+
+      if (error?.code === 60203) {
+        return res.status(429).json({
+          message:
+            "Too many OTP requests. Please try again later.",
+        });
+      }
+
+      return res.status(500).json({
+        message:
+          "Unable to send OTP. Please try again later.",
+      });
+    }
+  }
+);
+
+/*
+ * ============================================================
+ * VERIFY OTP VIA TWILIO
+ * ============================================================
+ *
+ *   POST /auth/verify-otp
+ *   Body: { phone, otp, name? }
+ *
+ * Once Twilio confirms the OTP is "approved":
+ *
+ *   1. Find user by normalized phone
+ *   2. If missing → create new user (name from request)
+ *   3. If existing but name is default/empty → update name
+ *   4. Issue Katbox JWT (30d) and return the user payload
+ * ============================================================
+ */
+router.post(
+  "/verify-otp",
+  async (req, res) => {
+    try {
+      const {
+        phone,
+        otp,
+        name,
+      } = req.body;
+
+      if (!phone || !otp) {
+        return res.status(400).json({
+          message:
+            "Phone & OTP required",
+        });
+      }
+
+      const normalizedPhone =
+        normalizeIndianPhone(phone);
+
+      if (!normalizedPhone) {
+        return res.status(400).json({
+          message:
+            "Invalid mobile number",
+        });
+      }
+
+      if (
+        !twilioClient ||
+        !verifyServiceSid
+      ) {
+        console.error(
+          "❌ Twilio credentials are not properly configured on the server."
+        );
+
+        return res.status(500).json({
+          message:
+            "Twilio service temporarily unavailable",
+        });
+      }
+
+      console.log(
+        `🔍 Verifying Twilio OTP for ${normalizedPhone}`
+      );
+
+      const verificationCheck =
+        await twilioClient.verify.v2
+          .services(verifyServiceSid)
+          .verificationChecks.create({
+            to: normalizedPhone,
+            code: otp.trim(),
+          });
+
+      console.log(
+        `📌 Twilio verification check status: ${verificationCheck.status}`
+      );
+
+      if (
+        verificationCheck.status !==
+        "approved"
+      ) {
+        return res.status(400).json({
+          message:
+            "Invalid OTP or verification expired",
+        });
+      }
+
+      let user =
+        await User.findOne({
+          phone: normalizedPhone,
+        });
+
+      const cleanName =
+        name &&
+        typeof name === "string"
+          ? name.trim()
+          : "";
+
+      if (!user) {
+        user = await User.create({
+          phone: normalizedPhone,
+          name:
+            cleanName || "User",
+          savedAddresses: [],
+          activeAddress: null,
+          address: "",
+        });
+
+        console.log(
+          `✨ Created new MongoDB user: '${user.name}' for ${normalizedPhone}`
+        );
+      } else if (
         cleanName &&
         (
           !user.name ||
@@ -319,249 +349,86 @@ router.post("/clerk-login", async (req, res) => {
         )
       ) {
         user.name = cleanName;
-        updated = true;
-      }
 
-      /*
-       * The mobile number is already normalized.
-       */
-      if (user.phone !== normalizedPhone) {
-        user.phone = normalizedPhone;
-        updated = true;
-      }
-
-      if (updated) {
         await user.save();
 
         console.log(
-          `📝 Updated existing MongoDB user '${user.name}'`
-        );
-      } else {
-        console.log(
-          `✅ Existing user authenticated: '${user.name}'`
+          `📝 Updated user name to '${cleanName}' for ${normalizedPhone}`
         );
       }
-    }
 
-    /*
-     * ========================================================
-     * NO USER FOR MOBILE
-     * ========================================================
-     *
-     * Before creating a new user, make sure the Google email
-     * isn't already attached to a different mobile number.
-     */
+      const jwtSecret =
+        process.env.JWT_SECRET;
 
-    if (!user) {
-      const emailUser =
-        await User.findOne({
-          email: normalizedEmail,
+      if (!jwtSecret) {
+        return res.status(500).json({
+          message:
+            "Server authentication configuration is incomplete.",
         });
-
-      /*
-       * ------------------------------------------------------
-       * EMAIL ALREADY BELONGS TO ANOTHER MOBILE
-       * ------------------------------------------------------
-       */
-
-      if (emailUser) {
-        const existingPhone =
-          emailUser.phone || "";
-
-        /*
-         * This should normally never happen because we already
-         * searched by phone, but it protects the database from
-         * account duplication.
-         */
-
-        if (
-          existingPhone &&
-          existingPhone !== normalizedPhone
-        ) {
-          console.log(
-            "🚫 Google email already belongs to another mobile:",
-            {
-              email: normalizedEmail,
-              registeredPhone: existingPhone,
-              attemptedPhone: normalizedPhone,
-            }
-          );
-
-          return res.status(409).json({
-            code: "EMAIL_ALREADY_USED",
-            message:
-              "This Google email is already registered with another mobile number.",
-          });
-        }
-
-        /*
-         * If the email user exists but doesn't have a phone,
-         * attach the current phone.
-         */
-        user = emailUser;
-
-        let updated = false;
-
-        if (!user.phone) {
-          user.phone = normalizedPhone;
-          updated = true;
-        }
-
-        if (!user.clerkId || user.clerkId !== clerkId) {
-          user.clerkId = clerkId;
-          updated = true;
-        }
-
-        if (
-          cleanName &&
-          (
-            !user.name ||
-            user.name.trim() === "" ||
-            user.name.trim().toLowerCase() === "user"
-          )
-        ) {
-          user.name = cleanName;
-          updated = true;
-        }
-
-        if (updated) {
-          await user.save();
-        }
       }
-    }
 
-    /*
-     * ========================================================
-     * CREATE NEW USER
-     * ========================================================
-     */
-
-    if (!user) {
-      user = await User.create({
-        clerkId,
-        email: normalizedEmail,
-        phone: normalizedPhone,
-        name: cleanName || "User",
-        savedAddresses: [],
-        activeAddress: null,
-        address: "",
-      });
-
-      console.log(
-        `✨ Created new MongoDB user via Clerk: '${user.name}'`
+      const token = jwt.sign(
+        {
+          userId: user._id,
+          _id: user._id,
+          id: user._id,
+        },
+        jwtSecret,
+        {
+          expiresIn: "30d",
+        }
       );
-    }
 
-    /*
-     * ========================================================
-     * ISSUE KATBOX JWT
-     * ========================================================
-     */
-
-    const jwtSecret =
-      process.env.JWT_SECRET;
-
-    if (!jwtSecret) {
+      return res.json({
+        token,
+        user: buildUserResponse(user),
+      });
+    } catch (error: any) {
       console.error(
-        "❌ JWT_SECRET is missing from environment variables."
+        "❌ Twilio verify-otp error:",
+        error?.message || error
       );
 
-      return res.status(500).json({
-        code: "JWT_SECRET_MISSING",
+      if (
+        error?.status === 404 ||
+        error?.code === 20404
+      ) {
+        return res.status(400).json({
+          message:
+            "OTP expired or not found",
+        });
+      }
+
+      return res.status(400).json({
         message:
-          "Server authentication configuration is incomplete.",
+          "Verification failed. Please request a new OTP.",
       });
     }
-
-    const token = jwt.sign(
-      {
-        userId: user._id,
-        _id: user._id,
-        id: user._id,
-      },
-      jwtSecret,
-      {
-        expiresIn: "30d",
-      }
-    );
-
-    console.log(
-      "✅ Katbox authentication successful:",
-      {
-        userId: user._id,
-        email: user.email,
-        phone: user.phone,
-        isChef: user.isChef,
-        isAdmin: user.isAdmin,
-      }
-    );
-
-    return res.json({
-      token,
-      user: buildUserResponse(user),
-    });
-  } catch (error: any) {
-    console.error(
-      "❌ Clerk login error:",
-      error?.message || error
-    );
-
-    /*
-     * Handle Mongo duplicate-key errors cleanly.
-     */
-    if (error?.code === 11000) {
-      console.error(
-        "❌ MongoDB duplicate key:",
-        error?.keyValue
-      );
-
-      return res.status(409).json({
-        code: "ACCOUNT_ALREADY_EXISTS",
-        message:
-          "An account with these details already exists. Please use your registered Google account.",
-      });
-    }
-
-    return res.status(500).json({
-      message:
-        "Clerk authentication synchronization failed.",
-    });
   }
-});
+);
 
 /*
  * ============================================================
- * LOOKUP EMAIL FOR MOBILE
+ * LOOKUP PHONE
  * ============================================================
  *
- * Used by the login screen to remember/recommend the Google
- * account associated with a mobile number.
+ * Small utility endpoint.
  *
- * Example:
+ *   GET /auth/lookup-phone?phone=+919133450555
  *
- * GET /auth/lookup-phone?phone=+919133450555
+ * Returns:
+ *   { registered: true,  email: "user@example.com" }
+ *   { registered: true,  email: "" }              // phone exists, no email saved yet
+ *   { registered: false }                         // phone not in DB
  *
- * Response:
+ * Purpose:
+ *   - Optional UX hint (show "Welcome back" if registered).
+ *   - Kept for backward compatibility with any client that
+ *     still calls it after login.
  *
- * {
- *   registered: true,
- *   email: "nithinkunchala2431@gmail.com"
- * }
- *
- * Or:
- *
- * {
- *   registered: false
- * }
- *
- * IMPORTANT:
- * This endpoint intentionally returns only the registration
- * status and email. It does NOT return the user's name,
- * address, role, MongoDB ID, etc.
- *
+ * It intentionally does NOT expose name / address / role / _id.
  * ============================================================
  */
-
 router.get(
   "/lookup-phone",
   async (req, res) => {
@@ -635,264 +502,6 @@ router.get(
 
 /*
  * ============================================================
- * SEND OTP VIA TWILIO VERIFY API v2
- * ============================================================
- *
- * COMMENTED OUT - KEPT FOR FUTURE USE
- */
-
-/*
-router.post("/send-otp", otpRateLimiter, async (req, res) => {
-  try {
-    const { phone } = req.body;
-
-    if (!phone) {
-      return res.status(400).json({
-        message: "Phone required",
-      });
-    }
-
-    const normalizedPhone =
-      normalizeIndianPhone(phone);
-
-    if (!normalizedPhone) {
-      return res.status(400).json({
-        message: "Invalid mobile number",
-      });
-    }
-
-    if (
-      !twilioClient ||
-      !verifyServiceSid
-    ) {
-      console.error(
-        "❌ Twilio credentials are not properly configured on the server."
-      );
-
-      return res.status(500).json({
-        message:
-          "Twilio service temporarily unavailable",
-      });
-    }
-
-    console.log(
-      `📱 Requesting Twilio OTP verification for ${normalizedPhone}`
-    );
-
-    const verification =
-      await twilioClient.verify.v2
-        .services(verifyServiceSid)
-        .verifications.create({
-          to: normalizedPhone,
-          channel: "sms",
-        });
-
-    console.log(
-      `✅ Twilio verification SID created: ${verification.sid}`
-    );
-
-    return res.json({
-      message:
-        "OTP sent successfully via SMS",
-    });
-  } catch (error: any) {
-    console.error(
-      "❌ Twilio send-otp error:",
-      error?.message || error
-    );
-
-    if (
-      error?.code === 60200 ||
-      error?.status === 400
-    ) {
-      return res.status(400).json({
-        message:
-          "Invalid mobile number format",
-      });
-    }
-
-    if (error?.code === 60203) {
-      return res.status(429).json({
-        message:
-          "Too many OTP requests. Please try again later.",
-      });
-    }
-
-    return res.status(500).json({
-      message:
-        "Unable to send OTP. Please try again later.",
-    });
-  }
-});
-*/
-
-/*
- * ============================================================
- * VERIFY OTP VIA TWILIO
- * ============================================================
- *
- * COMMENTED OUT - KEPT FOR FUTURE USE
- */
-
-/*
-router.post("/verify-otp", async (req, res) => {
-  try {
-    const {
-      phone,
-      otp,
-      name,
-    } = req.body;
-
-    if (!phone || !otp) {
-      return res.status(400).json({
-        message:
-          "Phone & OTP required",
-      });
-    }
-
-    const normalizedPhone =
-      normalizeIndianPhone(phone);
-
-    if (!normalizedPhone) {
-      return res.status(400).json({
-        message:
-          "Invalid mobile number",
-      });
-    }
-
-    if (
-      !twilioClient ||
-      !verifyServiceSid
-    ) {
-      console.error(
-        "❌ Twilio credentials are not properly configured on the server."
-      );
-
-      return res.status(500).json({
-        message:
-          "Twilio service temporarily unavailable",
-      });
-    }
-
-    console.log(
-      `🔍 Verifying Twilio OTP for ${normalizedPhone}`
-    );
-
-    const verificationCheck =
-      await twilioClient.verify.v2
-        .services(verifyServiceSid)
-        .verificationChecks.create({
-          to: normalizedPhone,
-          code: otp.trim(),
-        });
-
-    console.log(
-      `📌 Twilio verification check status: ${verificationCheck.status}`
-    );
-
-    if (
-      verificationCheck.status !==
-      "approved"
-    ) {
-      return res.status(400).json({
-        message:
-          "Invalid OTP or verification expired",
-      });
-    }
-
-    let user =
-      await User.findOne({
-        phone: normalizedPhone,
-      });
-
-    const cleanName =
-      name &&
-      typeof name === "string"
-        ? name.trim()
-        : "";
-
-    if (!user) {
-      user = await User.create({
-        phone: normalizedPhone,
-        name:
-          cleanName || "User",
-        savedAddresses: [],
-        activeAddress: null,
-        address: "",
-      });
-
-      console.log(
-        `✨ Created new MongoDB user: '${user.name}' for ${normalizedPhone}`
-      );
-    } else if (
-      cleanName &&
-      (
-        !user.name ||
-        user.name.trim() === "" ||
-        user.name.trim().toLowerCase() === "user"
-      )
-    ) {
-      user.name = cleanName;
-
-      await user.save();
-
-      console.log(
-        `📝 Updated user name to '${cleanName}' for ${normalizedPhone}`
-      );
-    }
-
-    const jwtSecret =
-      process.env.JWT_SECRET;
-
-    if (!jwtSecret) {
-      return res.status(500).json({
-        message:
-          "Server authentication configuration is incomplete.",
-      });
-    }
-
-    const token = jwt.sign(
-      {
-        userId: user._id,
-        _id: user._id,
-        id: user._id,
-      },
-      jwtSecret,
-      {
-        expiresIn: "30d",
-      }
-    );
-
-    return res.json({
-      token,
-      user: buildUserResponse(user),
-    });
-  } catch (error: any) {
-    console.error(
-      "❌ Twilio verify-otp error:",
-      error?.message || error
-    );
-
-    if (
-      error?.status === 404 ||
-      error?.code === 20404
-    ) {
-      return res.status(400).json({
-        message:
-          "OTP expired or not found",
-      });
-    }
-
-    return res.status(400).json({
-      message:
-        "Verification failed. Please request a new OTP.",
-    });
-  }
-});
-*/
-
-/*
- * ============================================================
  * GET CURRENT USER
  * ============================================================
  */
@@ -952,18 +561,6 @@ router.get(
  *
  * `email` is intentionally NOT allowed to be changed here.
  *
- * Why?
- *
- * Our authentication rule is:
- *
- *   mobile -> one Google email
- *
- * If profile code could freely change `email`, the user could
- * bypass the mobile/email protection.
- *
- * Google email should only be established/verified through
- * /clerk-login.
- *
  * ============================================================
  */
 
@@ -996,16 +593,6 @@ router.patch(
       } = req.body;
 
       const updateFields: any = {};
-
-      /*
-       * Email is deliberately ignored.
-       *
-       * Do not allow:
-       *
-       * update-profile({ email: "new@gmail.com" })
-       *
-       * to change the registered Google account.
-       */
 
       if (name !== undefined) {
         updateFields.name =
@@ -1218,7 +805,6 @@ router.patch(
   }
 );
 
-
 /*
  * ============================================================
  * UPDATE ACTIVE ADDRESS
@@ -1230,22 +816,6 @@ router.patch(
  *
  * Keep this endpoint separate from update-profile so existing
  * address-sync logic continues to work without changing the app.
- *
- * Authentication is handled by the same `protect` middleware
- * used by /me and /update-profile.
- *
- * ✅ PATCH (this update):
- *
- *   The handler now ALSO accepts a `savedAddresses` array —
- *   matching the behaviour of /update-profile exactly. This
- *   means any older client that still targets /update-address
- *   can push the full saved-address list here and it will land
- *   in MongoDB unchanged.
- *
- *   When the client sends only { activeAddress } (address
- *   selection), the existing savedAddresses array on the user
- *   document is left completely untouched.
- *
  * ============================================================
  */
 
@@ -1281,10 +851,6 @@ router.patch(
        * --------------------------------------------------------
        * ACTIVE ADDRESS
        * --------------------------------------------------------
-       *
-       * Home.tsx sends the GPS location as activeAddress.
-       * Normalize it to the same structure used by
-       * /update-profile.
        */
 
       if (
@@ -1353,15 +919,8 @@ router.patch(
 
       /*
        * --------------------------------------------------------
-       * SAVED ADDRESSES (NEW — parity with /update-profile)
+       * SAVED ADDRESSES (parity with /update-profile)
        * --------------------------------------------------------
-       *
-       * Deduped by houseDetails + fullAddress so repeated taps
-       * on "Save address" never create duplicates in MongoDB.
-       *
-       * When omitted from the payload, we simply do NOT touch
-       * the existing savedAddresses array — so selecting a
-       * different active address does not wipe the saved list.
        */
 
       if (
@@ -1506,8 +1065,6 @@ router.patch(
  *
  * Same functionality as PATCH.
  *
- * Email is deliberately excluded from updateFields.
- *
  * ============================================================
  */
 
@@ -1540,14 +1097,6 @@ router.put(
       } = req.body;
 
       const updateFields: any = {};
-
-      /*
-       * IMPORTANT:
-       *
-       * Do NOT accept email here.
-       *
-       * Google email is controlled by Clerk authentication.
-       */
 
       if (name !== undefined) {
         updateFields.name =
@@ -1762,17 +1311,16 @@ router.put(
 
 /*
  * ============================================================
- * ✅ UPDATED: ADMIN — LIST ALL USERS (with order history)
+ * ADMIN — LIST ALL USERS (with order history)
  * ============================================================
  *
  * GET /auth/admin/users
  * GET /auth/users  (legacy alias)
  *
- * NEW (this update):
- *   For every user whose isChef === true, we ALSO look up the
- *   linked Chef document and populate its orderHistory. This
- *   returns the orders that were PLACED TO that user as a chef
- *   (which are stored on Chef.orderHistory, not User.orderHistory).
+ * For every user whose isChef === true, we ALSO look up the
+ * linked Chef document and populate its orderHistory. This
+ * returns the orders that were PLACED TO that user as a chef
+ * (which are stored on Chef.orderHistory, not User.orderHistory).
  *
  * Response shape per user:
  *   {
@@ -1783,7 +1331,7 @@ router.put(
  *     orders: [ { orderId, totalAmount, orderStatus,
  *                 serviceType, createdAt } ],
  *
- *     // ✅ NEW — Orders RECEIVED by this user (as chef):
+ *     // Orders RECEIVED by this user (as chef):
  *     receivedOrderCount, totalEarned,
  *     receivedOrders: [ same shape as orders ],
  *     chefId: <chef._id | null>
@@ -1806,9 +1354,8 @@ const getAllUsersHandler = async (
       .lean();
 
     /* ─────────────────────────────────────────────────────────
-       ✅ NEW: Fetch Chef documents for every chef user in a single
+       Fetch Chef documents for every chef user in a single
        batched query, then populate their orderHistory too.
-       This is the join that makes "received orders" available.
        ───────────────────────────────────────────────────────── */
     const chefUserIds = users
       .filter((u: any) => u?.isChef && u?._id)
@@ -1922,7 +1469,7 @@ router.get("/users", protect, requireAdmin, getAllUsersHandler);
 
 /*
  * ============================================================
- * ✅ NEW: ADMIN — TOGGLE USER isChef
+ * ADMIN — TOGGLE USER isChef
  * ============================================================
  *
  * PATCH /auth/admin/users/:userId/toggle-chef
@@ -1930,9 +1477,6 @@ router.get("/users", protect, requireAdmin, getAllUsersHandler);
  * Body (optional): { isChef: boolean }
  *   - If provided → force-sets the value (idempotent)
  *   - If omitted  → flips the current value
- *
- * Returns the updated user payload so the client can
- * reconcile with the server without a second round-trip.
  *
  * ⚠️ Cannot toggle the caller's own isChef (safety guard).
  * ============================================================
@@ -2008,7 +1552,7 @@ router.patch(
 
 /*
  * ============================================================
- * ✅ NEW: ADMIN — TOGGLE USER isAdmin
+ * ADMIN — TOGGLE USER isAdmin
  * ============================================================
  *
  * PATCH /auth/admin/users/:userId/toggle-admin

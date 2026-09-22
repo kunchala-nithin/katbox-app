@@ -6,9 +6,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Platform } from 'react-native'
 import * as Notifications from 'expo-notifications'
 import * as Device from 'expo-device'
-import * as SecureStore from 'expo-secure-store'
 import Constants from 'expo-constants'
-import { ClerkProvider } from '@clerk/clerk-expo'
 
 import { getToken, removeToken, getUser } from '@/src/lib/authStorage'
 import { subscribeAuth } from '@/src/lib/authEvents'
@@ -30,7 +28,7 @@ Notifications.setNotificationHandler({
 })
 
 /* ─────────────────────────────────────────────────────────────
-   ✅ NEW: COLD-START ANDROID CHANNEL BOOTSTRAP
+   ✅ COLD-START ANDROID CHANNEL BOOTSTRAP
    ─────────────────────────────────────────────────────────────
    The role-scoped channels are normally created by
    `useOrderNotifier` when the admin/chef tab group is first
@@ -75,43 +73,8 @@ if (Platform.OS === 'android') {
   })()
 }
 
-const CLERK_PUBLISHABLE_KEY =
-  process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY
-
-const tokenCache = {
-  async getToken(key: string) {
-    try {
-      return await SecureStore.getItemAsync(key)
-    } catch (err) {
-      console.log('Clerk token read error:', err)
-      return null
-    }
-  },
-
-  async saveToken(key: string, value: string) {
-    try {
-      await SecureStore.setItemAsync(key, value)
-    } catch (err) {
-      console.log('Clerk token save error:', err)
-    }
-  },
-}
-
 export default function RootLayout() {
-  if (!CLERK_PUBLISHABLE_KEY) {
-    throw new Error(
-      'Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY in your .env file'
-    )
-  }
-
-  return (
-    <ClerkProvider
-      publishableKey={CLERK_PUBLISHABLE_KEY}
-      tokenCache={tokenCache}
-    >
-      <InitialLayout />
-    </ClerkProvider>
-  )
+  return <InitialLayout />
 }
 
 function InitialLayout() {
@@ -220,10 +183,8 @@ function InitialLayout() {
    * AUTHENTICATION CHECK
    * ------------------------------------------------------------
    *
-   * This checks the Katbox JWT, NOT the Clerk session.
-   *
-   * The Katbox backend creates this token after successful
-   * Google authentication.
+   * This checks the Katbox JWT issued by our own backend after
+   * a successful Twilio OTP verification (POST /auth/verify-otp).
    */
 
   const checkAuth = useCallback(async () => {
@@ -548,8 +509,7 @@ function InitialLayout() {
       currentSegment === undefined ||
       currentSegment === 'SlidingScreens' ||
       currentSegment === 'login' ||
-      currentSegment === 'verify' ||
-      currentSegment === 'oauth-callback'
+      currentSegment === 'verify'
 
     /*
      * ----------------------------------------------------------
@@ -663,13 +623,6 @@ function InitialLayout() {
 
       <Stack.Screen
         name="login"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="oauth-callback"
         options={{
           headerShown: false,
         }}

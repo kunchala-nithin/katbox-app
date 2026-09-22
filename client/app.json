@@ -63,7 +63,6 @@
       "expo-secure-store",
       "expo-image-picker",
       "@react-native-community/datetimepicker",
-      "expo-web-browser",
       [
         "expo-media-library",
         {

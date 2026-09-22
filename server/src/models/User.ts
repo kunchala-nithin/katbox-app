@@ -24,7 +24,6 @@ export interface IActiveAddress {
 }
 
 export interface IUser extends Document {
-  clerkId?: string;
   name: string;
   phone: string;
   email?: string;
@@ -136,20 +135,6 @@ const activeAddressSchema = new Schema<IActiveAddress>(
 const userSchema = new Schema<IUser>(
   {
     /*
-     * Clerk user ID
-     *
-     * sparse + unique means:
-     * - two users cannot have the same Clerk ID
-     * - documents without a Clerk ID are allowed
-     */
-    clerkId: {
-      type: String,
-      unique: true,
-      sparse: true,
-      trim: true,
-    },
-
-    /*
      * User's display name
      */
     name: {
@@ -161,13 +146,14 @@ const userSchema = new Schema<IUser>(
     /*
      * Indian mobile number
      *
-     * We intentionally DO NOT make this unique at the
-     * MongoDB level yet because existing databases may
-     * contain duplicate/empty phone values.
+     * This is now the primary identity key.
      *
      * The authentication route enforces:
      *
-     * one mobile number -> one Google email
+     *   one mobile number -> one user document
+     *
+     * (Twilio OTP flow handles login. No Google / Clerk
+     * email is required to authenticate.)
      */
     phone: {
       type: String,
@@ -178,9 +164,11 @@ const userSchema = new Schema<IUser>(
     },
 
     /*
-     * Google email
+     * Optional email field
      *
-     * Always stored in normalized lowercase form.
+     * Kept for backward compatibility with any legacy records
+     * that still hold a Google email. New sign-ups via OTP
+     * will leave this empty.
      */
     email: {
       type: String,

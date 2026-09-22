@@ -1,6 +1,7 @@
 // Home.tsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { BlurView } from 'expo-blur';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { refreshUser } from '@/src/lib/authStorage';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -50,6 +51,14 @@ import { useDeliveryLocationStore } from '@/src/store/deliveryLocationStore';
 
 const { width, height } = Dimensions.get('window');
 const HOME_CARD_WIDTH = 220;
+
+// ─── ✅ PERF: AsyncStorage cache keys + TTLs ───
+//    • HOME_CHEFS_CACHE   → last successfully-rendered chefs list (30 min TTL)
+//    • HOME_CART_COUNT_CACHE → last known cart item count (5 min TTL)
+const HOME_CHEFS_CACHE_KEY = '@katbox_home_chefs_cache_v1';
+const HOME_CART_COUNT_CACHE_KEY = '@katbox_home_cart_count_cache_v1';
+const HOME_CHEFS_CACHE_TTL_MS = 30 * 60 * 1000;      // 30 minutes
+const HOME_CART_COUNT_CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
 
 // ─── Banner Images Imported From Assets Folder ───
 const BANNER_IMG_1 = require('@/assets/images/banner1.png');
@@ -444,14 +453,76 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
+  // ✅ PERF: Load the LAST successfully-fetched chefs list + cart count from
+  //    AsyncStorage so the UI paints with real content on the very first
+  //    frame, before any network round-trip has a chance to complete.
+  //
+  //    • Chefs list cached for 30 minutes (heavy payload, worth showing stale)
+  //    • Cart count cached for 5 minutes (much smaller, more volatile)
+  //
+  //    If the cache is stale or missing → we simply skip and wait for the
+  //    fresh network response, just like before.
+  // ─────────────────────────────────────────────────────────────────────────
+  const loadCachedHomeData = useCallback(async () => {
+    try {
+      const [chefsRaw, cartRaw] = await Promise.all([
+        AsyncStorage.getItem(HOME_CHEFS_CACHE_KEY).catch(() => null),
+        AsyncStorage.getItem(HOME_CART_COUNT_CACHE_KEY).catch(() => null),
+      ]);
+
+      const now = Date.now();
+
+      if (chefsRaw) {
+        try {
+          const parsed = JSON.parse(chefsRaw);
+          const cachedAt = Number(parsed?.cachedAt) || 0;
+          const cachedList = Array.isArray(parsed?.chefs) ? parsed.chefs : [];
+          if (
+            cachedList.length > 0 &&
+            now - cachedAt < HOME_CHEFS_CACHE_TTL_MS
+          ) {
+            // Only overwrite if we don't already have fresher data in memory
+            setChefsData((prev) => (prev.length > 0 ? prev : cachedList));
+            setChefsLoading(false);
+          }
+        } catch (e) {
+          // Silent — cache corrupted, ignore
+        }
+      }
+
+      if (cartRaw) {
+        try {
+          const parsedCart = JSON.parse(cartRaw);
+          const cachedAt = Number(parsedCart?.cachedAt) || 0;
+          const cachedCount = Number(parsedCart?.count);
+          if (
+            Number.isFinite(cachedCount) &&
+            cachedCount >= 0 &&
+            now - cachedAt < HOME_CART_COUNT_CACHE_TTL_MS
+          ) {
+            setCartItemCount((prev) => (prev > 0 ? prev : cachedCount));
+          }
+        } catch (e) {
+          // Silent — cache corrupted, ignore
+        }
+      }
+    } catch (e) {
+      // Silent — cache read failure must never crash the home screen
+    }
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
   // ✅ PERF: fetchDynamicChefs with throttle + smart loading state
   //    - `silent = true`  → do NOT show loading spinner
-  //    - `force = true`   → bypass the 20-second throttle
+  //    - `force = true`   → bypass the 8-second throttle
   //    - When chefsData already exists, we never flip chefsLoading back to true
+  //    - On every success we WRITE to AsyncStorage so the next cold-start
+  //      paints instantly from cache
   // ─────────────────────────────────────────────────────────────────────────
   const fetchDynamicChefs = async (silent: boolean = false, force: boolean = false) => {
     const now = Date.now();
-    if (!force && now - lastChefsFetchedAtRef.current < 20000) {
+    // ✅ Throttle reduced from 20s → 8s for snappier refresh on re-focus
+    if (!force && now - lastChefsFetchedAtRef.current < 8000) {
       // Recently fetched — skip to avoid redundant network calls
       return;
     }
@@ -488,6 +559,12 @@ export default function HomeScreen() {
         });
         setChefsData(formatted);
         lastChefsFetchedAtRef.current = Date.now();
+
+        // ✅ PERF: Persist to cache for next cold-start — fire-and-forget
+        AsyncStorage.setItem(
+          HOME_CHEFS_CACHE_KEY,
+          JSON.stringify({ chefs: formatted, cachedAt: Date.now() })
+        ).catch(() => null);
       }
     } catch (err) {
       console.log('Home fetch dynamic chefs error:', err);
@@ -503,8 +580,18 @@ export default function HomeScreen() {
       if (res.data.success && res.data.cart) {
         const totalCount = res.data.cart.reduce((acc: number, item: any) => acc + (item.totalItems || 1), 0);
         setCartItemCount(totalCount);
+
+        // ✅ PERF: Persist to cache for next cold-start — fire-and-forget
+        AsyncStorage.setItem(
+          HOME_CART_COUNT_CACHE_KEY,
+          JSON.stringify({ count: totalCount, cachedAt: Date.now() })
+        ).catch(() => null);
       } else {
         setCartItemCount(0);
+        AsyncStorage.setItem(
+          HOME_CART_COUNT_CACHE_KEY,
+          JSON.stringify({ count: 0, cachedAt: Date.now() })
+        ).catch(() => null);
       }
     } catch (err) {
       setCartItemCount(0);
@@ -612,18 +699,27 @@ export default function HomeScreen() {
 
   // ─────────────────────────────────────────────────────────────────────────
   // ✅ PERF: useFocusEffect — only the FIRST focus shows loading spinners
-  //    Subsequent focuses are silent + throttled
+  //    Subsequent focuses are silent + throttled.
+  //
+  //    Order of operations (fast → slow):
+  //      1. loadCachedHomeData()       → instant from AsyncStorage (async)
+  //      2. loadUserDataAndAddresses() → instant from cache + bg refresh
+  //      3. fetchDynamicChefs(...)     → network (throttled)
+  //      4. fetchCartCount()           → network
+  //
+  //    All four run WITHOUT awaiting → max parallelism → fastest paint.
   // ─────────────────────────────────────────────────────────────────────────
   useFocusEffect(
     useCallback(() => {
       const isFirstFocus = !hasFocusedOnceRef.current;
       hasFocusedOnceRef.current = true;
 
-      // Fire all three in parallel, without awaiting (non-blocking)
+      // Fire all in parallel, without awaiting (non-blocking)
+      loadCachedHomeData();                // Instant from AsyncStorage cache
       loadUserDataAndAddresses();          // Instant from cache + bg refresh
       fetchDynamicChefs(!isFirstFocus);    // silent on subsequent focuses
       fetchCartCount();
-    }, [])
+    }, [loadCachedHomeData])
   );
 
   // ✅ NEW: Hydrate the persisted delivery location on mount so back-navigation

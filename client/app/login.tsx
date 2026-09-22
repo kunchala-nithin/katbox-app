@@ -1,7 +1,6 @@
 import Colors from '@/constants/Colors'
 import { api } from '@/src/lib/api'
 import { Ionicons } from '@expo/vector-icons'
-import { useOAuth, useClerk } from '@clerk/clerk-expo'
 import { useRouter } from 'expo-router'
 import React, { useEffect, useRef, useState } from 'react'
 import {
@@ -25,15 +24,6 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import * as WebBrowser from 'expo-web-browser'
-import * as Linking from 'expo-linking'
-import {
-  getLastUsedEmail,
-  saveSession,
-} from '@/src/lib/authStorage'
-import { notifyAuthChanged } from '@/src/lib/authEvents'
-
-WebBrowser.maybeCompleteAuthSession()
 
 const INDIA_PHONE_MASK = [
   /\d/, /\d/, /\d/, /\d/, /\d/,
@@ -46,44 +36,11 @@ const Login = () => {
   const [loading, setLoading] = useState(false)
   const [nameError, setNameError] = useState('')
 
-  /*
-   * Previously used Google email.
-   */
-  const [lastUsedEmail, setLastUsedEmail] = useState('')
-
   const router = useRouter()
   const { bottom } = useSafeAreaInsets()
 
   const nameRef = useRef<TextInput>(null)
   const phoneRef = useRef<TextInput>(null)
-
-  /*
-   * ==========================================================
-   * CLERK GOOGLE OAUTH
-   * ==========================================================
-   */
-
-  const { startOAuthFlow } = useOAuth({
-    strategy: 'oauth_google',
-  })
-
-  /*
-   * We use the Clerk instance directly.
-   *
-   * This gives us:
-   *
-   *     clerk.user
-   *
-   * after the OAuth session has been activated.
-   *
-   * It also gives us:
-   *
-   *     signOut()
-   *
-   * which is used when the Katbox backend rejects the login.
-   */
-
-  const clerk = useClerk()
 
   /*
    * Premium button scale animation value
@@ -110,41 +67,30 @@ const Login = () => {
 
   /*
    * ============================================================
-   * LOAD PREVIOUS GOOGLE EMAIL FOR THIS MOBILE NUMBER
+   * SEND OTP VIA TWILIO
+   * ============================================================
+   *
+   * Validates the entered name + 10-digit mobile number, then
+   * asks the Katbox backend to trigger a Twilio Verify OTP to
+   * the given number.
+   *
+   * On success, we navigate to the /verify/[phone] screen where
+   * the user enters the 6-digit code. The verify screen is the
+   * one that actually calls /auth/verify-otp, saves the session,
+   * and notifies the root layout.
    * ============================================================
    */
 
-  const loadRememberedEmail = async (phone: string) => {
-    try {
-      if (phone.length !== 10) {
-        setLastUsedEmail('')
-        return
-      }
-
-      const email = await getLastUsedEmail(`+91${phone}`)
-      setLastUsedEmail(email || '')
-    } catch (error) {
-      console.log('Could not load remembered Google email:', error)
-      setLastUsedEmail('')
-    }
-  }
-
-  useEffect(() => {
-    void loadRememberedEmail(phoneNumber)
-  }, [phoneNumber])
-
-  /*
-   * ============================================================
-   * TWILIO SEND OTP FUNCTION
-   * COMMENTED OUT FOR FUTURE USE
-   * ============================================================
-   */
-
-  /*
   const sendOTP = async () => {
     if (!name.trim()) {
       setNameError('Please enter your name')
       nameRef.current?.focus()
+      return
+    }
+
+    if (phoneNumber.length !== 10) {
+      alert('Please enter a valid 10-digit mobile number')
+      phoneRef.current?.focus()
       return
     }
 
@@ -170,669 +116,15 @@ const Login = () => {
       console.error(error)
 
       alert(
-        'Failed to send OTP. Please try again.'
+        error?.response?.data?.message ||
+          'Failed to send OTP. Please try again.'
       )
-    }
-  }
-  */
-
-  /*
-   * ============================================================
-   * GOOGLE SOCIAL LOGIN VIA CLERK
-   * ============================================================
-   */
-
-  const handleGoogleLogin = async () => {
-    /*
-     * ----------------------------------------------------------
-     * VALIDATE NAME
-     * ----------------------------------------------------------
-     */
-
-    if (!name.trim()) {
-      setNameError(
-        'Please enter your username'
-      )
-
-      nameRef.current?.focus()
-
-      return
-    }
-
-    /*
-     * ----------------------------------------------------------
-     * VALIDATE PHONE
-     * ----------------------------------------------------------
-     */
-
-    if (phoneNumber.length !== 10) {
-      alert(
-        'Please enter a valid 10-digit mobile number'
-      )
-
-      phoneRef.current?.focus()
-
-      return
-    }
-
-    try {
-      setLoading(true)
-
-      console.log(
-        '🔐 Starting Google OAuth...'
-      )
-
-      /*
-       * --------------------------------------------------------
-       * NATIVE CLERK OAUTH REDIRECT
-       * --------------------------------------------------------
-       *
-       * We use a dedicated oauth callback redirect path.
-       * Pointing redirectUrl directly to root '/' causes Expo Router
-       * to reset to /login on callback before session setup completes.
-       */
-
-      const redirectUrl =
-        Linking.createURL('/oauth-callback')
-
-      console.log(
-        '🔗 Google OAuth redirect URL:',
-        redirectUrl
-      )
-
-      /*
-       * --------------------------------------------------------
-       * START CLERK GOOGLE OAUTH
-       * --------------------------------------------------------
-       */
-
-      const {
-        createdSessionId,
-        setActive,
-      } = await startOAuthFlow({
-        redirectUrl,
-      })
-
-      /*
-       * --------------------------------------------------------
-       * USER CANCELLED / NO SESSION
-       * --------------------------------------------------------
-       */
-
-      if (
-        !createdSessionId ||
-        !setActive
-      ) {
-        console.log(
-          '⚠️ Google OAuth was cancelled or no Clerk session was created.'
-        )
-
-        setLoading(false)
-
-        return
-      }
-
-      console.log(
-        '✅ Clerk session created:',
-        createdSessionId
-      )
-
-      /*
-       * --------------------------------------------------------
-       * ACTIVATE CLERK SESSION
-       * --------------------------------------------------------
-       */
-
-      await setActive({
-        session: createdSessionId,
-      })
-
-      console.log(
-        '✅ Clerk session activated.'
-      )
-
-      /*
-       * --------------------------------------------------------
-       * WAIT FOR CLERK USER
-       * --------------------------------------------------------
-       *
-       * We DO NOT fabricate:
-       *
-       *     user@gmail.com
-       *
-       * and we DO NOT fabricate:
-       *
-       *     clerk_123456
-       *
-       * We wait for the actual Clerk user.
-       *
-       * ────────────────────────────────────────────────────────
-       * RELIABILITY NOTE
-       * ────────────────────────────────────────────────────────
-       *
-       * `clerk.user` is React-state backed and can be stale
-       * inside an async closure. `clerk.client.activeSessions[0].user`
-       * is the authoritative source immediately after setActive().
-       *
-       * We prefer the activeSessions source, fall back to clerk.user,
-       * and poll a bit longer on slow Android devices.
-       */
-
-      const resolveClerkUser = (): any => {
-        try {
-          const activeSession =
-            (clerk as any)?.client?.activeSessions?.[0]
-
-          const sessionUser =
-            activeSession?.user
-
-          if (sessionUser) {
-            return sessionUser
-          }
-        } catch (_) {}
-
-        return clerk.user
-      }
-
-      let currentClerkUser =
-        resolveClerkUser()
-
-      for (
-        let attempt = 0;
-        attempt < 25 &&
-        !currentClerkUser;
-        attempt++
-      ) {
-        console.log(
-          `⏳ Waiting for Clerk user... attempt ${attempt + 1}/25`
-        )
-
-        await new Promise(
-          (resolve) =>
-            setTimeout(
-              resolve,
-              200
-            )
-        )
-
-        /*
-         * Re-read the current Clerk user.
-         */
-        currentClerkUser =
-          resolveClerkUser()
-      }
-
-      /*
-       * --------------------------------------------------------
-       * ENSURE CLERK USER EXISTS
-       * --------------------------------------------------------
-       */
-
-      if (!currentClerkUser) {
-        console.error(
-          '❌ Clerk user was not available after Google OAuth.'
-        )
-
-        try {
-          await clerk.signOut()
-        } catch (signOutError) {
-          console.log(
-            '⚠️ Clerk cleanup error:',
-            signOutError
-          )
-        }
-
-        setLoading(false)
-
-        alert(
-          'Google account information could not be retrieved. Please try again.'
-        )
-
-        return
-      }
-
-      /*
-       * --------------------------------------------------------
-       * GET REAL GOOGLE EMAIL
-       * --------------------------------------------------------
-       */
-
-      const userEmail =
-        currentClerkUser
-          .primaryEmailAddress
-          ?.emailAddress
-          ?.trim()
-          ?.toLowerCase() ||
-        currentClerkUser
-          .emailAddresses?.[0]
-          ?.emailAddress
-          ?.trim()
-          ?.toLowerCase() ||
-        ''
-
-      /*
-       * --------------------------------------------------------
-       * GET REAL CLERK USER ID
-       * --------------------------------------------------------
-       */
-
-      const clerkUserId =
-        currentClerkUser.id ||
-        ''
-
-      console.log(
-        '📧 Google email received:',
-        userEmail
-      )
-
-      console.log(
-        '🆔 Clerk user ID received:',
-        clerkUserId
-      )
-
-      /*
-       * --------------------------------------------------------
-       * NEVER USE FAKE EMAIL / CLERK ID
-       * --------------------------------------------------------
-       */
-
-      if (
-        !userEmail ||
-        !clerkUserId
-      ) {
-        console.error(
-          '❌ Missing real Clerk email or Clerk user ID.',
-          {
-            userEmail,
-            clerkUserId,
-          }
-        )
-
-        try {
-          await clerk.signOut()
-        } catch (signOutError) {
-          console.log(
-            '⚠️ Clerk cleanup error:',
-            signOutError
-          )
-        }
-
-        setLoading(false)
-
-        alert(
-          'Your Google account information could not be verified. Please try again.'
-        )
-
-        return
-      }
-
-      /*
-       * --------------------------------------------------------
-       * KATBOX BACKEND AUTHENTICATION
-       * --------------------------------------------------------
-       *
-       * The backend will:
-       *
-       * 1. Normalize the mobile number.
-       * 2. Search mobile number FIRST.
-       * 3. If mobile already exists:
-       *       - matching email -> login
-       *       - different email -> 409 EMAIL_MISMATCH
-       *
-       * 4. If mobile doesn't exist:
-       *       - create the user
-       *
-       * The backend changes for this are handled separately in
-       * auth.routes.ts.
-       */
-
-      let res
-
-      try {
-        res = await api.post(
-          '/auth/clerk-login',
-          {
-            email: userEmail,
-            name: name.trim(),
-            phone: `+91${phoneNumber}`,
-            clerkId: clerkUserId,
-          }
-        )
-      } catch (backendError: any) {
-        /*
-         * ------------------------------------------------------
-         * BACKEND ERROR INFORMATION
-         * ------------------------------------------------------
-         */
-
-        const status =
-          backendError?.response?.status
-
-        const backendData =
-          backendError?.response?.data
-
-        console.log(
-          '❌ Katbox backend authentication error:',
-          {
-            status,
-            backendData,
-          }
-        )
-
-        /*
-         * ------------------------------------------------------
-         * MOBILE NUMBER ALREADY REGISTERED WITH DIFFERENT EMAIL
-         * ------------------------------------------------------
-         */
-
-        if (
-          status === 409 &&
-          backendData?.code ===
-            'EMAIL_MISMATCH'
-        ) {
-          const registeredEmail =
-            backendData?.registeredEmail ||
-            'another Google account'
-
-          console.log(
-            '⚠️ Mobile belongs to another Google account:',
-            registeredEmail
-          )
-
-          /*
-           * We must not leave the newly selected Google account
-           * signed into Clerk when Katbox rejects it.
-           */
-
-          try {
-            await clerk.signOut()
-          } catch (signOutError) {
-            console.log(
-              '⚠️ Clerk sign-out after email mismatch failed:',
-              signOutError
-            )
-          }
-
-          setLoading(false)
-
-          alert(
-            `This mobile number is already registered with ${registeredEmail}. Please continue with that Google account.`
-          )
-
-          return
-        }
-
-        /*
-         * ------------------------------------------------------
-         * GOOGLE EMAIL ALREADY USED BY ANOTHER MOBILE
-         * ------------------------------------------------------
-         */
-
-        if (
-          status === 409 &&
-          backendData?.code ===
-            'EMAIL_ALREADY_USED'
-        ) {
-          try {
-            await clerk.signOut()
-          } catch (signOutError) {
-            console.log(
-              '⚠️ Clerk sign-out after email conflict failed:',
-              signOutError
-            )
-          }
-
-          setLoading(false)
-
-          alert(
-            backendData?.message ||
-              'This Google email is already registered with another mobile number.'
-          )
-
-          return
-        }
-
-        /*
-         * Any other backend error should go to the outer
-         * authentication error handler.
-         */
-
-        throw backendError
-      }
-
-      /*
-       * --------------------------------------------------------
-       * VALIDATE BACKEND SUCCESS
-       * --------------------------------------------------------
-       */
-
-      if (
-        res?.data?.token &&
-        res?.data?.user
-      ) {
-        console.log(
-          '✅ Katbox backend authentication successful.'
-        )
-
-        /*
-         * ------------------------------------------------------
-         * SAVE KATBOX SESSION
-         * ------------------------------------------------------
-         *
-         * This stores:
-         *
-         *     JWT
-         *     MongoDB user
-         *
-         * Remembered Google email is stored separately above.
-         */
-
-        await saveSession(
-          res.data.token,
-          res.data.user
-        )
-
-        console.log(
-          '💾 Katbox session saved.'
-        )
-
-        /*
-         * ------------------------------------------------------
-         * NOTIFY ROOT LAYOUT FIRST
-         * ------------------------------------------------------
-         *
-         * We immediately notify the root layout of auth state
-         * change so isAuthenticated resolves synchronously.
-         */
-
-        notifyAuthChanged()
-
-        console.log(
-          '📢 Auth state change notified.'
-        )
-
-        /*
-         * Log the backend user so we can easily verify the role.
-         */
-
-        console.log(
-          '👤 Katbox user:',
-          {
-            id: res.data.user.id,
-            name: res.data.user.name,
-            email: res.data.user.email,
-            phone: res.data.user.phone,
-            isChef: res.data.user.isChef,
-            isAdmin: res.data.user.isAdmin,
-          }
-        )
-
-        setLoading(false)
-
-        /*
-         * ------------------------------------------------------
-         * NAVIGATION IS OWNED BY app/layout.tsx
-         * ------------------------------------------------------
-         *
-         * We deliberately DO NOT call router.replace() here.
-         *
-         * Why?
-         *
-         * The RootLayout's auth-state listener runs
-         * checkAuth() asynchronously after notifyAuthChanged().
-         * During that window, `isAuthenticated` in the layout is
-         * still false. If we navigate now, the layout's
-         * navigation guard would bounce the user straight back
-         * to /login the instant `segments` changes — that is
-         * the exact race condition that was causing the
-         * intermittent "Google Sign-In failed" behaviour.
-         *
-         * Instead, we simply return. The layout guard detects
-         * `isAuthenticated === true` on the /login public route
-         * and routes the user by role:
-         *
-         *     Admin    -> /admin/all-users
-         *     Chef     -> /chefManagement/add-chefs
-         *     Customer -> /(tabs)/Home
-         */
-
-        console.log(
-          '✅ Login successful — layout will handle role-based navigation.'
-        )
-
-        return
-      }
-
-      /*
-       * --------------------------------------------------------
-       * INVALID BACKEND RESPONSE
-       * --------------------------------------------------------
-       */
-
-      console.error(
-        '❌ Backend did not return a valid Katbox session.',
-        res?.data
-      )
-
-      setLoading(false)
-
-      try {
-        await clerk.signOut()
-      } catch (signOutError) {
-        console.log(
-          '⚠️ Clerk cleanup error:',
-          signOutError
-        )
-      }
-
-      alert(
-        'Authentication synchronization failed. Please try again.'
-      )
-    } catch (error: any) {
-      /*
-       * --------------------------------------------------------
-       * GENERAL GOOGLE LOGIN ERROR
-       * --------------------------------------------------------
-       */
-
-      setLoading(false)
-
-      console.error(
-        '❌ Clerk Google login error:',
-        error
-      )
-
-      /*
-       * --------------------------------------------------------
-       * CLEAN UP CLERK SESSION — ONLY ON REAL AUTH REJECTIONS
-       * --------------------------------------------------------
-       *
-       * Network timeouts / Render cold-start failures must NOT
-       * sign the user out of Clerk. Doing so forces them to redo
-       * the entire Google OAuth flow even though nothing was
-       * wrong with their Google account.
-       */
-
-      const httpStatus =
-        error?.response?.status
-
-      const isAuthRejection =
-        httpStatus === 401 ||
-        httpStatus === 403
-
-      if (isAuthRejection) {
-        try {
-          await clerk.signOut()
-        } catch (signOutError) {
-          console.log(
-            '⚠️ Clerk cleanup error:',
-            signOutError
-          )
-        }
-      }
-
-      /*
-       * --------------------------------------------------------
-       * CHECK FOR USER CANCELLATION
-       * --------------------------------------------------------
-       */
-
-      const errorMessage =
-        error?.message ||
-        error?.errors?.[0]?.message ||
-        ''
-
-      if (
-        errorMessage
-          .toLowerCase()
-          .includes('cancel')
-      ) {
-        console.log(
-          'ℹ️ Google login was cancelled by the user.'
-        )
-
-        return
-      }
-
-      /*
-       * --------------------------------------------------------
-       * FRIENDLY ERROR MESSAGES
-       * --------------------------------------------------------
-       *
-       * We translate low-level network errors into language
-       * users can actually act on.
-       */
-
-      const errCode =
-        error?.code ||
-        error?.response?.data?.code
-
-      let friendlyMessage =
-        'Google Sign-In failed. Please try again.'
-
-      if (
-        errCode === 'ECONNABORTED' ||
-        errCode === 'ETIMEDOUT' ||
-        errCode === 'ERR_NETWORK'
-      ) {
-        friendlyMessage =
-          'Our servers are waking up. Please tap “Continue with Google” once more — it will be instant this time.'
-      } else if (httpStatus === 500) {
-        friendlyMessage =
-          'Something went wrong on our side. Please try again in a moment.'
-      } else if (httpStatus === 409) {
-        friendlyMessage =
-          error?.response?.data?.message ||
-          'This account is already registered with a different Google account.'
-      }
-
-      alert(friendlyMessage)
     }
   }
 
   /*
    * ============================================================
-   * GOOGLE BUTTON ENABLED ONLY WHEN NAME + MOBILE ARE VALID
+   * BUTTON ENABLED ONLY WHEN NAME + MOBILE ARE VALID
    * ============================================================
    */
 
@@ -868,7 +160,7 @@ const Login = () => {
             />
 
             <Text style={styles.loadingText}>
-              Signing in with Google...
+              Sending OTP...
             </Text>
           </View>
         )}
@@ -1037,89 +329,7 @@ const Login = () => {
               </View>
             </Animated.View>
 
-            {/* PREVIOUSLY USED GOOGLE ACCOUNT */}
-
-            {lastUsedEmail ? (
-              <Animated.View
-                entering={FadeInUp
-                  .delay(450)
-                  .duration(400)}
-              >
-                <TouchableOpacity
-                  activeOpacity={0.75}
-                  disabled={loading}
-                  onPress={() => {
-                    if (!name.trim()) {
-                      setNameError(
-                        'Please enter your username'
-                      )
-                      nameRef.current?.focus()
-                      return
-                    }
-
-                    if (phoneNumber.length !== 10) {
-                      alert(
-                        'Please enter a valid 10-digit mobile number'
-                      )
-                      phoneRef.current?.focus()
-                      return
-                    }
-
-                    handleGoogleLogin()
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    `Sign in with ${lastUsedEmail}`
-                  }
-                  style={
-                    styles.rememberedEmailContainer
-                  }
-                >
-                  <Ionicons
-                    name="mail-outline"
-                    size={14}
-                    color="#38512F"
-                    style={
-                      styles.rememberedEmailIcon
-                    }
-                  />
-
-                  <View
-                    style={
-                      styles.rememberedEmailContent
-                    }
-                  >
-                    <Text
-                      style={
-                        styles.rememberedEmailLabel
-                      }
-                    >
-                      Previously used Google account
-                    </Text>
-
-                    <Text
-                      style={
-                        styles.rememberedEmailText
-                      }
-                      numberOfLines={1}
-                    >
-                      {lastUsedEmail}
-                    </Text>
-                  </View>
-
-                  <Ionicons
-                    name="arrow-forward-circle-outline"
-                    size={20}
-                    color="#38512F"
-                    style={
-                      styles.rememberedEmailArrow
-                    }
-                  />
-                </TouchableOpacity>
-              </Animated.View>
-            ) : null}
-
-            {/* GOOGLE SOCIAL LOGIN BUTTON VIA CLERK
+            {/* LOGIN VIA OTP BUTTON (Twilio)
                 Disabled until Name & Mobile are filled */}
 
             <Animated.View
@@ -1146,9 +356,7 @@ const Login = () => {
                   buttonScale.value =
                     withSpring(1)
                 }}
-                onPress={
-                  handleGoogleLogin
-                }
+                onPress={sendOTP}
               >
                 <Animated.View
                   style={[
@@ -1157,7 +365,7 @@ const Login = () => {
                   ]}
                 >
                   <Ionicons
-                    name="logo-google"
+                    name="chatbubble-ellipses-outline"
                     size={18}
                     color="#fff"
                     style={{
@@ -1165,49 +373,6 @@ const Login = () => {
                     }}
                   />
 
-                  <Text
-                    style={styles.buttonText}
-                  >
-                    Continue with Google
-                  </Text>
-
-                  <Ionicons
-                    name="arrow-forward"
-                    size={16}
-                    color="#fff"
-                    style={
-                      styles.buttonIcon
-                    }
-                  />
-                </Animated.View>
-              </TouchableOpacity>
-            </Animated.View>
-
-            {/* TWILIO BUTTON & UI
-                COMMENTED OUT - KEPT FOR FUTURE USE */}
-
-            {/*
-            <Animated.View
-              entering={FadeInUp
-                .delay(500)
-                .duration(500)}
-            >
-              <TouchableOpacity
-                activeOpacity={0.9}
-                style={[
-                  styles.button,
-                  isEnabled &&
-                    styles.buttonEnabled,
-                ]}
-                disabled={
-                  !isEnabled ||
-                  loading
-                }
-                onPress={sendOTP}
-              >
-                <View
-                  style={styles.buttonInner}
-                >
                   <Text
                     style={styles.buttonText}
                   >
@@ -1222,10 +387,9 @@ const Login = () => {
                       styles.buttonIcon
                     }
                   />
-                </View>
+                </Animated.View>
               </TouchableOpacity>
             </Animated.View>
-            */}
 
             {/* INFO TEXT BANNER */}
 
@@ -1244,7 +408,7 @@ const Login = () => {
 
               <Text style={styles.infoText}>
                 Secure authentication powered by
-                Clerk and Google. Your details remain
+                Twilio SMS. Your details remain
                 completely private and safe.
               </Text>
             </Animated.View>
@@ -1533,7 +697,7 @@ const styles = StyleSheet.create({
 
   /*
    * ==========================================================
-   * PREVIOUS GOOGLE EMAIL
+   * PREVIOUS GOOGLE EMAIL (kept for style-preservation only)
    * ==========================================================
    */
 
@@ -1576,7 +740,7 @@ const styles = StyleSheet.create({
 
   /*
    * ==========================================================
-   * GOOGLE BUTTON
+   * LOGIN BUTTON
    * ==========================================================
    */
 

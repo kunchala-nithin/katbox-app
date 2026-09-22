@@ -28,7 +28,6 @@ import api from '@/src/lib/api';
 import { useRouter } from 'expo-router';
 import { removeToken } from '@/src/lib/authStorage';
 import { triggerAuthChange } from '@/src/lib/authEvents';
-import { useClerk } from '@clerk/clerk-expo';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -121,7 +120,6 @@ const statusTone = (status: string) => {
 
 export default function AllUsersScreen() {
   const router = useRouter();
-  const { signOut } = useClerk();
 
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -302,12 +300,11 @@ export default function AllUsersScreen() {
           onPress: async () => {
             try {
               setLoading(true);
-              await signOut();
               await removeToken();
               triggerAuthChange();
               router.replace('/login' as any);
             } catch (err) {
-              console.error('Clerk/KatBox Logout error:', err);
+              console.error('KatBox Logout error:', err);
 
               try {
                 await removeToken();

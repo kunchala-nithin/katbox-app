@@ -7,27 +7,6 @@ import api from "./api";
 const TOKEN_KEY = "auth_token";
 const USER_KEY = "auth_user";
 
-/**
- * ============================================================
- * REMEMBERED GOOGLE EMAIL
- * ============================================================
- *
- * This is intentionally stored separately from the authenticated
- * session.
- *
- * removeToken() will delete the authentication session but will
- * NOT delete this remembered email.
- *
- * Example:
- *
- * phone:
- * +919133450555
- *
- * remembered email:
- * nithinkunchala2431@gmail.com
- */
-const LAST_USED_EMAIL_PREFIX = "@katbox_last_used_email_";
-
 const BASE_SAVED_ADDRESSES_PREFIX =
   "@user_saved_delivery_addresses_";
 
@@ -132,119 +111,6 @@ export const normalizePhoneForStorage = (
 
 /**
  * ============================================================
- * REMEMBERED EMAIL KEY
- * ============================================================
- */
-export const getLastUsedEmailKey = (
-  phone?: string
-): string => {
-  const normalizedPhone =
-    normalizePhoneForStorage(phone);
-
-  if (!normalizedPhone) {
-    return `${LAST_USED_EMAIL_PREFIX}unknown`;
-  }
-
-  const safePhone = normalizedPhone.replace(
-    /[^0-9+]/g,
-    ""
-  );
-
-  return `${LAST_USED_EMAIL_PREFIX}${safePhone}`;
-};
-
-/**
- * ============================================================
- * SAVE LAST USED GOOGLE EMAIL
- * ============================================================
- */
-export const saveLastUsedEmail = async (
-  phone: string,
-  email: string
-): Promise<void> => {
-  try {
-    const normalizedEmail =
-      email.trim().toLowerCase();
-
-    if (!normalizedEmail) {
-      return;
-    }
-
-    const key = getLastUsedEmailKey(phone);
-
-    await AsyncStorage.setItem(
-      key,
-      normalizedEmail
-    );
-  } catch (error) {
-    console.log(
-      "Error saving last used email:",
-      error
-    );
-  }
-};
-
-/**
- * ============================================================
- * GET LAST USED GOOGLE EMAIL
- * ============================================================
- */
-export const getLastUsedEmail = async (
-  phone: string
-): Promise<string | null> => {
-  try {
-    const normalizedPhone =
-      normalizePhoneForStorage(phone);
-
-    if (!normalizedPhone) {
-      return null;
-    }
-
-    const key = getLastUsedEmailKey(phone);
-
-    const email =
-      await AsyncStorage.getItem(key);
-
-    return email
-      ? email.trim().toLowerCase()
-      : null;
-  } catch (error) {
-    console.log(
-      "Error getting last used email:",
-      error
-    );
-
-    return null;
-  }
-};
-
-/**
- * ============================================================
- * CLEAR LAST USED EMAIL
- * ============================================================
- *
- * Normally we DO NOT call this during logout.
- *
- * It exists only in case the app needs to intentionally forget
- * a remembered email later.
- */
-export const clearLastUsedEmail = async (
-  phone: string
-): Promise<void> => {
-  try {
-    const key = getLastUsedEmailKey(phone);
-
-    await AsyncStorage.removeItem(key);
-  } catch (error) {
-    console.log(
-      "Error clearing last used email:",
-      error
-    );
-  }
-};
-
-/**
- * ============================================================
  * SAVE KATBOX SESSION
  * ============================================================
  */
@@ -261,21 +127,6 @@ export const saveSession = async (
     USER_KEY,
     JSON.stringify(user)
   );
-
-  /**
-   * Store the actual email returned by the backend.
-   *
-   * This is deliberately done here as an additional safety net.
-   *
-   * The login screen will also save the Google email after a
-   * successful OAuth login.
-   */
-  if (user?.phone && user?.email) {
-    await saveLastUsedEmail(
-      user.phone,
-      user.email
-    );
-  }
 };
 
 /**
@@ -346,24 +197,12 @@ export const getUser =
  * REMOVE AUTH SESSION
  * ============================================================
  *
- * IMPORTANT:
- *
  * We delete ONLY:
  *
  * auth_token
  * auth_user
  *
- * We DO NOT delete the remembered Google email.
- *
- * Therefore:
- *
- * Logout
- *   ↓
- * auth session deleted
- *   ↓
- * login screen
- *   ↓
- * previous email can still be shown
+ * We do NOT touch any other keys.
  */
 export const removeToken = async (): Promise<void> => {
   try {
@@ -669,21 +508,6 @@ export const refreshUser =
         USER_KEY,
         JSON.stringify(updatedUser)
       );
-
-      /**
-       * Keep the remembered email synchronized
-       * with MongoDB whenever a valid user profile
-       * is refreshed.
-       */
-      if (
-        updatedUser.phone &&
-        updatedUser.email
-      ) {
-        await saveLastUsedEmail(
-          updatedUser.phone,
-          updatedUser.email
-        );
-      }
 
       return updatedUser;
     } catch (error: any) {

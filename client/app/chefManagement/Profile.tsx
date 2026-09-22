@@ -15,7 +15,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { Ionicons, Feather } from "@expo/vector-icons";
-import { useClerk } from "@clerk/clerk-expo";
 import {
   getToken,
   getUser,
@@ -31,9 +30,6 @@ import { BASE_URL } from "@/src/lib/api";
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-
-  // Clerk authentication
-  const { signOut } = useClerk();
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -142,7 +138,7 @@ export default function ProfileScreen() {
     fetchProfileData();
   };
 
-  // 🔥 Complete Clerk + KatBox Logout Handler & Navigation to Login
+  // 🔥 Complete KatBox Logout Handler & Navigation to Login
   const handleLogout = () => {
     Alert.alert(
       "Logout",
@@ -157,29 +153,25 @@ export default function ProfileScreen() {
               // Prevent multiple logout actions
               setLoading(true);
 
-              // 1. Sign out from Clerk
-              // This clears the active Clerk session.
-              await signOut();
-
-              // 2. Remove stored KatBox auth credentials
+              // 1. Remove stored KatBox auth credentials
               await removeToken();
 
-              // 3. Disconnect web socket connection
+              // 2. Disconnect web socket connection
               if (socket && typeof socket.disconnect === "function") {
                 socket.disconnect();
               }
 
-              // 4. Notify app auth state listeners
+              // 3. Notify app auth state listeners
               notifyAuthChanged();
 
-              // 5. Reset navigation stack and navigate directly to Login screen
+              // 4. Reset navigation stack and navigate directly to Login screen
               router.replace("/login" as any);
             } catch (err) {
-              console.error("Clerk/KatBox Logout error:", err);
+              console.error("KatBox Logout error:", err);
 
-              // Even if Clerk sign-out encounters an issue,
-              // clear the local KatBox session so the user
-              // cannot remain authenticated locally.
+              // Even if something goes wrong above, clear the local
+              // KatBox session so the user cannot remain authenticated
+              // locally.
               try {
                 await removeToken();
               } catch (storageError) {
