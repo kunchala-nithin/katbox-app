@@ -368,6 +368,24 @@ setInterval(async () => {
  *       receives an Expo push with the bundled alarm.mp3 sound +
  *       admin_orders_alarm channel + data.role = "admin". This makes
  *       the admin's phone ring even when the app is fully closed.
+ *
+ * ✅ NEW (Option A): Homemade & QuickBites orders are AUTO-VERIFIED
+ *    inside this handler. Because these flows don't require a manual
+ *    45% advance:
+ *      • If the user paid the full amount online via Cashfree, the
+ *        order lands with paymentStatus = "Paid" (Cashfree already
+ *        verified server-side).
+ *      • If the user chose Cash on Delivery, the order lands with
+ *        paymentStatus = "Payment Pending (COD)" and isAdvanceVerified
+ *        = true (nothing to verify).
+ *    In BOTH cases we immediately:
+ *      • flip isAdvanceVerified to true
+ *      • emit "advance_payment_verified", "new_chef_order" and
+ *        "order_updated" socket events
+ *      • fire the chef alarm push (alarm.mp3 + chef_orders_alarm
+ *        channel + priority "max")
+ *    Mealbox & Catering orders are UNAFFECTED — they still require
+ *    the admin to tap "Payment Received" to notify the chef.
  */
 export const createOrder = async (req: AuthRequest, res: Response) => {
   try {
@@ -504,7 +522,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     const resolvedAddress = String(deliveryAddress || addressDetails || "");
 
     const numericTotal = Number(totalAmount) || 0;
-    const finalAdvance = advancePaidAmount !== undefined ? Number(advancePaidAmount) : Math.round(numericTotal * 0.40 * 100) / 100;
+    const finalAdvance = advancePaidAmount !== undefined ? Number(advancePaidAmount) : Math.round(numericTotal * 0.45 * 100) / 100;
     const finalBalance = balanceAmountToCollect !== undefined ? Number(balanceAmountToCollect) : Math.round((numericTotal - finalAdvance) * 100) / 100;
 
     let resolvedChefPhone = "";
@@ -584,6 +602,33 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
     }
 
+    // ✅ Compute auto-verification flags for Homemade/QuickBites.
+    //    These flows don't require a manual 45% advance check:
+    //      • If the user paid online (Cashfree) → payment already verified server-side.
+    //      • If the user chose COD → nothing to verify.
+    const isHomemadeOrQuickBites =
+      resolvedServiceType === "homemade" ||
+      resolvedServiceType === "quickbites";
+
+    // Determine the persisted paymentMethod for the new order.
+    // For Homemade/QuickBites the client sends either "online" (Cashfree full
+    // payment — the Cashfree verify endpoint would have been used, but for the
+    // direct-order path we treat the incoming flag as authoritative) or "cod".
+    const incomingPaymentMethod = String(paymentMethod || "").toLowerCase();
+    const isCodOrder = incomingPaymentMethod === "cod";
+
+    // Compute the initial paymentStatus based on the flow:
+    //  - Homemade/QuickBites COD      → "Payment Pending (COD)"
+    //  - Homemade/QuickBites online   → "Paid"
+    //  - Mealbox/Catering             → "Verification Pending" (unchanged)
+    let initialPaymentStatus = "Verification Pending";
+    let initialIsAdvanceVerified = false;
+
+    if (isHomemadeOrQuickBites) {
+      initialIsAdvanceVerified = true;
+      initialPaymentStatus = isCodOrder ? "Payment Pending (COD)" : "Paid";
+    }
+
     let savedOrder: any = null;
 
     // ✅ Homemade AND QuickBites share the same schema, but they are
@@ -649,16 +694,41 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         discount: Number(discount) || 0,
         appliedCoupon: appliedCoupon || "",
         totalAmount: numericTotal,
-        advancePaidAmount: finalAdvance,
-        balanceAmountToCollect: finalBalance,
+        // ✅ For Homemade/QuickBites online (Cashfree), the full amount is
+        // paid at order time → advance = total, balance = 0.
+        // For COD, advance = 0, balance = total.
+        // The client (CheckOutScreen) sends the correct values in
+        // `advancePaidAmount` and `balanceAmountToCollect` — we honour them
+        // but fall back to computing them correctly if missing.
+        advancePaidAmount: isCodOrder
+          ? 0
+          : (advancePaidAmount !== undefined
+              ? Number(advancePaidAmount)
+              : numericTotal),
+        balanceAmountToCollect: isCodOrder
+          ? (balanceAmountToCollect !== undefined
+              ? Number(balanceAmountToCollect)
+              : numericTotal)
+          : (balanceAmountToCollect !== undefined
+              ? Number(balanceAmountToCollect)
+              : 0),
         utrNumber: utrNumber || "",
         advancePaymentScreenshot: screenshotData,
-        isAdvanceVerified: false,
-        paymentMethod: paymentMethod || "cod",
-        paymentStatus: "Verification Pending",
+        // ✅ Auto-verify for Homemade/QuickBites
+        isAdvanceVerified: initialIsAdvanceVerified,
+        paymentMethod: paymentMethod || (isCodOrder ? "cod" : "online"),
+        paymentStatus: initialPaymentStatus,
         orderStatus: "Placed",
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          {
+            status: "Placed",
+            timestamp: orderPlacedAt,
+            note: isHomemadeOrQuickBites
+              ? (isCodOrder
+                  ? "COD order placed - payment to be collected on delivery"
+                  : "Online payment confirmed - order placed")
+              : `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending`,
+          },
         ],
       });
 
@@ -814,8 +884,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         if (customerDoc?.pushToken) {
           await sendExpoPushNotification(
             customerDoc.pushToken,
-            "Order Placed - Verification Pending 🕒",
-            `Your order #${savedOrder.orderId} advance payment is being verified by admin.`,
+            isHomemadeOrQuickBites
+              ? (isCodOrder ? "Order Placed - Cash on Delivery 🕒" : "Order Placed - Payment Confirmed ✅")
+              : "Order Placed - Verification Pending 🕒",
+            isHomemadeOrQuickBites
+              ? (isCodOrder
+                  ? `Your order #${savedOrder.orderId} has been placed. Please keep ₹${savedOrder.balanceAmountToCollect} ready for delivery.`
+                  : `Your order #${savedOrder.orderId} has been placed successfully.`)
+              : `Your order #${savedOrder.orderId} advance payment is being verified by admin.`,
             { orderId: savedOrder.orderId, screen: "orders" }
           );
         }
@@ -866,13 +942,94 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       } catch (adminPushErr) {
         console.log("Admin push notification error:", adminPushErr);
       }
+
+      /* ──────────────────────────────────────────────────────────
+         ✅ NEW (Option A) — Auto-notify the chef for
+         Homemade / QuickBites orders.
+
+         Because these flows don't require manual admin verification
+         of a 45% advance, we skip the admin-verify step entirely and
+         immediately trigger the same socket events + chef alarm push
+         that `verifyAdvancePayment` fires for Mealbox/Catering.
+
+         Mealbox & Catering are UNAFFECTED — they still wait for the
+         admin to tap "Payment Received".
+         ────────────────────────────────────────────────────────── */
+      if (isHomemadeOrQuickBites && savedOrder) {
+        try {
+          // Emit the same socket events that verifyAdvancePayment emits
+          io.emit("advance_payment_verified", savedOrder);
+          io.emit("order_updated", savedOrder);
+
+          if (savedOrder.userId) {
+            io.to(String(savedOrder.userId)).emit("advance_payment_verified", savedOrder);
+            io.to(String(savedOrder.userId)).emit("order_updated", savedOrder);
+          }
+
+          // Resolve the chef's user document to find their push token
+          const chefIdentifier = savedOrder.chefId;
+          let chefUserDoc: any = null;
+          let resolvedChefUserId: string | null = null;
+
+          if (chefIdentifier && mongoose.Types.ObjectId.isValid(chefIdentifier)) {
+            const chefDoc = await Chef.findById(chefIdentifier);
+            if (chefDoc?.user) {
+              chefUserDoc = await User.findById(chefDoc.user);
+              resolvedChefUserId = String(chefDoc.user);
+              io.to(String(chefDoc.user)).emit("new_chef_order", savedOrder);
+              io.to(String(chefDoc.user)).emit("order_updated", savedOrder);
+            }
+          }
+          if (!chefUserDoc && savedOrder.chefName) {
+            const chefDoc = await Chef.findOne({ name: savedOrder.chefName });
+            if (chefDoc?.user) {
+              chefUserDoc = await User.findById(chefDoc.user);
+              resolvedChefUserId = String(chefDoc.user);
+              io.to(String(chefDoc.user)).emit("new_chef_order", savedOrder);
+              io.to(String(chefDoc.user)).emit("order_updated", savedOrder);
+            }
+          }
+          if (chefIdentifier) {
+            io.to(String(chefIdentifier)).emit("new_chef_order", savedOrder);
+            io.to(String(chefIdentifier)).emit("order_updated", savedOrder);
+          }
+
+          // Fire the chef alarm push — same config used by verifyAdvancePayment
+          if (chefUserDoc?.pushToken && isValidExpoToken(chefUserDoc.pushToken)) {
+            await sendExpoPush({
+              token: String(chefUserDoc.pushToken),
+              title: `🔔 New ${resolvedServiceType === "quickbites" ? "QuickBites" : "Homemade"} Order ${savedOrder.orderId}`,
+              body: `${savedOrder.userName || "Customer"} → ₹${savedOrder.totalAmount}. Tap to accept now!`,
+              data: {
+                orderId: savedOrder.orderId,
+                screen: "chef-orders",
+                role: "chef",
+                chefId: resolvedChefUserId || String(chefUserDoc._id || ""),
+              },
+              sound: ORDER_ALARM_SOUND,
+              channelId: CHEF_ORDER_CHANNEL_ID,
+              priority: "max",
+              vibrate: [0, 600, 300, 600, 300],
+            });
+            console.log(
+              `[createOrder] Auto-notified chef for ${resolvedServiceType} order ${savedOrder.orderId}`
+            );
+          }
+        } catch (autoChefNotifyErr) {
+          console.log("Auto chef-notify error (Homemade/QuickBites):", autoChefNotifyErr);
+        }
+      }
     } catch (e) {
       console.log("Order creation notification emit warning:", e);
     }
 
     return res.status(201).json({
       success: true,
-      message: "Order placed successfully. Advance verification pending.",
+      message: isHomemadeOrQuickBites
+        ? (isCodOrder
+            ? "Order placed successfully. Payment to be collected on delivery."
+            : "Order placed successfully. Payment confirmed.")
+        : "Order placed successfully. Advance verification pending.",
       order: savedOrder,
     });
   } catch (error: any) {

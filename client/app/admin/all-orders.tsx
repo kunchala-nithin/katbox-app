@@ -1400,39 +1400,56 @@ export default function AdminAllOrdersScreen() {
             </View>
           ) : (
             <>
-              {/* ─── ADVANCE PAYMENT VERIFICATION BANNER ─── */}
-              {activeOrder && (
-                <View style={styles.card}>
-                  <Text style={styles.cardSectionHeading}>Advance Payment Verification</Text>
-                  <View style={styles.advancePaymentBox}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.advanceLabelText}>40% Advance Amount:</Text>
-                      <Text style={styles.advanceAmountText}>₹{activeOrder.advancePaidAmount || Math.round(Number(activeOrder.totalAmount || 0) * 0.40)}</Text>
-                      {activeOrder.utrNumber ? (
-                        <Text style={styles.advanceMetaText}>UTR Ref: {activeOrder.utrNumber}</Text>
-                      ) : null}
-                      <Text style={[styles.advanceStatusBadge, activeOrder.isAdvanceVerified ? styles.statusVerified : styles.statusPending]}>
-                        {activeOrder.isAdvanceVerified ? '✓ Verified & Received' : '⏳ Verification Pending'}
-                      </Text>
-                    </View>
+              {/* ─── ADVANCE PAYMENT VERIFICATION BANNER ───
+                  ✅ UPDATED: Only rendered for Mealbox/Catering orders.
+                  Homemade/QuickBites orders either paid in full online
+                  (Cashfree already verified it server-side) or chose COD
+                  (no advance exists). The banner has no purpose for them. */}
+              {activeOrder &&
+                activeOrder.serviceType !== 'homemade' &&
+                activeOrder.serviceType !== 'quickbites' && (
+                  <View style={styles.card}>
+                    <Text style={styles.cardSectionHeading}>Advance Payment Verification</Text>
+                    <View style={styles.advancePaymentBox}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.advanceLabelText}>45% Advance Amount:</Text>
+                        <Text style={styles.advanceAmountText}>
+                          ₹
+                          {activeOrder.advancePaidAmount ||
+                            Math.round(Number(activeOrder.totalAmount || 0) * 0.45)}
+                        </Text>
+                        {activeOrder.utrNumber ? (
+                          <Text style={styles.advanceMetaText}>UTR Ref: {activeOrder.utrNumber}</Text>
+                        ) : null}
+                        <Text
+                          style={[
+                            styles.advanceStatusBadge,
+                            activeOrder.isAdvanceVerified ? styles.statusVerified : styles.statusPending,
+                          ]}
+                        >
+                          {activeOrder.isAdvanceVerified
+                            ? '✓ Verified & Received'
+                            : '⏳ Verification Pending'}
+                        </Text>
+                      </View>
 
-                    {!activeOrder.isAdvanceVerified && (
-                      <TouchableOpacity
-                        style={styles.verifyPaymentBtn}
-                        activeOpacity={0.85}
-                        onPress={handleVerifyAdvancePayment}
-                        disabled={actionLoading}
-                      >
-                        {actionLoading ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <Text style={styles.verifyPaymentBtnText}>Payment Received</Text>
-                        )}
-                      </TouchableOpacity>
-                    )}
+                      {!activeOrder.isAdvanceVerified && (
+                        <TouchableOpacity
+                          style={styles.verifyPaymentBtn}
+                          activeOpacity={0.85}
+                          onPress={handleVerifyAdvancePayment}
+                          disabled={actionLoading}
+                        >
+                          {actionLoading ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <Text style={styles.verifyPaymentBtnText}>Payment Received</Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
-                </View>
-              )}
+                )}
 
               {/* ─── STEPPER HERO (if accepted) ─── */}
               {isCurrentOrderAccepted && (
@@ -1868,10 +1885,14 @@ export default function AdminAllOrdersScreen() {
                             isPaymentCod && !isCashCollected ? styles.paymentCodPillText : styles.paymentOnlinePillText,
                           ]}
                         >
+                          {/* ✅ UPDATED: Removed the outdated "(40% Advance)"
+                              suffix — it was misleading for both Mealbox/
+                              Catering (advance is 45% now) and for Homemade/
+                              QuickBites (no advance; full on delivery). */}
                           {isCashCollected
                             ? 'Cash Collected (Paid)'
                             : isPaymentCod
-                            ? 'Cash on Delivery (40% Advance)'
+                            ? 'Cash on Delivery'
                             : 'Online Paid (UPI/Card)'}
                         </Text>
                       </View>

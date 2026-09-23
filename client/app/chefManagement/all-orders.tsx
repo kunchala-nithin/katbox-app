@@ -2024,7 +2024,7 @@ export default function AllOrdersScreen() {
                           {isCashCollected
                             ? 'Cash Collected (Paid)'
                             : isPaymentCod
-                            ? 'Cash on Delivery (40% Advance)'
+                            ? 'Cash on Delivery'
                             : 'Online Paid (UPI/Card)'}
                         </Text>
                       </View>

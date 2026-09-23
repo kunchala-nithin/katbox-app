@@ -11,6 +11,7 @@ import {
   Modal,
   ActivityIndicator,
   Alert,
+  TextInput,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,7 +29,7 @@ import {
 } from "@/src/lib/authStorage";
 // ✅ NEW: read the active delivery location (lat/lng) from the global store
 import { useDeliveryLocationStore } from "@/src/store/deliveryLocationStore";
-// ✅ NEW: Cashfree payment helper — replaces the old UTR/screenshot modal flow
+// ✅ NEW: Cashfree payment helper — used for Mealbox/Catering (and Homemade/QuickBites when user pays online)
 import { startCashfreePayment } from "@/src/lib/cashfree";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -71,11 +72,17 @@ export default function CheckOutScreen() {
   const isQuickBitesFlow = serviceType === "quickbites";
   const isCateringFlow = serviceType === "catering";
   const isHomemadeFlow = serviceType === "homemade" || isQuickBitesFlow;
+  // ✅ NEW: Mealbox + Catering always require the online advance (mandatory)
+  const requiresAdvanceFlow = !isHomemadeFlow;
 
   const totalAmount = (params.totalAmount as string) || "687";
   const numericTotal = Number(totalAmount) || 0;
 
-  const advanceAmount = Math.round(numericTotal * 0.40 * 100) / 100;
+  // ✅ Advance is now 45% for Mealbox & Catering. For Homemade/QuickBites
+  //    there is no advance — the user either pays the full amount online or
+  //    pays the full amount as COD.
+  const ADVANCE_RATIO = 0.45;
+  const advanceAmount = Math.round(numericTotal * ADVANCE_RATIO * 100) / 100;
   const balanceAmount = Math.round((numericTotal - advanceAmount) * 100) / 100;
 
   const subtotal = Number(params.subtotal) || Number(totalAmount);
@@ -166,9 +173,6 @@ export default function CheckOutScreen() {
   const [newBuilding, setNewBuilding] = useState("");
   const [newStreet, setNewStreet] = useState("");
   const [newCity, setNewCity] = useState("");
-
-  // ✅ UTR + screenshot + scanner modal states REMOVED entirely.
-  //    The Cashfree SDK now handles UPI natively.
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const confirmScale = useRef(new Animated.Value(0.85)).current;
@@ -348,7 +352,10 @@ export default function CheckOutScreen() {
     return [];
   }, [params.scheduledDatesFormatted, params.scheduledDatesList, deliveryDate, isCateringFlow, isHomemadeFlow]);
 
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("cod");
+  // ✅ Payment method selection. Default is now "upi" for Mealbox/Catering
+  // (advance mandatory via Cashfree) and "online" for Homemade/QuickBites.
+  // COD is only offered for Homemade/QuickBites (full amount on delivery).
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>("upi");
   const [showDetails, setShowDetails] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -358,29 +365,62 @@ export default function CheckOutScreen() {
     Animated.spring(slideAnim, { toValue, friction: 8, tension: 40, useNativeDriver: false }).start();
   };
 
-  // ✅ REMOVED: pickPaymentScreenshot, submitAdvanceProofAndPlaceOrder, formatTimer
-  //    These were the old UTR/screenshot verification flow.
+  /**
+   * ✅ Computed amount that the user actually pays RIGHT NOW:
+   *   - Homemade/QuickBites + COD → ₹0 (pay full on delivery)
+   *   - Homemade/QuickBites + online → full total (paid through Cashfree)
+   *   - Mealbox/Catering (any card) → 45% advance (paid through Cashfree)
+   */
+  const payNowAmount = useMemo(() => {
+    if (isHomemadeFlow) {
+      return selectedPaymentMethod === "cod" ? 0 : numericTotal;
+    }
+    return advanceAmount;
+  }, [isHomemadeFlow, selectedPaymentMethod, numericTotal, advanceAmount]);
 
   /**
-   * ✅ NEW — Production order flow:
+   * ✅ Computed amount the user pays later (on delivery / after service):
+   *   - Homemade/QuickBites + COD → full total
+   *   - Homemade/QuickBites + online → ₹0
+   *   - Mealbox/Catering (any card) → 55% balance
+   */
+  const payLaterAmount = useMemo(() => {
+    if (isHomemadeFlow) {
+      return selectedPaymentMethod === "cod" ? numericTotal : 0;
+    }
+    return balanceAmount;
+  }, [isHomemadeFlow, selectedPaymentMethod, numericTotal, balanceAmount]);
+
+  /**
+   * ✅ Human-readable label for the bottom bar / confirm modal.
+   */
+  const payNowLabel = useMemo(() => {
+    if (isHomemadeFlow && selectedPaymentMethod === "cod") {
+      return "Total Due on Delivery";
+    }
+    if (isHomemadeFlow) {
+      return "Total Due Now";
+    }
+    return "Advance (45%) Due Now";
+  }, [isHomemadeFlow, selectedPaymentMethod]);
+
+  /**
+   * ✅ NEW — handleConfirmPlaceOrder
    *
-   *   1. Build the orderPayload object (same shape as the old formData, but
-   *      as a plain JSON object — no multipart, no Cloudinary upload).
-   *   2. Call startCashfreePayment() with the 40% advance amount.
-   *   3. Cashfree SDK opens: user pays via UPI (PhonePe/GPay/Paytm/QR) or card.
-   *   4. On success, the SDK callback hits /api/payments/verify server-side.
-   *   5. Backend creates the order and returns it.
-   *   6. We clean up the cart and navigate to OrderConfirmationScreen.
+   *  Branch 1: Homemade/QuickBites + COD
+   *     → Direct order creation with paymentMethod: "cod",
+   *       advancePaidAmount: 0, balanceAmountToCollect: totalAmount
    *
-   *   On failure (user cancelled, network error), we just show an Alert
-   *   and reset the payment flag — the user stays on this screen.
+   *  Branch 2: Homemade/QuickBites + online
+   *     → Cashfree charges the FULL total amount online
+   *
+   *  Branch 3: Mealbox/Catering (any card)
+   *     → Cashfree charges the 45% advance
    */
   const handleConfirmPlaceOrder = () => {
     if (paymentInProgress) return;
 
     closeConfirmModal(async () => {
-      // Give the modal close animation a beat to finish before we open
-      // the Cashfree sheet — avoids janky stacking on iOS.
       setTimeout(async () => {
         try {
           setPaymentInProgress(true);
@@ -398,8 +438,65 @@ export default function CheckOutScreen() {
           const resolvedDeliveryFullAddress =
             deliveryLocation?.fullAddress || activeAddress?.fullAddress || addressDetails;
 
-          // ✅ Build the full order payload — this is what gets saved to
-          //    MongoDB after Cashfree confirms payment.
+          // ---------- Branch 1: Homemade/QuickBites + COD → direct order creation ----------
+          if (isHomemadeFlow && selectedPaymentMethod === "cod") {
+            const formData = new FormData();
+            formData.append("userId", userId);
+            formData.append("userName", userName);
+            formData.append("serviceType", serviceType);
+            formData.append("menuName", menuName);
+            formData.append("menuImage", menuImage);
+            formData.append("addressDetails", addressDetails);
+            formData.append("deliveryAddress", addressDetails);
+            formData.append("latitude", String(resolvedLatitude));
+            formData.append("longitude", String(resolvedLongitude));
+            formData.append("deliveryAddressFull", resolvedDeliveryFullAddress);
+            formData.append("subtotal", String(subtotal));
+            formData.append("deliveryPrice", String(deliveryPrice));
+            formData.append("discount", String(discount));
+            formData.append("appliedCoupon", appliedCoupon || "");
+            formData.append("totalAmount", String(totalAmount));
+            // Full amount collected on delivery, no advance
+            formData.append("advancePaidAmount", "0");
+            formData.append("balanceAmountToCollect", String(numericTotal));
+            formData.append("paymentMethod", "cod");
+            formData.append("chefId", chefId);
+            formData.append("chefName", chefName);
+            formData.append("items", JSON.stringify(parsedItems));
+            formData.append("deliveryDate", dynamicHomemadeDateLabel || "Today");
+            formData.append("deliveryTimeSlot", dynamicHomemadeSlotLabel || "30–45 min");
+            formData.append("deliverySlot", dynamicHomemadeSlotLabel || "30–45 min");
+            formData.append("isQuickBites", isQuickBites ? "true" : "false");
+            formData.append("deliveryWindowMinutes", isQuickBites ? "75" : "0");
+            if (liveEstimatedDeliveryAt) {
+              formData.append("estimatedDeliveryAtMs", String(liveEstimatedDeliveryAt.getTime()));
+            }
+
+            const res = await api.post("/api/orders/create", formData, {
+              headers: { "Content-Type": "multipart/form-data" },
+            });
+
+            if (res.data && res.data.success) {
+              const createdOrder = res.data.order;
+              if (params.cartId) {
+                try {
+                  await api.delete(`/api/cart/${params.cartId}`);
+                } catch (e) {
+                  console.log("Cart cleanup non-critical error", e);
+                }
+              }
+              router.push({
+                pathname: "/screens/OrderConfirmationScreen",
+                params: { orderId: createdOrder.orderId, serviceType },
+              });
+            } else {
+              Alert.alert("Order Error", res.data?.message || "Failed to place order.");
+            }
+            return;
+          }
+
+          // ---------- Branch 2 & 3: Cashfree online payment ----------
+          // Build the full order payload — same shape as before
           const orderPayload: Record<string, any> = {
             userId,
             userName,
@@ -416,12 +513,14 @@ export default function CheckOutScreen() {
             discount,
             appliedCoupon: appliedCoupon || "",
             totalAmount,
-            advancePaidAmount: advanceAmount,
-            balanceAmountToCollect: balanceAmount,
+            // For Homemade/QuickBites online: full amount paid → advance = total, balance = 0
+            // For Mealbox/Catering: 45% advance, 55% balance
+            advancePaidAmount: isHomemadeFlow ? numericTotal : advanceAmount,
+            balanceAmountToCollect: isHomemadeFlow ? 0 : balanceAmount,
             paymentMethod: "online",
           };
 
-          // ---------- Flow-specific fields ----------
+          // Flow-specific fields
           if (isCateringFlow) {
             orderPayload.chefId = chefId;
             orderPayload.chefName = chefName || restaurantName;
@@ -458,16 +557,16 @@ export default function CheckOutScreen() {
             if (parsedItems) orderPayload.items = parsedItems;
           }
 
-          // ---------- Open Cashfree checkout ----------
+          // Determine the Cashfree charge amount based on flow
+          const cashfreeChargeAmount = isHomemadeFlow ? numericTotal : advanceAmount;
+
           const result = await startCashfreePayment({
-            amount: advanceAmount,          // only the 40% advance is charged
+            amount: cashfreeChargeAmount,
             orderPayload,
             customerId: userId || undefined,
           });
 
-          // ---------- Handle outcome ----------
           if (result.success && result.order) {
-            // Cleanup cart (non-blocking — failure here doesn't block order confirmation)
             if (params.cartId) {
               try {
                 await api.delete(`/api/cart/${params.cartId}`);
@@ -478,10 +577,7 @@ export default function CheckOutScreen() {
 
             router.push({
               pathname: "/screens/OrderConfirmationScreen",
-              params: {
-                orderId: result.order.orderId,
-                serviceType,
-              },
+              params: { orderId: result.order.orderId, serviceType },
             });
           } else {
             Alert.alert(
@@ -491,7 +587,7 @@ export default function CheckOutScreen() {
             );
           }
         } catch (error: any) {
-          console.error("Cashfree payment error:", error);
+          console.error("Payment error:", error);
           Alert.alert(
             "Payment Error",
             error?.message ||
@@ -852,14 +948,19 @@ export default function CheckOutScreen() {
         {/* Choose a Payment Method Section */}
         <Text style={styles.choosePaymentHeaderLabel}>Choose a payment method</Text>
 
-        {/* 1. UPI Payment Option (Disabled) */}
+        {/* 1. UPI Payment Option */}
         <TouchableOpacity
           activeOpacity={0.9}
-          disabled={true}
-          style={[styles.paymentOptionCard, styles.disabledPaymentCard]}
+          onPress={() => setSelectedPaymentMethod("upi")}
+          style={[
+            styles.paymentOptionCard,
+            selectedPaymentMethod === "upi" && styles.paymentOptionCardActive,
+          ]}
         >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, opacity: 0.5 }}>
-            <View style={[styles.radioCircle]} />
+          <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+            <View style={[styles.radioCircle, selectedPaymentMethod === "upi" && styles.radioCircleActive]}>
+              {selectedPaymentMethod === "upi" && <View style={styles.radioInnerDot} />}
+            </View>
             <View style={styles.paymentIconBox}>
               <MaterialCommunityIcons name="qrcode-scan" size={20} color="#0F382A" />
             </View>
@@ -873,17 +974,22 @@ export default function CheckOutScreen() {
               <Text style={styles.paymentOptionSubtitle}>Pay using any UPI App</Text>
             </View>
           </View>
-          <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
+          <Ionicons name="chevron-forward" size={18} color="#5B756C" />
         </TouchableOpacity>
 
-        {/* 2. Cards Option (Disabled) */}
+        {/* 2. Cards Option */}
         <TouchableOpacity
           activeOpacity={0.9}
-          disabled={true}
-          style={[styles.paymentOptionCard, styles.disabledPaymentCard]}
+          onPress={() => setSelectedPaymentMethod("card")}
+          style={[
+            styles.paymentOptionCard,
+            selectedPaymentMethod === "card" && styles.paymentOptionCardActive,
+          ]}
         >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, opacity: 0.5 }}>
-            <View style={[styles.radioCircle]} />
+          <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+            <View style={[styles.radioCircle, selectedPaymentMethod === "card" && styles.radioCircleActive]}>
+              {selectedPaymentMethod === "card" && <View style={styles.radioInnerDot} />}
+            </View>
             <View style={styles.paymentIconBox}>
               <Ionicons name="card-outline" size={20} color="#0F382A" />
             </View>
@@ -892,17 +998,22 @@ export default function CheckOutScreen() {
               <Text style={styles.paymentOptionSubtitle}>Visa, Mastercard, RuPay & more</Text>
             </View>
           </View>
-          <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
+          <Ionicons name="chevron-forward" size={18} color="#5B756C" />
         </TouchableOpacity>
 
-        {/* 3. Net Banking Option (Disabled) */}
+        {/* 3. Net Banking Option */}
         <TouchableOpacity
           activeOpacity={0.9}
-          disabled={true}
-          style={[styles.paymentOptionCard, styles.disabledPaymentCard]}
+          onPress={() => setSelectedPaymentMethod("netbanking")}
+          style={[
+            styles.paymentOptionCard,
+            selectedPaymentMethod === "netbanking" && styles.paymentOptionCardActive,
+          ]}
         >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, opacity: 0.5 }}>
-            <View style={[styles.radioCircle]} />
+          <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+            <View style={[styles.radioCircle, selectedPaymentMethod === "netbanking" && styles.radioCircleActive]}>
+              {selectedPaymentMethod === "netbanking" && <View style={styles.radioInnerDot} />}
+            </View>
             <View style={styles.paymentIconBox}>
               <Ionicons name="business-outline" size={20} color="#0F382A" />
             </View>
@@ -911,17 +1022,22 @@ export default function CheckOutScreen() {
               <Text style={styles.paymentOptionSubtitle}>All major banks available</Text>
             </View>
           </View>
-          <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
+          <Ionicons name="chevron-forward" size={18} color="#5B756C" />
         </TouchableOpacity>
 
-        {/* 4. Wallets Option (Disabled) */}
+        {/* 4. Wallets Option */}
         <TouchableOpacity
           activeOpacity={0.9}
-          disabled={true}
-          style={[styles.paymentOptionCard, styles.disabledPaymentCard]}
+          onPress={() => setSelectedPaymentMethod("wallet")}
+          style={[
+            styles.paymentOptionCard,
+            selectedPaymentMethod === "wallet" && styles.paymentOptionCardActive,
+          ]}
         >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, opacity: 0.5 }}>
-            <View style={[styles.radioCircle]} />
+          <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+            <View style={[styles.radioCircle, selectedPaymentMethod === "wallet" && styles.radioCircleActive]}>
+              {selectedPaymentMethod === "wallet" && <View style={styles.radioInnerDot} />}
+            </View>
             <View style={styles.paymentIconBox}>
               <Ionicons name="wallet-outline" size={20} color="#0F382A" />
             </View>
@@ -930,34 +1046,38 @@ export default function CheckOutScreen() {
               <Text style={styles.paymentOptionSubtitle}>PhonePe, Paytm, Amazon Pay & more</Text>
             </View>
           </View>
-          <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
-        </TouchableOpacity>
-
-        {/* 5. Cash on Delivery (COD) Option with 40% Advance (Active) */}
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={() => setSelectedPaymentMethod("cod")}
-          style={[
-            styles.paymentOptionCard,
-            selectedPaymentMethod === "cod" && styles.paymentOptionCardActive,
-          ]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-            <View style={[styles.radioCircle, selectedPaymentMethod === "cod" && styles.radioCircleActive]}>
-              {selectedPaymentMethod === "cod" && <View style={styles.radioInnerDot} />}
-            </View>
-            <View style={styles.paymentIconBox}>
-              <Ionicons name="cash-outline" size={20} color="#0F382A" />
-            </View>
-            <View style={{ marginLeft: 12, flex: 1 }}>
-              <Text style={styles.paymentOptionTitle}>Cash on Delivery (40% Advance)</Text>
-              <Text style={styles.paymentOptionSubtitle}>
-                Pay ₹{advanceAmount} (40%) advance online, ₹{balanceAmount} upon delivery
-              </Text>
-            </View>
-          </View>
           <Ionicons name="chevron-forward" size={18} color="#5B756C" />
         </TouchableOpacity>
+
+        {/* 5. Cash on Delivery Option
+            ✅ Only shown for Homemade / QuickBites.
+            Mealbox & Catering do NOT have a COD option — advance is mandatory. */}
+        {isHomemadeFlow && (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => setSelectedPaymentMethod("cod")}
+            style={[
+              styles.paymentOptionCard,
+              selectedPaymentMethod === "cod" && styles.paymentOptionCardActive,
+            ]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+              <View style={[styles.radioCircle, selectedPaymentMethod === "cod" && styles.radioCircleActive]}>
+                {selectedPaymentMethod === "cod" && <View style={styles.radioInnerDot} />}
+              </View>
+              <View style={styles.paymentIconBox}>
+                <Ionicons name="cash-outline" size={20} color="#0F382A" />
+              </View>
+              <View style={{ marginLeft: 12, flex: 1 }}>
+                <Text style={styles.paymentOptionTitle}>Cash on Delivery</Text>
+                <Text style={styles.paymentOptionSubtitle}>
+                  Pay ₹{totalAmount} in full upon delivery
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#5B756C" />
+          </TouchableOpacity>
+        )}
 
         {/* Bottom Trust Badge Footer Banner */}
         <View style={styles.trustBadgeFooterContainer}>
@@ -1059,14 +1179,43 @@ export default function CheckOutScreen() {
 
           <View style={styles.breakupDividerLine} />
 
-          <View style={styles.breakupLineRow}>
-            <Text style={styles.breakupLineLabel}>40% Advance to Pay Now</Text>
-            <Text style={[styles.breakupLineValue, { color: "#166538" }]}>₹{advanceAmount}</Text>
-          </View>
-          <View style={styles.breakupLineRow}>
-            <Text style={styles.breakupLineLabel}>Balance Upon Delivery</Text>
-            <Text style={styles.breakupLineValue}>₹{balanceAmount}</Text>
-          </View>
+          {/* ✅ Dynamic advance/balance breakdown based on flow */}
+          {isHomemadeFlow ? (
+            selectedPaymentMethod === "cod" ? (
+              <>
+                <View style={styles.breakupLineRow}>
+                  <Text style={styles.breakupLineLabel}>Pay Online Now</Text>
+                  <Text style={[styles.breakupLineValue, { color: "#166538" }]}>₹0</Text>
+                </View>
+                <View style={styles.breakupLineRow}>
+                  <Text style={styles.breakupLineLabel}>Pay on Delivery</Text>
+                  <Text style={styles.breakupLineValue}>₹{totalAmount}</Text>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.breakupLineRow}>
+                  <Text style={styles.breakupLineLabel}>Pay Online Now (Full)</Text>
+                  <Text style={[styles.breakupLineValue, { color: "#166538" }]}>₹{totalAmount}</Text>
+                </View>
+                <View style={styles.breakupLineRow}>
+                  <Text style={styles.breakupLineLabel}>Pay on Delivery</Text>
+                  <Text style={styles.breakupLineValue}>₹0</Text>
+                </View>
+              </>
+            )
+          ) : (
+            <>
+              <View style={styles.breakupLineRow}>
+                <Text style={styles.breakupLineLabel}>45% Advance to Pay Now</Text>
+                <Text style={[styles.breakupLineValue, { color: "#166538" }]}>₹{advanceAmount}</Text>
+              </View>
+              <View style={styles.breakupLineRow}>
+                <Text style={styles.breakupLineLabel}>Balance Upon Delivery</Text>
+                <Text style={styles.breakupLineValue}>₹{balanceAmount}</Text>
+              </View>
+            </>
+          )}
 
           <View style={styles.breakupDividerLine} />
 
@@ -1084,13 +1233,13 @@ export default function CheckOutScreen() {
       {/* Floating Bottom Action Bar */}
       <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View>
-          <Text style={styles.bottomAmountPayableLabel}>Advance (40%) Due Now</Text>
+          <Text style={styles.bottomAmountPayableLabel}>{payNowLabel}</Text>
           <TouchableOpacity
             onPress={toggleDetails}
             activeOpacity={0.8}
             style={{ flexDirection: "row", alignItems: "center" }}
           >
-            <Text style={styles.bottomAmountValue}>₹{advanceAmount}</Text>
+            <Text style={styles.bottomAmountValue}>₹{payNowAmount}</Text>
             <View style={styles.viewDetailsBadgeContainer}>
               <Text style={styles.viewDetailsBadgeText}>View Details</Text>
               <Ionicons
@@ -1169,14 +1318,38 @@ export default function CheckOutScreen() {
               <Ionicons name="receipt-outline" size={28} color="#FAF8F5" />
             </View>
 
-            <Text style={styles.confirmTitle}>Confirm Advance Payment</Text>
+            <Text style={styles.confirmTitle}>
+              {isHomemadeFlow && selectedPaymentMethod === "cod"
+                ? "Confirm Cash on Delivery"
+                : isHomemadeFlow
+                ? "Confirm Online Payment"
+                : "Confirm Advance Payment"}
+            </Text>
 
             <Text style={styles.confirmSubtitle}>
-              You need to pay an advance amount of{" "}
-              <Text style={{ fontWeight: "900", color: "#166538" }}>₹{advanceAmount} (40%)</Text> online now.
-              {"\n"}
-              Balance amount of{" "}
-              <Text style={{ fontWeight: "800", color: "#0B261D" }}>₹{balanceAmount} (60%)</Text> will be collected upon delivery.
+              {isHomemadeFlow && selectedPaymentMethod === "cod" ? (
+                <>
+                  You'll pay the full amount of{" "}
+                  <Text style={{ fontWeight: "900", color: "#166538" }}>₹{totalAmount}</Text> in cash upon delivery.
+                  {"\n"}
+                  No online payment is required right now.
+                </>
+              ) : isHomemadeFlow ? (
+                <>
+                  You'll pay the full amount of{" "}
+                  <Text style={{ fontWeight: "900", color: "#166538" }}>₹{totalAmount}</Text> online now.
+                  {"\n"}
+                  Nothing is due on delivery.
+                </>
+              ) : (
+                <>
+                  You need to pay an advance amount of{" "}
+                  <Text style={{ fontWeight: "900", color: "#166538" }}>₹{advanceAmount} (45%)</Text> online now.
+                  {"\n"}
+                  Balance amount of{" "}
+                  <Text style={{ fontWeight: "800", color: "#0B261D" }}>₹{balanceAmount} (55%)</Text> will be collected upon delivery.
+                </>
+              )}
             </Text>
 
             <View style={styles.confirmSummaryStrip}>
@@ -1207,12 +1380,18 @@ export default function CheckOutScreen() {
                 ) : (
                   <>
                     <Ionicons
-                      name="qr-code-outline"
+                      name={isHomemadeFlow && selectedPaymentMethod === "cod" ? "checkmark-circle-outline" : "qr-code-outline"}
                       size={16}
                       color="#FAF8F5"
                       style={{ marginRight: 6 }}
                     />
-                    <Text style={styles.confirmOkBtnText}>Pay ₹{advanceAmount} via UPI</Text>
+                    <Text style={styles.confirmOkBtnText}>
+                      {isHomemadeFlow && selectedPaymentMethod === "cod"
+                        ? `Place COD Order`
+                        : isHomemadeFlow
+                        ? `Pay ₹${totalAmount} Now`
+                        : `Pay ₹${advanceAmount} via UPI`}
+                    </Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -1220,11 +1399,6 @@ export default function CheckOutScreen() {
           </Animated.View>
         </View>
       </Modal>
-
-      {/* ================= SCANNER & VERIFICATION MODAL =================
-          ✅ REMOVED ENTIRELY. Cashfree's hosted checkout now handles
-          UPI QR + PhonePe/GPay/Paytm deep-links + cards. No UTR /
-          screenshot submission is required anymore. */}
 
       {/* CHANGE DELIVERY ADDRESS MODAL (HOMEMADE FLOW) */}
       <Modal
@@ -1257,37 +1431,45 @@ export default function CheckOutScreen() {
             <ScrollView showsVerticalScrollIndicator={false} style={{ width: "100%", marginTop: 12 }}>
               <View style={styles.addressInputGroup}>
                 <Text style={styles.addressInputLabel}>Flat / House / Floor No.</Text>
-                <TextInputCompat
+                <TextInput
+                  style={styles.addressTextInput}
+                  placeholder="e.g. Flat 302, 3rd Floor"
+                  placeholderTextColor="#9EA8A3"
                   value={newFlatNo}
                   onChangeText={setNewFlatNo}
-                  placeholder="e.g. Flat 302, 3rd Floor"
                 />
               </View>
 
               <View style={styles.addressInputGroup}>
                 <Text style={styles.addressInputLabel}>Building / Apartment / Complex Name</Text>
-                <TextInputCompat
+                <TextInput
+                  style={styles.addressTextInput}
+                  placeholder="e.g. Royal Heights Apartment"
+                  placeholderTextColor="#9EA8A3"
                   value={newBuilding}
                   onChangeText={setNewBuilding}
-                  placeholder="e.g. Royal Heights Apartment"
                 />
               </View>
 
               <View style={styles.addressInputGroup}>
                 <Text style={styles.addressInputLabel}>Street / Area / Landmark</Text>
-                <TextInputCompat
+                <TextInput
+                  style={styles.addressTextInput}
+                  placeholder="e.g. Road No 4, Near Metro Pillar 18"
+                  placeholderTextColor="#9EA8A3"
                   value={newStreet}
                   onChangeText={setNewStreet}
-                  placeholder="e.g. Road No 4, Near Metro Pillar 18"
                 />
               </View>
 
               <View style={styles.addressInputGroup}>
                 <Text style={styles.addressInputLabel}>City & State</Text>
-                <TextInputCompat
+                <TextInput
+                  style={styles.addressTextInput}
+                  placeholder="e.g. Hyderabad, Telangana"
+                  placeholderTextColor="#9EA8A3"
                   value={newCity}
                   onChangeText={setNewCity}
-                  placeholder="e.g. Hyderabad, Telangana"
                 />
               </View>
 
@@ -1592,20 +1774,6 @@ export default function CheckOutScreen() {
     </SafeAreaView>
   );
 }
-
-/**
- * Local TextInput shim — the original file imported TextInput from react-native
- * for the scanner & address modals. Since the scanner is gone but the address
- * modal still needs text inputs, we render a minimal TextInput using
- * react-native's TextInput without re-importing at the top (keeping the
- * import surface minimal).
- *
- * ✅ NOTE: This is a passthrough — the exact same TextInput component.
- */
-const TextInputCompat = React.forwardRef<any, any>((props, ref) => {
-  const { TextInput } = require("react-native");
-  return <TextInput ref={ref} {...props} style={styles.addressTextInput} placeholderTextColor="#9EA8A3" />;
-});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#FAF8F5" },
@@ -2710,7 +2878,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingTop: 14,
+    paddingBottom: 14,
     borderRadius: 20,
     marginTop: 8,
     marginBottom: 16,

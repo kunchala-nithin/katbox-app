@@ -249,7 +249,10 @@ export default function OrderConfirmationScreen() {
   const totalAmount = dbOrder ? String(dbOrder.totalAmount) : ((params.totalAmount as string) || "687");
   const numericTotal = Number(totalAmount) || 0;
 
-  const advancePaidAmount = dbOrder?.advancePaidAmount !== undefined ? dbOrder.advancePaidAmount : Math.round(numericTotal * 0.40 * 100) / 100;
+  // ✅ UPDATED: fallback ratio changed from 0.40 → 0.45 to match the new
+  //    Mealbox/Catering advance rule. Backend always writes the real value,
+  //    so this fallback only applies to legacy orders without the field.
+  const advancePaidAmount = dbOrder?.advancePaidAmount !== undefined ? dbOrder.advancePaidAmount : Math.round(numericTotal * 0.45 * 100) / 100;
   const balanceAmountToCollect = dbOrder?.balanceAmountToCollect !== undefined ? dbOrder.balanceAmountToCollect : Math.round((numericTotal - advancePaidAmount) * 100) / 100;
 
   // ==================================================================
@@ -372,6 +375,11 @@ export default function OrderConfirmationScreen() {
   }, [dbOrder, params.scheduledDatesList, params.scheduledDatesFormatted, rawDeliveryDate, isCateringFlow, isHomemadeFlow]);
 
   const isCod = String(paymentMethod).toLowerCase() === "cod";
+
+  // ✅ Whether the order actually has an advance paid (used to decide
+  //    whether to show "Advance Paid" vs "Paid Online" labels for
+  //    Homemade/QuickBites branches — see the price breakdown JSX below).
+  const hasAdvancePaid = Number(advancePaidAmount) > 0;
 
   // Dynamic Date Display Resolvers
   // ✅ For homemade / quickbites: combine the selected date with the
@@ -562,7 +570,9 @@ export default function OrderConfirmationScreen() {
           </Text>
           <Text style={styles.orderConfirmedSubtitle}>
             {isCod
-              ? `40% Advance (₹${advancePaidAmount}) paid successfully.\nPlease keep ₹${balanceAmountToCollect} ready for delivery.`
+              ? (hasAdvancePaid
+                  ? `Advance (₹${advancePaidAmount}) paid successfully.\nPlease keep ₹${balanceAmountToCollect} ready for delivery.`
+                  : `Pay ₹${balanceAmountToCollect} in cash upon delivery.\nNo online payment required right now.`)
               : `Yay! Your payment was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
           </Text>
 
@@ -737,12 +747,21 @@ export default function OrderConfirmationScreen() {
 
               <View style={styles.solidDivider} />
 
+              {/* ✅ Dynamic payment breakdown for Homemade / QuickBites:
+                  - If advance was paid (user chose online full payment),
+                    show the online amount and 0 balance.
+                  - If no advance was paid (user chose COD), show ₹0 online
+                    and the full amount due on delivery. */}
               <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Advance Paid (40%)</Text>
+                <Text style={styles.breakdownLabelText}>
+                  {hasAdvancePaid ? "Paid Online" : "Advance Paid"}
+                </Text>
                 <Text style={[styles.breakdownValueText, { color: "#166348" }]}>₹{advancePaidAmount}</Text>
               </View>
               <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Balance to Collect upon Delivery (60%)</Text>
+                <Text style={styles.breakdownLabelText}>
+                  {hasAdvancePaid ? "Balance to Collect upon Delivery" : "Pay on Delivery"}
+                </Text>
                 <Text style={styles.breakdownValueText}>₹{balanceAmountToCollect}</Text>
               </View>
 
@@ -836,12 +855,13 @@ export default function OrderConfirmationScreen() {
 
               <View style={styles.solidDivider} />
 
+              {/* ✅ UPDATED to 45% advance / 55% balance */}
               <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Advance Paid (40%)</Text>
+                <Text style={styles.breakdownLabelText}>Advance Paid (45%)</Text>
                 <Text style={[styles.breakdownValueText, { color: "#166538" }]}>₹{advancePaidAmount}</Text>
               </View>
               <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Balance to Collect upon Delivery (60%)</Text>
+                <Text style={styles.breakdownLabelText}>Balance to Collect upon Delivery (55%)</Text>
                 <Text style={styles.breakdownValueText}>₹{balanceAmountToCollect}</Text>
               </View>
 
@@ -902,12 +922,13 @@ export default function OrderConfirmationScreen() {
 
               <View style={styles.solidDivider} />
 
+              {/* ✅ UPDATED to 45% advance / 55% balance */}
               <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Advance Paid (40%)</Text>
+                <Text style={styles.breakdownLabelText}>Advance Paid (45%)</Text>
                 <Text style={[styles.breakdownValueText, { color: "#166538" }]}>₹{advancePaidAmount}</Text>
               </View>
               <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Balance to Collect on Delivery (60%)</Text>
+                <Text style={styles.breakdownLabelText}>Balance to Collect on Delivery (55%)</Text>
                 <Text style={styles.breakdownValueText}>₹{balanceAmountToCollect}</Text>
               </View>
 
