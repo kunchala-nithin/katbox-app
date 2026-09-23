@@ -405,6 +405,21 @@ export default function CheckOutScreen() {
   }, [isHomemadeFlow, selectedPaymentMethod]);
 
   /**
+   * ✅ NEW: The amount shown in the bottom action bar.
+   *    For COD orders, the headline amount is what the user pays on
+   *    delivery (payLaterAmount = full total). For everything else, the
+   *    headline amount is what they pay now (payNowAmount).
+   *    Previously the bar always displayed payNowAmount — for a COD
+   *    order that meant showing ₹0 under "Total Due on Delivery".
+   */
+  const bottomBarAmount = useMemo(() => {
+    if (isHomemadeFlow && selectedPaymentMethod === "cod") {
+      return payLaterAmount;
+    }
+    return payNowAmount;
+  }, [isHomemadeFlow, selectedPaymentMethod, payLaterAmount, payNowAmount]);
+
+  /**
    * ✅ NEW — handleConfirmPlaceOrder
    *
    *  Branch 1: Homemade/QuickBites + COD
@@ -537,7 +552,31 @@ export default function CheckOutScreen() {
           } else if (isHomemadeFlow) {
             orderPayload.chefId = chefId;
             orderPayload.chefName = chefName;
-            orderPayload.items = parsedItems;
+
+            // ✅ FIX: Sanitize items to satisfy HomemadeItemSubSchema required fields
+            //    (id, name, price, quantity). Previously we passed `parsedItems`
+            //    directly which often lacked `id` or `quantity`, causing Mongoose
+            //    ValidationError → 500 → "Server error during payment verification".
+            const sanitizedItems = (Array.isArray(parsedItems) ? parsedItems : []).map(
+              (it: any, idx: number) => ({
+                id: String(it.id || it._id || `item_${Date.now()}_${idx}`),
+                name: String(it.name || "Special Dish"),
+                image: String(it.image || it.imageUrl || ""),
+                price: Number(it.price) || 0,
+                quantity: Number(it.quantity) || 1,
+                selectedQtyConfig: String(
+                  it.selectedQtyConfig || it.sizeLabel || it.size || "Standard Serving"
+                ),
+                isVeg: it.isVeg !== undefined ? Boolean(it.isVeg) : true,
+              })
+            );
+            orderPayload.items = sanitizedItems;
+
+            // ✅ FIX: `deliveryAddress` is required on HomemadeOrderSchema, but the
+            //    Cashfree verify path was only sending `addressDetails`. Mirror
+            //    the COD branch and send both.
+            orderPayload.deliveryAddress = addressDetails;
+
             orderPayload.deliveryDate = dynamicHomemadeDateLabel || "Today";
             orderPayload.deliveryTimeSlot = dynamicHomemadeSlotLabel || "30–45 min";
             orderPayload.deliverySlot = dynamicHomemadeSlotLabel || "30–45 min";
@@ -1239,7 +1278,9 @@ export default function CheckOutScreen() {
             activeOpacity={0.8}
             style={{ flexDirection: "row", alignItems: "center" }}
           >
-            <Text style={styles.bottomAmountValue}>₹{payNowAmount}</Text>
+            {/* ✅ FIX: Use bottomBarAmount (payLaterAmount for COD) instead of payNowAmount
+                so the bar shows the actual due amount — ₹total for COD, ₹payNow otherwise. */}
+            <Text style={styles.bottomAmountValue}>₹{bottomBarAmount}</Text>
             <View style={styles.viewDetailsBadgeContainer}>
               <Text style={styles.viewDetailsBadgeText}>View Details</Text>
               <Ionicons
