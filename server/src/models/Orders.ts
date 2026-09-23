@@ -1,3 +1,4 @@
+// server/models/Orders.ts
 import mongoose, { Schema, Document, Model } from "mongoose";
 
 // Subdocument interface for tracking individual scheduled deliveries
@@ -71,9 +72,18 @@ export interface IBaseOrder extends Document {
   // ✅ NEW: Geo coordinates for accurate map pinning
   latitude?: number;
   longitude?: number;
-  razorpayOrderId?: string;
-  razorpayPaymentId?: string;
-  razorpaySignature?: string;
+
+  // ==================== RAZORPAY FIELDS (COMMENTED OUT) ====================
+  // razorpayOrderId?: string;
+  // razorpayPaymentId?: string;
+  // razorpaySignature?: string;
+  // =========================================================================
+
+  // ==================== CASHFREE FIELDS ====================
+  cashfreeOrderId?: string;
+  cashfreePaymentId?: string;
+  // ========================================================
+
   paymentCaptured?: boolean;
   paidAt?: Date;
   createdAt: Date;
@@ -229,9 +239,18 @@ const BaseOrderSchema: Schema = new Schema(
     // ✅ NEW: Geo coordinates for accurate map pinning
     latitude: { type: Number },
     longitude: { type: Number },
-    razorpayOrderId: { type: String, default: "" },
-    razorpayPaymentId: { type: String, default: "" },
-    razorpaySignature: { type: String, default: "" },
+
+    // ==================== RAZORPAY FIELDS (COMMENTED OUT) ====================
+    // razorpayOrderId: { type: String, default: "" },
+    // razorpayPaymentId: { type: String, default: "" },
+    // razorpaySignature: { type: String, default: "" },
+    // =========================================================================
+
+    // ==================== CASHFREE FIELDS ====================
+    cashfreeOrderId: { type: String, default: "" },
+    cashfreePaymentId: { type: String, default: "" },
+    // ========================================================
+
     paymentCaptured: { type: Boolean, default: false },
     paidAt: { type: Date },
   },

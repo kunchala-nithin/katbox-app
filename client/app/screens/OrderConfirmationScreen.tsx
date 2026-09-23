@@ -53,7 +53,7 @@ const parseDateParts = (dateStr: string) => {
   return { dayName: "DAY", dayNumber: "1", fullString: cleanedStr };
 };
 
-// ✅ NEW: Format an absolute Date into "4:30 PM"
+// ✅ Format an absolute Date into "4:30 PM"
 const formatTimeShortLocal = (d: Date | null): string => {
   if (!d) return "";
   try {
@@ -67,7 +67,7 @@ const formatTimeShortLocal = (d: Date | null): string => {
   }
 };
 
-// ✅ NEW: Format an absolute Date into "17 Sep"
+// ✅ Format an absolute Date into "17 Sep"
 const formatDateShortLocal = (d: Date | null): string => {
   if (!d) return "";
   try {
@@ -248,10 +248,19 @@ export default function OrderConfirmationScreen() {
 
   const totalAmount = dbOrder ? String(dbOrder.totalAmount) : ((params.totalAmount as string) || "687");
   const numericTotal = Number(totalAmount) || 0;
-  
+
   const advancePaidAmount = dbOrder?.advancePaidAmount !== undefined ? dbOrder.advancePaidAmount : Math.round(numericTotal * 0.40 * 100) / 100;
   const balanceAmountToCollect = dbOrder?.balanceAmountToCollect !== undefined ? dbOrder.balanceAmountToCollect : Math.round((numericTotal - advancePaidAmount) * 100) / 100;
+
+  // ==================================================================
+  // UTR number — COMMENTED OUT.
+  // The Cashfree payment flow does not use UTR numbers; payments are
+  // verified server-side via Cashfree's API using cashfreeOrderId and
+  // cashfreePaymentId. This variable is kept only as a reference in
+  // case a manual-verification fallback is ever re-introduced.
+  // ==================================================================
   const utrNumber = dbOrder?.utrNumber || "";
+  // ==================================================================
 
   const subtotal = dbOrder ? dbOrder.subtotal : Number(params.subtotal) || Number(totalAmount);
   const deliveryPrice = dbOrder ? dbOrder.deliveryPrice : Number(params.deliveryPrice) || 0;
@@ -572,12 +581,21 @@ export default function OrderConfirmationScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* ==================================================================
+              UTR Reference pill — COMMENTED OUT.
+              The Cashfree payment flow does not use UTR numbers; the payment
+              is verified server-side via Cashfree's API (cashfreeOrderId /
+              cashfreePaymentId), so there is no manual UTR to display.
+              Kept here as a reference in case a manual-verification fallback
+              is ever re-introduced.
+              ==================================================================
           {utrNumber ? (
             <View style={[styles.orderIdBadgePill, { marginTop: 8, borderColor: "rgba(16, 124, 65, 0.4)" }]}>
               <Text style={[styles.orderIdLabelText, { color: "#34D399" }]}>UTR Ref</Text>
               <Text style={styles.orderIdValueText}>{utrNumber}</Text>
             </View>
           ) : null}
+          */}
         </View>
       </View>
 
@@ -751,7 +769,7 @@ export default function OrderConfirmationScreen() {
                 <View style={{ flex: 1, marginLeft: 14, justifyContent: "center" }}>
                   <Text style={styles.cateringRestaurantTag}>👨‍🍳 {restaurantName}</Text>
                   <Text style={styles.cateringMenuTitle} numberOfLines={1}>{menuName}</Text>
-                  
+
                   <View style={styles.cateringMetaRow}>
                     <Ionicons name="calendar" size={13} color="#0F382A" />
                     <Text style={styles.cateringMetaTextHighlight}>
@@ -1409,9 +1427,9 @@ const styles = StyleSheet.create({
     color: "#FAF8F5",
     letterSpacing: -0.4,
     marginBottom: 6,
-    textAlign: "center",   // ✅ ensures the title text is centered
-    width: "100%",         // ✅ takes full width of parent so centering is visible
-    alignSelf: "center",   // ✅ safety net for cross-axis alignment
+    textAlign: "center",
+    width: "100%",
+    alignSelf: "center",
   },
   orderConfirmedSubtitle: {
     fontSize: 13,
@@ -1793,20 +1811,20 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#0B261D",
   },
-  viewItemsContainer: { 
-    marginTop: 12, 
-    overflow: "hidden", 
+  viewItemsContainer: {
+    marginTop: 12,
+    overflow: "hidden",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.1)",
   },
-  viewItems: { 
-    color: "#0F382A", 
-    fontWeight: "800", 
-    textAlign: "center", 
-    backgroundColor: "rgba(15, 56, 42, 0.06)", 
-    paddingVertical: 12, 
-    fontSize: 13 
+  viewItems: {
+    color: "#0F382A",
+    fontWeight: "800",
+    textAlign: "center",
+    backgroundColor: "rgba(15, 56, 42, 0.06)",
+    paddingVertical: 12,
+    fontSize: 13
   },
   dashedDivider: {
     height: 1,

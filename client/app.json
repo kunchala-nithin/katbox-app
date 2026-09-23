@@ -22,10 +22,15 @@
         "NSLocationWhenInUseUsageDescription": "KatBox uses your location to find nearby chefs and estimate delivery times.",
         "LSApplicationQueriesSchemes": [
           "phonepe",
+          "tez",
           "gpay",
           "paytm",
+          "paytmmp",
           "bhim",
           "upi",
+          "amazonpay",
+          "credpay",
+          "cashfree",
           "tel",
           "telprompt",
           "mailto"

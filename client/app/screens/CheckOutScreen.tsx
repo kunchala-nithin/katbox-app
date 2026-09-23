@@ -11,15 +11,11 @@ import {
   Modal,
   ActivityIndicator,
   Alert,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "@react-navigation/native";
 
 import api from "@/src/lib/api";
@@ -32,6 +28,8 @@ import {
 } from "@/src/lib/authStorage";
 // ✅ NEW: read the active delivery location (lat/lng) from the global store
 import { useDeliveryLocationStore } from "@/src/store/deliveryLocationStore";
+// ✅ NEW: Cashfree payment helper — replaces the old UTR/screenshot modal flow
+import { startCashfreePayment } from "@/src/lib/cashfree";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -43,7 +41,7 @@ const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefi
   return addr.fullAddress || "";
 };
 
-// ✅ NEW: Format an absolute Date into a friendly "4:30 PM" string
+// ✅ Format an absolute Date into a friendly "4:30 PM" string
 const formatTimeShortLocal = (d: Date | null): string => {
   if (!d) return "";
   try {
@@ -61,10 +59,12 @@ export default function CheckOutScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
 
-  // ✅ NEW: read delivery location (lat/lng) from global store — single source of truth
+  // ✅ Read delivery location (lat/lng) from global store — single source of truth
   const deliveryLocation = useDeliveryLocationStore((s) => s.deliveryLocation);
 
   const [loading, setLoading] = useState(false);
+  // ✅ NEW: guards against double-tapping "Place Order" while Cashfree is open
+  const [paymentInProgress, setPaymentInProgress] = useState(false);
 
   const serviceType = (params.serviceType as string) || "mealbox";
   // ✅ QuickBites detection — separate flow flag, but same UI as homemade.
@@ -74,7 +74,7 @@ export default function CheckOutScreen() {
 
   const totalAmount = (params.totalAmount as string) || "687";
   const numericTotal = Number(totalAmount) || 0;
-  
+
   const advanceAmount = Math.round(numericTotal * 0.40 * 100) / 100;
   const balanceAmount = Math.round((numericTotal - advanceAmount) * 100) / 100;
 
@@ -167,40 +167,8 @@ export default function CheckOutScreen() {
   const [newStreet, setNewStreet] = useState("");
   const [newCity, setNewCity] = useState("");
 
-  // SCANNER, UTR & SCREENSHOT VERIFICATION STATE
-  const [showScannerModal, setShowScannerModal] = useState(false);
-  const [verificationMode, setVerificationMode] = useState<"utr" | "screenshot">("utr");
-  const [utrNumber, setUtrNumber] = useState("");
-  const [paymentScreenshotUri, setPaymentScreenshotUri] = useState<string | null>(null);
-
-  // 5-MINUTE COUNTDOWN TIMER STATE (300 seconds)
-  const [timeLeft, setTimeLeft] = useState(300);
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setInterval>;
-    if (showScannerModal && timeLeft > 0) {
-      timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            setShowScannerModal(false);
-            Alert.alert("Time Expired", "Payment session timed out. Please select your payment method again.");
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } else if (!showScannerModal) {
-      setTimeLeft(300);
-    }
-    return () => clearInterval(timer);
-  }, [showScannerModal, timeLeft]);
-
-  const formatTimer = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
-  };
+  // ✅ UTR + screenshot + scanner modal states REMOVED entirely.
+  //    The Cashfree SDK now handles UPI natively.
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const confirmScale = useRef(new Animated.Value(0.85)).current;
@@ -390,172 +358,150 @@ export default function CheckOutScreen() {
     Animated.spring(slideAnim, { toValue, friction: 8, tension: 40, useNativeDriver: false }).start();
   };
 
-  const pickPaymentScreenshot = async () => {
-    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permissionResult.granted) {
-      Alert.alert("Permission Required", "Please allow access to your photo library to upload payment screenshot.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      setPaymentScreenshotUri(result.assets[0].uri);
-    }
-  };
+  // ✅ REMOVED: pickPaymentScreenshot, submitAdvanceProofAndPlaceOrder, formatTimer
+  //    These were the old UTR/screenshot verification flow.
 
-  const submitAdvanceProofAndPlaceOrder = async (proofType: "utr" | "screenshot", proofValue: string | null) => {
-    if (loading) return;
-
-    if (proofType === "utr" && (!proofValue || proofValue.trim().length < 6)) {
-      Alert.alert("Invalid UTR", "Please enter a valid UTR transaction reference number.");
-      return;
-    }
-    if (proofType === "screenshot" && !proofValue) {
-      Alert.alert("Missing Screenshot", "Please upload a screenshot of your successful advance payment.");
-      return;
-    }
-
-    const initialDeliverySchedules = upcomingDeliveriesList.map((dDate: string) => ({
-      date: dDate,
-      status: "Scheduled",
-      timeSlot: deliveryTimeSlot || "7:00 PM - 9:00 PM",
-      address: addressDetails,
-      statusTimeline: [
-        { status: "Scheduled", timestamp: new Date(), note: `Delivery scheduled for ${dDate}` },
-      ],
-    }));
-
-    // ✅ NEW: Resolve lat/lng — prefer global store, fall back to locally-loaded activeAddress
-    const resolvedLatitude =
-      deliveryLocation?.latitude !== undefined && deliveryLocation?.latitude !== null
-        ? deliveryLocation.latitude
-        : (activeAddress?.latitude ?? 0);
-    const resolvedLongitude =
-      deliveryLocation?.longitude !== undefined && deliveryLocation?.longitude !== null
-        ? deliveryLocation.longitude
-        : (activeAddress?.longitude ?? 0);
-    const resolvedDeliveryFullAddress =
-      deliveryLocation?.fullAddress || activeAddress?.fullAddress || addressDetails;
-
-    const formData = new FormData();
-    formData.append("userId", userId);
-    formData.append("userName", userName);
-    // ✅ Persist QuickBites as its own serviceType on the order document
-    formData.append("serviceType", serviceType);
-    formData.append("menuName", menuName);
-    formData.append("menuImage", menuImage);
-    formData.append("addressDetails", addressDetails);
-    formData.append("deliveryAddress", addressDetails);
-    // ✅ NEW: attach delivery latitude / longitude (goes into order.deliveryAddress on the backend)
-    formData.append("latitude", String(resolvedLatitude));
-    formData.append("longitude", String(resolvedLongitude));
-    formData.append("deliveryAddressFull", resolvedDeliveryFullAddress);
-    formData.append("subtotal", String(subtotal));
-    formData.append("deliveryPrice", String(deliveryPrice));
-    formData.append("discount", String(discount));
-    formData.append("appliedCoupon", appliedCoupon || "");
-    formData.append("totalAmount", String(totalAmount));
-    formData.append("advancePaidAmount", String(advanceAmount));
-    formData.append("balanceAmountToCollect", String(balanceAmount));
-    formData.append("paymentMethod", selectedPaymentMethod);
-
-    if (proofType === "utr") {
-      formData.append("utrNumber", proofValue || "");
-    } else if (proofType === "screenshot" && proofValue) {
-      const filename = proofValue.split("/").pop() || "payment_screenshot.jpg";
-      const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : `image/jpeg`;
-      formData.append("screenshot", {
-        uri: proofValue,
-        name: filename,
-        type,
-      } as any);
-    }
-
-    if (isCateringFlow) {
-      formData.append("chefId", chefId);
-      formData.append("chefName", chefName || restaurantName);
-      formData.append("restaurantName", restaurantName);
-      formData.append("restaurantImage", restaurantImage);
-      formData.append("guests", String(guests));
-      formData.append("occasion", occasion);
-      formData.append("eventDate", eventDate);
-      formData.append("eventTime", eventTime);
-      formData.append("deliveryType", deliveryType);
-      formData.append("pricePerPlate", String(pricePerPlate));
-      if (parsedSelections) formData.append("selections", JSON.stringify(parsedSelections));
-      if (parsedAddons) formData.append("addons", JSON.stringify(parsedAddons));
-    } else if (isHomemadeFlow) {
-      formData.append("chefId", chefId);
-      formData.append("chefName", chefName);
-      formData.append("items", JSON.stringify(parsedItems));
-      // ✅ Homemade / QuickBites sends the resolved delivery date & slot
-      formData.append("deliveryDate", dynamicHomemadeDateLabel || "Today");
-      formData.append("deliveryTimeSlot", dynamicHomemadeSlotLabel || "30–45 min");
-      // ✅ New top-level deliverySlot param for order controller to persist
-      formData.append("deliverySlot", dynamicHomemadeSlotLabel || "30–45 min");
-
-      // ✅ Forward the QuickBites flag and the absolute delivery timestamp
-      formData.append("isQuickBites", isQuickBites ? "true" : "false");
-      formData.append("deliveryWindowMinutes", isQuickBites ? "75" : "0");
-      if (liveEstimatedDeliveryAt) {
-        formData.append("estimatedDeliveryAtMs", String(liveEstimatedDeliveryAt.getTime()));
-      }
-    } else {
-      formData.append("chefId", chefId);
-      formData.append("chefName", chefName);
-      formData.append("durationType", durationType);
-      formData.append("deliveryTimeSlot", deliveryTimeSlot);
-      formData.append("deliveryDate", deliveryDate);
-      formData.append("upcomingDeliveries", JSON.stringify(upcomingDeliveriesList));
-      formData.append("deliverySchedules", JSON.stringify(initialDeliverySchedules));
-      if (parsedSelections) formData.append("selections", JSON.stringify(parsedSelections));
-      if (parsedItems) formData.append("items", JSON.stringify(parsedItems));
-    }
-
-    try {
-      setLoading(true);
-      const res = await api.post("/api/orders/create", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      if (res.data && res.data.success) {
-        const createdOrder = res.data.order;
-        if (params.cartId) {
-          try {
-            await api.delete(`/api/cart/${params.cartId}`);
-          } catch (e) {
-            console.log("Cart cleanup non-critical error", e);
-          }
-        }
-        setShowScannerModal(false);
-        router.push({
-          pathname: "/screens/OrderConfirmationScreen",
-          params: {
-            orderId: createdOrder.orderId,
-            serviceType, // ✅ forward so confirmation renders correct flow
-          },
-        });
-      } else {
-        Alert.alert("Order Error", res.data?.message || "Failed to place order.");
-      }
-    } catch (error: any) {
-      console.error("Error creating order:", error);
-      Alert.alert("Order Error", error.response?.data?.message || "Failed to place order. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  /**
+   * ✅ NEW — Production order flow:
+   *
+   *   1. Build the orderPayload object (same shape as the old formData, but
+   *      as a plain JSON object — no multipart, no Cloudinary upload).
+   *   2. Call startCashfreePayment() with the 40% advance amount.
+   *   3. Cashfree SDK opens: user pays via UPI (PhonePe/GPay/Paytm/QR) or card.
+   *   4. On success, the SDK callback hits /api/payments/verify server-side.
+   *   5. Backend creates the order and returns it.
+   *   6. We clean up the cart and navigate to OrderConfirmationScreen.
+   *
+   *   On failure (user cancelled, network error), we just show an Alert
+   *   and reset the payment flag — the user stays on this screen.
+   */
   const handleConfirmPlaceOrder = () => {
-    closeConfirmModal(() => {
-      setTimeout(() => {
-        setTimeLeft(300);
-        setShowScannerModal(true);
-      }, 100);
+    if (paymentInProgress) return;
+
+    closeConfirmModal(async () => {
+      // Give the modal close animation a beat to finish before we open
+      // the Cashfree sheet — avoids janky stacking on iOS.
+      setTimeout(async () => {
+        try {
+          setPaymentInProgress(true);
+          setLoading(true);
+
+          // ✅ Resolve lat/lng — prefer global store, fall back to locally-loaded activeAddress
+          const resolvedLatitude =
+            deliveryLocation?.latitude !== undefined && deliveryLocation?.latitude !== null
+              ? deliveryLocation.latitude
+              : (activeAddress?.latitude ?? 0);
+          const resolvedLongitude =
+            deliveryLocation?.longitude !== undefined && deliveryLocation?.longitude !== null
+              ? deliveryLocation.longitude
+              : (activeAddress?.longitude ?? 0);
+          const resolvedDeliveryFullAddress =
+            deliveryLocation?.fullAddress || activeAddress?.fullAddress || addressDetails;
+
+          // ✅ Build the full order payload — this is what gets saved to
+          //    MongoDB after Cashfree confirms payment.
+          const orderPayload: Record<string, any> = {
+            userId,
+            userName,
+            serviceType,
+            menuName,
+            menuImage,
+            addressDetails,
+            deliveryAddress: addressDetails,
+            latitude: resolvedLatitude,
+            longitude: resolvedLongitude,
+            deliveryAddressFull: resolvedDeliveryFullAddress,
+            subtotal,
+            deliveryPrice,
+            discount,
+            appliedCoupon: appliedCoupon || "",
+            totalAmount,
+            advancePaidAmount: advanceAmount,
+            balanceAmountToCollect: balanceAmount,
+            paymentMethod: "online",
+          };
+
+          // ---------- Flow-specific fields ----------
+          if (isCateringFlow) {
+            orderPayload.chefId = chefId;
+            orderPayload.chefName = chefName || restaurantName;
+            orderPayload.restaurantName = restaurantName;
+            orderPayload.restaurantImage = restaurantImage;
+            orderPayload.guests = guests;
+            orderPayload.occasion = occasion;
+            orderPayload.eventDate = eventDate;
+            orderPayload.eventTime = eventTime;
+            orderPayload.deliveryType = deliveryType;
+            orderPayload.pricePerPlate = pricePerPlate;
+            if (parsedSelections) orderPayload.selections = parsedSelections;
+            if (parsedAddons) orderPayload.addons = parsedAddons;
+          } else if (isHomemadeFlow) {
+            orderPayload.chefId = chefId;
+            orderPayload.chefName = chefName;
+            orderPayload.items = parsedItems;
+            orderPayload.deliveryDate = dynamicHomemadeDateLabel || "Today";
+            orderPayload.deliveryTimeSlot = dynamicHomemadeSlotLabel || "30–45 min";
+            orderPayload.deliverySlot = dynamicHomemadeSlotLabel || "30–45 min";
+            orderPayload.isQuickBites = isQuickBites ? "true" : "false";
+            orderPayload.deliveryWindowMinutes = isQuickBites ? "75" : "0";
+            if (liveEstimatedDeliveryAt) {
+              orderPayload.estimatedDeliveryAtMs = String(liveEstimatedDeliveryAt.getTime());
+            }
+          } else {
+            orderPayload.chefId = chefId;
+            orderPayload.chefName = chefName;
+            orderPayload.durationType = durationType;
+            orderPayload.deliveryTimeSlot = deliveryTimeSlot;
+            orderPayload.deliveryDate = deliveryDate;
+            orderPayload.upcomingDeliveries = upcomingDeliveriesList;
+            if (parsedSelections) orderPayload.selections = parsedSelections;
+            if (parsedItems) orderPayload.items = parsedItems;
+          }
+
+          // ---------- Open Cashfree checkout ----------
+          const result = await startCashfreePayment({
+            amount: advanceAmount,          // only the 40% advance is charged
+            orderPayload,
+            customerId: userId || undefined,
+          });
+
+          // ---------- Handle outcome ----------
+          if (result.success && result.order) {
+            // Cleanup cart (non-blocking — failure here doesn't block order confirmation)
+            if (params.cartId) {
+              try {
+                await api.delete(`/api/cart/${params.cartId}`);
+              } catch (e) {
+                console.log("Cart cleanup non-critical error", e);
+              }
+            }
+
+            router.push({
+              pathname: "/screens/OrderConfirmationScreen",
+              params: {
+                orderId: result.order.orderId,
+                serviceType,
+              },
+            });
+          } else {
+            Alert.alert(
+              "Payment Not Completed",
+              result.message ||
+                "Your payment was not completed. No amount has been charged. Please try again."
+            );
+          }
+        } catch (error: any) {
+          console.error("Cashfree payment error:", error);
+          Alert.alert(
+            "Payment Error",
+            error?.message ||
+              "Something went wrong while processing the payment. Please try again."
+          );
+        } finally {
+          setLoading(false);
+          setPaymentInProgress(false);
+        }
+      }, 150);
     });
   };
 
@@ -675,7 +621,7 @@ export default function CheckOutScreen() {
                       />
                       <View style={{ flex: 1, marginLeft: 14, justifyContent: "center" }}>
                         <Text style={styles.homemadeDishName} numberOfLines={2}>{dishItem.name}</Text>
-                        
+
                         <View style={styles.portionPillTag}>
                           <Ionicons name="layers-outline" size={11} color="#0F382A" style={{ marginRight: 4 }} />
                           <Text style={styles.portionPillText}>{dishItem.selectedQtyConfig || "Standard Serving"}</Text>
@@ -924,7 +870,7 @@ export default function CheckOutScreen() {
                   <Text style={styles.recommendedPillText}>Recommended</Text>
                 </View>
               </View>
-              <Text style={styles.paymentOptionSubtitle}>Pay using any UPI App (Temporarily Unavailable)</Text>
+              <Text style={styles.paymentOptionSubtitle}>Pay using any UPI App</Text>
             </View>
           </View>
           <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
@@ -943,7 +889,7 @@ export default function CheckOutScreen() {
             </View>
             <View style={{ marginLeft: 12, flex: 1 }}>
               <Text style={styles.paymentOptionTitle}>Cards</Text>
-              <Text style={styles.paymentOptionSubtitle}>Visa, Mastercard, RuPay & more (Temporarily Unavailable)</Text>
+              <Text style={styles.paymentOptionSubtitle}>Visa, Mastercard, RuPay & more</Text>
             </View>
           </View>
           <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
@@ -962,7 +908,7 @@ export default function CheckOutScreen() {
             </View>
             <View style={{ marginLeft: 12, flex: 1 }}>
               <Text style={styles.paymentOptionTitle}>Net Banking</Text>
-              <Text style={styles.paymentOptionSubtitle}>All major banks available (Temporarily Unavailable)</Text>
+              <Text style={styles.paymentOptionSubtitle}>All major banks available</Text>
             </View>
           </View>
           <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
@@ -981,7 +927,7 @@ export default function CheckOutScreen() {
             </View>
             <View style={{ marginLeft: 12, flex: 1 }}>
               <Text style={styles.paymentOptionTitle}>Wallets</Text>
-              <Text style={styles.paymentOptionSubtitle}>PhonePe, Paytm, Amazon Pay & more (Temporarily Unavailable)</Text>
+              <Text style={styles.paymentOptionSubtitle}>PhonePe, Paytm, Amazon Pay & more</Text>
             </View>
           </View>
           <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
@@ -1052,7 +998,7 @@ export default function CheckOutScreen() {
         >
           <View style={styles.modalIndicatorBar} />
           <Text style={styles.breakupHeaderTitle}>Price Breakdown</Text>
-          
+
           {isCateringFlow ? (
             <>
               <View style={styles.breakupLineRow}>
@@ -1159,11 +1105,11 @@ export default function CheckOutScreen() {
 
         <TouchableOpacity
           activeOpacity={0.9}
-          style={[styles.payNowSolidButton, loading && { opacity: 0.7 }]}
+          style={[styles.payNowSolidButton, (loading || paymentInProgress) && { opacity: 0.7 }]}
           onPress={openConfirmModal}
-          disabled={loading}
+          disabled={loading || paymentInProgress}
         >
-          {loading ? (
+          {loading || paymentInProgress ? (
             <ActivityIndicator size="small" color="#FAF8F5" />
           ) : (
             <>
@@ -1193,7 +1139,7 @@ export default function CheckOutScreen() {
         animationType="none"
         statusBarTranslucent
         onRequestClose={() => {
-          if (!loading) closeConfirmModal();
+          if (!loading && !paymentInProgress) closeConfirmModal();
         }}
       >
         <View style={styles.confirmModalOverlay}>
@@ -1203,7 +1149,7 @@ export default function CheckOutScreen() {
             style={StyleSheet.absoluteFillObject}
             activeOpacity={1}
             onPress={() => {
-              if (!loading) closeConfirmModal();
+              if (!loading && !paymentInProgress) closeConfirmModal();
             }}
           />
 
@@ -1244,19 +1190,19 @@ export default function CheckOutScreen() {
               <TouchableOpacity
                 style={styles.confirmCancelBtn}
                 activeOpacity={0.85}
-                disabled={loading}
+                disabled={loading || paymentInProgress}
                 onPress={() => closeConfirmModal()}
               >
                 <Text style={styles.confirmCancelBtnText}>Cancel</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.confirmOkBtn, loading && { opacity: 0.75 }]}
+                style={[styles.confirmOkBtn, (loading || paymentInProgress) && { opacity: 0.75 }]}
                 activeOpacity={0.9}
-                disabled={loading}
+                disabled={loading || paymentInProgress}
                 onPress={handleConfirmPlaceOrder}
               >
-                {loading ? (
+                {loading || paymentInProgress ? (
                   <ActivityIndicator size="small" color="#FAF8F5" />
                 ) : (
                   <>
@@ -1266,7 +1212,7 @@ export default function CheckOutScreen() {
                       color="#FAF8F5"
                       style={{ marginRight: 6 }}
                     />
-                    <Text style={styles.confirmOkBtnText}>Scan & Pay Advance</Text>
+                    <Text style={styles.confirmOkBtnText}>Pay ₹{advanceAmount} via UPI</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -1275,138 +1221,10 @@ export default function CheckOutScreen() {
         </View>
       </Modal>
 
-      {/* ================= SCANNER & VERIFICATION PROOF MODAL ================= */}
-      <Modal
-        visible={showScannerModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowScannerModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFillObject} />
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => {}} />
-
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={styles.scannerModalContainer}
-          >
-            <View style={styles.drawerHandle} />
-            <TouchableOpacity 
-              style={styles.previewCloseBtn} 
-              onPress={() => setShowScannerModal(false)}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="close" size={20} color="#FAF8F5" />
-            </TouchableOpacity>
-
-            <View style={styles.scannerHeaderRow}>
-              <Text style={styles.scannerModalTitle}>Scan & Pay Advance (₹{advanceAmount})</Text>
-              <View style={styles.timerBadgeContainer}>
-                <Ionicons name="time-outline" size={14} color="#D97706" style={{ marginRight: 4 }} />
-                <Text style={styles.timerBadgeText}>{formatTimer(timeLeft)}</Text>
-              </View>
-            </View>
-            <Text style={styles.scannerModalSubtitle}>Choose how you want to submit your payment proof</Text>
-
-            {/* Toggle Switch between UTR and Screenshot */}
-            <View style={styles.verificationModeToggleRow}>
-              <TouchableOpacity
-                style={[styles.verificationModeTab, verificationMode === "utr" && styles.verificationModeTabActive]}
-                onPress={() => setVerificationMode("utr")}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.verificationModeTabText, verificationMode === "utr" && styles.verificationModeTabTextActive]}>
-                  Enter UTR Number
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.verificationModeTab, verificationMode === "screenshot" && styles.verificationModeTabActive]}
-                onPress={() => setVerificationMode("screenshot")}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.verificationModeTabText, verificationMode === "screenshot" && styles.verificationModeTabTextActive]}>
-                  Upload Screenshot
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ alignItems: "center", paddingBottom: 20 }}>
-              <View style={styles.scannerFrameContainer}>
-                <Image
-                  source={require("@/assets/images/scanner.png")}
-                  style={styles.scannerImageStyle}
-                  resizeMode="contain"
-                />
-              </View>
-
-              {verificationMode === "utr" ? (
-                <>
-                  <View style={styles.scannerUtrNoticeBox}>
-                    <Ionicons name="information-circle-outline" size={16} color="#166538" style={{ marginRight: 6 }} />
-                    <Text style={styles.scannerUtrNoticeText}>
-                      After paying via your UPI app, enter your 12-digit UTR reference number below for verification.
-                    </Text>
-                  </View>
-
-                  <View style={styles.addressInputGroup}>
-                    <Text style={styles.addressInputLabel}>UTR / Transaction Reference No.</Text>
-                    <TextInput
-                      style={styles.addressTextInput}
-                      placeholder="e.g. 435261789012"
-                      placeholderTextColor="#9EA8A3"
-                      value={utrNumber}
-                      onChangeText={setUtrNumber}
-                      keyboardType="numeric"
-                    />
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.addAddressSolidCTA}
-                    activeOpacity={0.88}
-                    onPress={() => submitAdvanceProofAndPlaceOrder("utr", utrNumber)}
-                  >
-                    <Text style={styles.addAddressSolidCTAText}>Submit UTR & Place Order</Text>
-                    <Ionicons name="checkmark-circle" size={18} color="#FAF8F5" style={{ marginLeft: 6 }} />
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <View style={styles.scannerUtrNoticeBox}>
-                    <Ionicons name="information-circle-outline" size={16} color="#166538" style={{ marginRight: 6 }} />
-                    <Text style={styles.scannerUtrNoticeText}>
-                      Upload a screenshot of your successful UPI payment receipt for admin verification.
-                    </Text>
-                  </View>
-
-                  <TouchableOpacity style={styles.uploadScreenshotBtn} onPress={pickPaymentScreenshot} activeOpacity={0.8}>
-                    <Ionicons name="cloud-upload-outline" size={22} color="#166538" style={{ marginRight: 8 }} />
-                    <Text style={styles.uploadScreenshotBtnText}>
-                      {paymentScreenshotUri ? "Change Payment Screenshot" : "Choose Screenshot from Gallery"}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {paymentScreenshotUri && (
-                    <View style={styles.screenshotPreviewContainer}>
-                      <Image source={{ uri: paymentScreenshotUri }} style={styles.screenshotPreviewImage} />
-                    </View>
-                  )}
-
-                  <TouchableOpacity
-                    style={[styles.addAddressSolidCTA, !paymentScreenshotUri && { opacity: 0.6 }]}
-                    activeOpacity={0.88}
-                    disabled={!paymentScreenshotUri}
-                    onPress={() => submitAdvanceProofAndPlaceOrder("screenshot", paymentScreenshotUri)}
-                  >
-                    <Text style={styles.addAddressSolidCTAText}>Submit Screenshot & Place Order</Text>
-                    <Ionicons name="checkmark-circle" size={18} color="#FAF8F5" style={{ marginLeft: 6 }} />
-                  </TouchableOpacity>
-                </>
-              )}
-            </ScrollView>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
+      {/* ================= SCANNER & VERIFICATION MODAL =================
+          ✅ REMOVED ENTIRELY. Cashfree's hosted checkout now handles
+          UPI QR + PhonePe/GPay/Paytm deep-links + cards. No UTR /
+          screenshot submission is required anymore. */}
 
       {/* CHANGE DELIVERY ADDRESS MODAL (HOMEMADE FLOW) */}
       <Modal
@@ -1417,19 +1235,16 @@ export default function CheckOutScreen() {
       >
         <View style={styles.modalOverlay}>
           <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFillObject} />
-          <TouchableOpacity 
-            style={{ flex: 1 }} 
-            activeOpacity={1} 
-            onPress={() => setShowChangeAddressModal(false)} 
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => setShowChangeAddressModal(false)}
           />
 
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={styles.changeAddressModalContainer}
-          >
+          <View style={styles.changeAddressModalContainer}>
             <View style={styles.drawerHandle} />
-            <TouchableOpacity 
-              style={styles.previewCloseBtn} 
+            <TouchableOpacity
+              style={styles.previewCloseBtn}
               onPress={() => setShowChangeAddressModal(false)}
               activeOpacity={0.85}
             >
@@ -1442,45 +1257,37 @@ export default function CheckOutScreen() {
             <ScrollView showsVerticalScrollIndicator={false} style={{ width: "100%", marginTop: 12 }}>
               <View style={styles.addressInputGroup}>
                 <Text style={styles.addressInputLabel}>Flat / House / Floor No.</Text>
-                <TextInput
-                  style={styles.addressTextInput}
-                  placeholder="e.g. Flat 302, 3rd Floor"
-                  placeholderTextColor="#9EA8A3"
+                <TextInputCompat
                   value={newFlatNo}
                   onChangeText={setNewFlatNo}
+                  placeholder="e.g. Flat 302, 3rd Floor"
                 />
               </View>
 
               <View style={styles.addressInputGroup}>
                 <Text style={styles.addressInputLabel}>Building / Apartment / Complex Name</Text>
-                <TextInput
-                  style={styles.addressTextInput}
-                  placeholder="e.g. Royal Heights Apartment"
-                  placeholderTextColor="#9EA8A3"
+                <TextInputCompat
                   value={newBuilding}
                   onChangeText={setNewBuilding}
+                  placeholder="e.g. Royal Heights Apartment"
                 />
               </View>
 
               <View style={styles.addressInputGroup}>
                 <Text style={styles.addressInputLabel}>Street / Area / Landmark</Text>
-                <TextInput
-                  style={styles.addressTextInput}
-                  placeholder="e.g. Road No 4, Near Metro Pillar 18"
-                  placeholderTextColor="#9EA8A3"
+                <TextInputCompat
                   value={newStreet}
                   onChangeText={setNewStreet}
+                  placeholder="e.g. Road No 4, Near Metro Pillar 18"
                 />
               </View>
 
               <View style={styles.addressInputGroup}>
                 <Text style={styles.addressInputLabel}>City & State</Text>
-                <TextInput
-                  style={styles.addressTextInput}
-                  placeholder="e.g. Hyderabad, Telangana"
-                  placeholderTextColor="#9EA8A3"
+                <TextInputCompat
                   value={newCity}
                   onChangeText={setNewCity}
+                  placeholder="e.g. Hyderabad, Telangana"
                 />
               </View>
 
@@ -1493,7 +1300,7 @@ export default function CheckOutScreen() {
                 <Ionicons name="checkmark-circle" size={18} color="#FAF8F5" style={{ marginLeft: 6 }} />
               </TouchableOpacity>
             </ScrollView>
-          </KeyboardAvoidingView>
+          </View>
         </View>
       </Modal>
 
@@ -1786,6 +1593,20 @@ export default function CheckOutScreen() {
   );
 }
 
+/**
+ * Local TextInput shim — the original file imported TextInput from react-native
+ * for the scanner & address modals. Since the scanner is gone but the address
+ * modal still needs text inputs, we render a minimal TextInput using
+ * react-native's TextInput without re-importing at the top (keeping the
+ * import surface minimal).
+ *
+ * ✅ NOTE: This is a passthrough — the exact same TextInput component.
+ */
+const TextInputCompat = React.forwardRef<any, any>((props, ref) => {
+  const { TextInput } = require("react-native");
+  return <TextInput ref={ref} {...props} style={styles.addressTextInput} placeholderTextColor="#9EA8A3" />;
+});
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#FAF8F5" },
   header: {
@@ -2029,8 +1850,6 @@ const styles = StyleSheet.create({
     color: "#0F382A",
     letterSpacing: 0.1,
   },
-
-  /* ✅ HOMEMADE / QUICKBITES DELIVERY DATE & SLOT STRIP */
   homemadeDeliveryStripContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -2074,7 +1893,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(22, 101, 52, 0.15)",
     marginHorizontal: 10,
   },
-
   homemadeItemCardRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -2453,194 +2271,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(11, 38, 29, 0.45)",
     justifyContent: "flex-end",
   },
-  scannerModalContainer: {
-    width: "100%",
-    backgroundColor: "#FAF8F5",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: Platform.OS === "ios" ? 34 : 24,
-    borderWidth: 1,
-    borderColor: "rgba(15, 56, 42, 0.08)",
-    maxHeight: SCREEN_HEIGHT * 0.88,
-  },
-  scannerHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    width: "100%",
-    marginBottom: 4,
-  },
-  scannerModalTitle: {
-    fontSize: 17,
-    fontWeight: "900",
-    color: "#0B261D",
-    letterSpacing: -0.3,
-  },
-  timerBadgeContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(217, 119, 6, 0.1)",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(217, 119, 6, 0.2)",
-  },
-  timerBadgeText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "#D97706",
-  },
-  scannerModalSubtitle: {
-    fontSize: 12,
-    color: "#5B756C",
-    fontWeight: "500",
-    marginBottom: 12,
-  },
-  verificationModeToggleRow: {
-    flexDirection: "row",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    padding: 4,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: "rgba(15, 56, 42, 0.1)",
-  },
-  verificationModeTab: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: "center",
-    borderRadius: 10,
-  },
-  verificationModeTabActive: {
-    backgroundColor: "#166534",
-  },
-  verificationModeTabText: {
-    fontSize: 12.5,
-    fontWeight: "700",
-    color: "#5B756C",
-  },
-  verificationModeTabTextActive: {
-    color: "#FAF8F5",
-    fontWeight: "800",
-  },
-  scannerFrameContainer: {
-    width: 260,
-    height: 260,
-    borderRadius: 24,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1.5,
-    borderColor: "rgba(15, 56, 42, 0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 14,
-    padding: 12,
-    shadowColor: "#0F382A",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.12,
-    shadowRadius: 14,
-    elevation: 4,
-  },
-  scannerImageStyle: {
-    width: "100%",
-    height: "100%",
-  },
-  scannerUtrNoticeBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(22, 101, 52, 0.06)",
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "rgba(22, 101, 52, 0.15)",
-    width: "100%",
-  },
-  scannerUtrNoticeText: {
-    flex: 1,
-    fontSize: 11.5,
-    color: "#0F382A",
-    fontWeight: "600",
-    lineHeight: 16,
-  },
-  addressInputGroup: {
-    marginBottom: 12,
-    width: "100%",
-  },
-  addressInputLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#0B261D",
-    marginBottom: 6,
-  },
-  addressTextInput: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "rgba(15, 56, 42, 0.12)",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 13.5,
-    color: "#0B261D",
-    fontWeight: "500",
-    width: "100%",
-  },
-  addAddressSolidCTA: {
-    backgroundColor: "#166538",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center", 
-    paddingVertical: 14,
-    borderRadius: 20,
-    marginTop: 8,
-    marginBottom: 16,
-    width: "100%",
-    shadowColor: "#166538",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  addAddressSolidCTAText: {
-    color: "#FAF8F5",
-    fontSize: 14.5,
-    fontWeight: "800",
-    letterSpacing: 0.2,
-  },
-  uploadScreenshotBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(22, 101, 52, 0.08)",
-    borderWidth: 1.5,
-    borderColor: "#166538",
-    borderStyle: "dashed",
-    borderRadius: 16,
-    paddingVertical: 14,
-    width: "100%",
-    marginBottom: 12,
-  },
-  uploadScreenshotBtnText: {
-    fontSize: 13.5,
-    fontWeight: "800",
-    color: "#166538",
-  },
-  screenshotPreviewContainer: {
-    width: "100%",
-    height: 140,
-    borderRadius: 14,
-    overflow: "hidden",
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "rgba(15, 56, 42, 0.12)",
-    backgroundColor: "#FFFFFF",
-  },
-  screenshotPreviewImage: {
-    width: "100%",
-    height: "100%",
-  },
   previewModalContent: {
     width: "100%",
     backgroundColor: "#FAF8F5",
@@ -2915,7 +2545,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: Platform.OS === "ios" ? 34 : 24,
+    paddingBottom: 24,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
     shadowColor: "#0F382A",
@@ -3050,6 +2680,50 @@ const styles = StyleSheet.create({
   confirmOkBtnText: {
     color: "#FAF8F5",
     fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  addressInputGroup: {
+    marginBottom: 12,
+    width: "100%",
+  },
+  addressInputLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0B261D",
+    marginBottom: 6,
+  },
+  addressTextInput: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.12)",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 13.5,
+    color: "#0B261D",
+    fontWeight: "500",
+    width: "100%",
+  },
+  addAddressSolidCTA: {
+    backgroundColor: "#166538",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 14,
+    borderRadius: 20,
+    marginTop: 8,
+    marginBottom: 16,
+    width: "100%",
+    shadowColor: "#166538",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  addAddressSolidCTAText: {
+    color: "#FAF8F5",
+    fontSize: 14.5,
     fontWeight: "800",
     letterSpacing: 0.2,
   },
