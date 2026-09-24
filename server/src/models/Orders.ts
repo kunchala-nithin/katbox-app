@@ -7,7 +7,7 @@ export interface IDeliverySchedule {
   status: string;
   timeSlot: string;
   address: string;
-  // ✅ NEW: per-schedule coordinates for precise map pinning
+  // ✅ per-schedule coordinates for precise map pinning
   latitude?: number;
   longitude?: number;
   actualDeliveredAt?: Date;
@@ -65,11 +65,11 @@ export interface IBaseOrder extends Document {
   actualDeliveredAt?: Date;
   deliveredOnTime?: boolean;
   gracePeriodMinutes?: number;
-  // ✅ NEW: absolute timestamps computed at order placement time
+  // ✅ absolute timestamps computed at order placement time
   orderPlacedAt?: Date;
   estimatedDeliveryAt?: Date;
   deliveryWindowMinutes?: number;
-  // ✅ NEW: Geo coordinates for accurate map pinning
+  // ✅ Geo coordinates for accurate map pinning
   latitude?: number;
   longitude?: number;
 
@@ -86,6 +86,26 @@ export interface IBaseOrder extends Document {
 
   paymentCaptured?: boolean;
   paidAt?: Date;
+
+  // ==================================================================
+  // ✅ NEW FIELDS (Production Upgrade) — Admin-Gated Order Flow
+  //    and Advance-Paid / Full-Amount-Paid status tracking.
+  //
+  //    These fields drive the new status flow:
+  //      • Catering/Mealbox + Cashfree success  → orderStatus = "Advance Paid"
+  //      • Homemade/QuickBites + Cashfree success → orderStatus = "Full Amount Paid"
+  //      • Homemade/QuickBites + COD → orderStatus = "Placed" (unchanged)
+  //
+  //    Additionally, the admin must explicitly ACCEPT the order before
+  //    it becomes visible to the chef. This is tracked by
+  //    adminAcceptedAt (null/undefined = not yet accepted by admin).
+  // ==================================================================
+  statusAdvancedPaidAt?: Date;      // when Cashfree advance payment succeeded
+  fullPaymentPaidAt?: Date;         // when Cashfree full payment succeeded (homemade/quickbites online)
+  adminAcceptedAt?: Date;           // when admin clicked "Accept Order"
+  adminAcceptedBy?: string;         // admin user id who accepted (audit)
+  // ==================================================================
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -111,7 +131,7 @@ export interface IHomemadeOrder extends IBaseOrder {
   // ✅ New top-level delivery slot label for homemade orders (e.g. "9:00 AM - 11:00 AM")
   deliverySlot?: string;
   deliveryDate?: string;
-  // ✅ NEW: QuickBites flag (persisted for downstream screens to render "arriving by X")
+  // ✅ QuickBites flag (persisted for downstream screens to render "arriving by X")
   isQuickBites?: boolean;
 }
 
@@ -147,7 +167,7 @@ const DeliveryScheduleSchema = new Schema(
     status: { type: String, required: true, default: "Scheduled" },
     timeSlot: { type: String, default: "7:00 PM - 9:00 PM" },
     address: { type: String, default: "" },
-    // ✅ NEW: coordinates per scheduled delivery slot
+    // ✅ coordinates per scheduled delivery slot
     latitude: { type: Number },
     longitude: { type: Number },
     actualDeliveredAt: { type: Date },
@@ -232,11 +252,11 @@ const BaseOrderSchema: Schema = new Schema(
     actualDeliveredAt: { type: Date },
     deliveredOnTime: { type: Boolean, default: true },
     gracePeriodMinutes: { type: Number, default: 0 },
-    // ✅ NEW: absolute timestamps computed at order placement time
+    // ✅ absolute timestamps computed at order placement time
     orderPlacedAt: { type: Date },
     estimatedDeliveryAt: { type: Date },
     deliveryWindowMinutes: { type: Number, default: 0 },
-    // ✅ NEW: Geo coordinates for accurate map pinning
+    // ✅ Geo coordinates for accurate map pinning
     latitude: { type: Number },
     longitude: { type: Number },
 
@@ -253,6 +273,18 @@ const BaseOrderSchema: Schema = new Schema(
 
     paymentCaptured: { type: Boolean, default: false },
     paidAt: { type: Date },
+
+    // ==================================================================
+    // ✅ NEW FIELDS (Production Upgrade)
+    //    Advance-paid / full-payment-paid timestamps and the
+    //    admin-acceptance gate that keeps orders invisible to the chef
+    //    until the admin explicitly accepts them.
+    // ==================================================================
+    statusAdvancedPaidAt: { type: Date, default: null },
+    fullPaymentPaidAt: { type: Date, default: null },
+    adminAcceptedAt: { type: Date, default: null },
+    adminAcceptedBy: { type: String, default: "" },
+    // ==================================================================
   },
   {
     discriminatorKey: "serviceType",
@@ -284,7 +316,7 @@ const HomemadeOrderSchema = new Schema({
   // ✅ Human-readable delivery slot label selected by user on the review screen
   deliverySlot: { type: String, default: "" },
   deliveryDate: { type: String, default: "Today" },
-  // ✅ NEW: Persist the QuickBites flag so downstream UIs can render the live "arriving by X" banner
+  // ✅ Persist the QuickBites flag so downstream UIs can render the live "arriving by X" banner
   isQuickBites: { type: Boolean, default: false },
 });
 
@@ -317,7 +349,7 @@ export const HomemadeOrderModel =
     ? (Order.discriminators["homemade"] as Model<IHomemadeOrder>)
     : Order.discriminator<IHomemadeOrder>("homemade", HomemadeOrderSchema);
 
-// ✅ NEW: QuickBites is a dedicated discriminator reusing the homemade schema,
+// ✅ QuickBites is a dedicated discriminator reusing the homemade schema,
 // so quickbites orders are stored with serviceType = "quickbites" on the
 // SAME collection, keeping the data model unified.
 export const QuickBitesOrderModel =

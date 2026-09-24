@@ -40,7 +40,7 @@ const CASHFREE_API_VERSION = "2023-08-01";
 // =========================================================
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ NEW HELPER — Safely parse a JSON value that may arrive as a
+   ✅ HELPER — Safely parse a JSON value that may arrive as a
    string or already as an array/object. Never throws.
    ───────────────────────────────────────────────────────────────── */
 const parseIfJsonString = (value: any, fallback: any = null) => {
@@ -56,7 +56,7 @@ const parseIfJsonString = (value: any, fallback: any = null) => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ NEW HELPER — Normalize the incoming items array so it always
+   ✅ HELPER — Normalize the incoming items array so it always
    satisfies HomemadeItemSubSchema's required fields, regardless of
    what the client sends. This is a defense-in-depth mirror of the
    sanitization already done in CheckOutScreen.tsx.
@@ -80,6 +80,15 @@ const sanitizeItemsForSchema = (rawItems: any): any[] => {
     ),
     isVeg: it?.isVeg !== undefined ? Boolean(it.isVeg) : true,
   }));
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Safely parse a numeric coordinate value.
+   ───────────────────────────────────────────────────────────────── */
+const parseNumberOrUndefined = (val: any): number | undefined => {
+  if (val === undefined || val === null || val === "") return undefined;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : undefined;
 };
 
 /* ─────────────────────────────────────────────────────────────────
@@ -157,6 +166,123 @@ const fetchCashfreeOrderWithRetry = async (
   }
 
   return { ok: lastOk, data: lastData, attempts: maxAttempts };
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Resolve the chef's user document + emit sockets
+   + fire the chef alarm push for a freshly-verified order.
+
+   Used by `verifyPaymentAndCreateOrder` so the chef is notified the
+   moment the Cashfree payment is confirmed — WITHOUT waiting for the
+   admin to tap "Accept". Mirrors the exact logic already used in
+   `orders.controller.ts → notifyChefAboutOrder()`.
+
+   Never throws — best-effort notification.
+   ───────────────────────────────────────────────────────────────── */
+const notifyChefAboutVerifiedOrder = async (savedOrder: any) => {
+  try {
+    // ---- Socket emits so every UI refreshes instantly ----
+    io.emit("advance_payment_verified", savedOrder);
+    io.emit("order_updated", savedOrder);
+    io.emit("order_status_updated", savedOrder);
+    io.emit("new_order_placed", savedOrder);
+
+    if (savedOrder?.userId) {
+      io.to(String(savedOrder.userId)).emit("advance_payment_verified", savedOrder);
+      io.to(String(savedOrder.userId)).emit("order_updated", savedOrder);
+      io.to(String(savedOrder.userId)).emit("order_status_updated", savedOrder);
+      io.to(String(savedOrder.userId)).emit("new_order_placed", savedOrder);
+    }
+
+    // ---- Resolve the assigned chef's user document for push ----
+    const chefIdentifier = savedOrder?.chefId;
+    let chefUserDoc: any = null;
+    let resolvedChefUserId: string | null = null;
+
+    if (chefIdentifier && mongoose.Types.ObjectId.isValid(chefIdentifier)) {
+      const chefDoc = await Chef.findById(chefIdentifier);
+      if (chefDoc?.user) {
+        chefUserDoc = await User.findById(chefDoc.user);
+        resolvedChefUserId = String(chefDoc.user);
+      }
+    }
+    if (!chefUserDoc && savedOrder?.chefName) {
+      const chefDoc = await Chef.findOne({ name: savedOrder.chefName });
+      if (chefDoc?.user) {
+        chefUserDoc = await User.findById(chefDoc.user);
+        resolvedChefUserId = String(chefDoc.user);
+      }
+    }
+
+    // ---- Emit the "new_chef_order" socket to every chef channel ----
+    if (chefUserDoc?._id) {
+      io.to(String(chefUserDoc._id)).emit("new_chef_order", savedOrder);
+      io.to(String(chefUserDoc._id)).emit("order_updated", savedOrder);
+    }
+    if (chefIdentifier) {
+      io.to(String(chefIdentifier)).emit("new_chef_order", savedOrder);
+      io.to(String(chefIdentifier)).emit("order_updated", savedOrder);
+    }
+    io.emit("new_chef_order", savedOrder);
+
+    // ---- Chef alarm push (identical config to orders.controller) ----
+    if (chefUserDoc?.pushToken && isValidExpoToken(chefUserDoc.pushToken)) {
+      try {
+        await sendExpoPush({
+          token: String(chefUserDoc.pushToken),
+          title: `🔔 New Order ${savedOrder.orderId}`,
+          body: `${savedOrder.userName || "Customer"} → ₹${savedOrder.totalAmount}. Tap to accept now!`,
+          data: {
+            orderId: savedOrder.orderId,
+            screen: "chef-orders",
+            role: "chef",
+            chefId: resolvedChefUserId || String(chefUserDoc._id || ""),
+          },
+          sound: ORDER_ALARM_SOUND,
+          channelId: CHEF_ORDER_CHANNEL_ID,
+          priority: "max",
+          vibrate: [0, 600, 300, 600, 300],
+        });
+        console.log(
+          `[notifyChefAboutVerifiedOrder] Chef alarm push sent for order ${savedOrder.orderId}`
+        );
+      } catch (chefPushErr) {
+        console.log("Chef alarm push error:", chefPushErr);
+      }
+    }
+
+    // ---- Customer confirmation push (default sound, not alarm) ----
+    if (
+      savedOrder?.userId &&
+      mongoose.Types.ObjectId.isValid(savedOrder.userId)
+    ) {
+      try {
+        const customerDoc = await User.findById(savedOrder.userId);
+        if (
+          customerDoc?.pushToken &&
+          isValidExpoToken(customerDoc.pushToken)
+        ) {
+          await sendExpoPush({
+            token: String(customerDoc.pushToken),
+            title: "Payment Verified! 🎉",
+            body: `Your payment for order #${savedOrder.orderId} has been confirmed. We're preparing your order now.`,
+            data: {
+              orderId: savedOrder.orderId,
+              screen: "orders",
+              role: "customer",
+            },
+            sound: "default",
+            priority: "high",
+          });
+        }
+      } catch (customerPushErr) {
+        console.log("Customer confirmation push error:", customerPushErr);
+      }
+    }
+  } catch (notifyErr) {
+    // Notifications are best-effort — never block the payment response.
+    console.log("notifyChefAboutVerifiedOrder error:", notifyErr);
+  }
 };
 
 /**
@@ -261,16 +387,37 @@ export const createPaymentOrder = async (req: Request, res: Response) => {
  *   4. Replay-protected: if we already saved this cf_order_id, we return
  *      the existing order instead of creating a duplicate.
  *
- * ✅ Auto-verifies the order (isAdvanceVerified: true) and immediately
- *    notifies the assigned chef with the alarm push — applies to BOTH
- *    Mealbox/Catering (45% advance) and Homemade/QuickBites (full
- *    online payment). No admin action needed.
+ * ✅ AUTO-ACCEPT (production upgrade):
+ *
+ *    The moment Cashfree confirms PAID, the order is saved with:
+ *      • orderStatus        = "Accepted"
+ *      • adminAcceptedAt    = now
+ *      • adminAcceptedBy    = "system:cashfree"
+ *      • statusAdvancedPaidAt = now   (for Mealbox/Catering)
+ *      • fullPaymentPaidAt  = now     (for Homemade/QuickBites online)
+ *
+ *    The chef is notified IMMEDIATELY (alarm push + socket
+ *    `new_chef_order`) — the admin does NOT need to tap "Accept".
+ *
+ *    This applies to EVERY order that passes through this endpoint,
+ *    i.e. any order where the customer paid online via Cashfree:
+ *      • Catering   → 45% advance paid  → auto-accepted
+ *      • Mealbox    → 45% advance paid  → auto-accepted
+ *      • Homemade   → 100% paid online  → auto-accepted
+ *      • QuickBites → 100% paid online  → auto-accepted
+ *
+ *    COD orders never reach this endpoint (they go through
+ *    /api/orders/create in orders.controller.ts) — those remain
+ *    "Placed" and wait for the admin to accept.
  *
  * ✅ Sanitizes `items` before saving so Homemade/QuickBites orders
  *    never fail schema validation (missing id / name / price / quantity).
  *
  * ✅ Persists `deliveryAddress` on the order document for Homemade /
  *    QuickBites (required on their schema).
+ *
+ * ✅ Persists `deliverySchedules` for Mealbox orders so the admin and
+ *    chef screens can render per-date status immediately.
  *
  * Body: { cf_order_id: string, orderPayload: {...} }
  */
@@ -360,6 +507,9 @@ export const verifyPaymentAndCreateOrder = async (
     const isHomemadeOrQuickBites =
       resolvedServiceType === "homemade" ||
       resolvedServiceType === "quickbites";
+    const isAdvanceBasedService =
+      resolvedServiceType === "catering" ||
+      resolvedServiceType === "mealbox";
 
     // ------------------------------------------------------------------
     // 7. Sanitize items (defense-in-depth). This guarantees that even
@@ -369,12 +519,102 @@ export const verifyPaymentAndCreateOrder = async (
     const sanitizedItems = sanitizeItemsForSchema(orderPayload.items);
 
     // ------------------------------------------------------------------
-    // 8. Persist the verified order.
+    // ✅ AUTO-ACCEPT TIMESTAMPS
+    //
+    //    Since Cashfree has confirmed PAID, we mark the order as
+    //    already accepted by the system. The chef must be notified
+    //    immediately — no admin tap required.
+    //
+    //    Timestamp bookkeeping:
+    //      • statusAdvancedPaidAt → set for Mealbox/Catering (45% advance)
+    //      • fullPaymentPaidAt    → set for Homemade/QuickBites (100% paid)
+    //      • adminAcceptedAt      → set for ALL online-paid orders
+    //      • adminAcceptedBy      → "system:cashfree"
+    // ------------------------------------------------------------------
+    const now = new Date();
+    const resolvedAdminAcceptedAt = now;
+    const resolvedAdminAcceptedBy = "system:cashfree";
+    const resolvedStatusAdvancedPaidAt = isAdvanceBasedService ? now : null;
+    const resolvedFullPaymentPaidAt = isHomemadeOrQuickBites ? now : null;
+
+    // ------------------------------------------------------------------
+    // 8. Resolve advance / balance split consistently with the COD
+    //    flow in orders.controller.ts → createOrder().
+    //      • Mealbox/Catering       → 45% advance, 55% balance
+    //      • Homemade/QuickBites    → 100% paid, 0 balance
+    // ------------------------------------------------------------------
+    const numericTotal = Number(orderPayload.totalAmount) || 0;
+    const fallbackAdvance = isHomemadeOrQuickBites
+      ? numericTotal
+      : Math.round(numericTotal * 0.45 * 100) / 100;
+
+    const resolvedAdvancePaidAmount =
+      orderPayload.advancePaidAmount !== undefined &&
+      orderPayload.advancePaidAmount !== null &&
+      orderPayload.advancePaidAmount !== ""
+        ? Number(orderPayload.advancePaidAmount)
+        : fallbackAdvance;
+
+    const resolvedBalanceAmountToCollect =
+      orderPayload.balanceAmountToCollect !== undefined &&
+      orderPayload.balanceAmountToCollect !== null &&
+      orderPayload.balanceAmountToCollect !== ""
+        ? Number(orderPayload.balanceAmountToCollect)
+        : Math.max(
+            0,
+            Math.round((numericTotal - resolvedAdvancePaidAmount) * 100) / 100
+          );
+
+    // ------------------------------------------------------------------
+    // 9. Build the initial statusTimeline entry documenting the
+    //    auto-accept so downstream UIs display the reason.
+    // ------------------------------------------------------------------
+    const autoAcceptNote = isAdvanceBasedService
+      ? `Advance of ₹${resolvedAdvancePaidAmount} paid via Cashfree — order auto-accepted and chef notified`
+      : `Full payment of ₹${numericTotal} paid via Cashfree — order auto-accepted and chef notified`;
+
+    // ------------------------------------------------------------------
+    // 10. For Mealbox orders, mirror the deliverySchedules construction
+    //     used in orders.controller.ts → createOrder() so the admin /
+    //     chef screens can render per-date status immediately.
+    // ------------------------------------------------------------------
+    const upcomingDeliveriesList = Array.isArray(orderPayload.upcomingDeliveries)
+      ? orderPayload.upcomingDeliveries
+      : [];
+
+    const initialDeliverySchedules = isAdvanceBasedService &&
+      resolvedServiceType === "mealbox" &&
+      upcomingDeliveriesList.length > 0
+      ? upcomingDeliveriesList.map((dateItem: string) => ({
+          date: dateItem,
+          status: "Scheduled",
+          timeSlot:
+            orderPayload.deliveryTimeSlot || "7:00 PM - 9:00 PM",
+          address:
+            orderPayload.addressDetails ||
+            orderPayload.deliveryAddress ||
+            "",
+          latitude: parseNumberOrUndefined(orderPayload.latitude),
+          longitude: parseNumberOrUndefined(orderPayload.longitude),
+          statusTimeline: [
+            {
+              status: "Scheduled",
+              timestamp: now,
+              note: `Delivery scheduled for ${dateItem}`,
+            },
+          ],
+        }))
+      : [];
+
+    // ------------------------------------------------------------------
+    // 11. Persist the verified order with AUTO-ACCEPTED status.
     // ------------------------------------------------------------------
     const newOrder = new Order({
       orderId: generatedOrderId,
       userId: orderPayload.userId || "",
       userName: orderPayload.userName || "",
+      userPhone: orderPayload.userPhone || "",
+      alternatePhone: orderPayload.alternatePhone || "",
       chefId: orderPayload.chefId || "",
       chefName: orderPayload.chefName || "",
       serviceType: orderPayload.serviceType || "mealbox",
@@ -392,50 +632,57 @@ export const verifyPaymentAndCreateOrder = async (
         "",
       deliveryDate: orderPayload.deliveryDate || "",
       deliverySlot: orderPayload.deliverySlot || "",
-      upcomingDeliveries: Array.isArray(orderPayload.upcomingDeliveries)
-        ? orderPayload.upcomingDeliveries
-        : [],
+      upcomingDeliveries: upcomingDeliveriesList,
+      // ✅ Mealbox gets initial deliverySchedules so the admin/chef
+      //    screens can render per-date rows immediately.
+      deliverySchedules: initialDeliverySchedules,
       subtotal: Number(orderPayload.subtotal) || 0,
       deliveryPrice: Number(orderPayload.deliveryPrice) || 0,
       discount: Number(orderPayload.discount) || 0,
       appliedCoupon: orderPayload.appliedCoupon || "",
-      totalAmount: Number(orderPayload.totalAmount) || 0,
+      totalAmount: numericTotal,
 
-      // Payment flags — Cashfree is the source of truth here
+      // Payment flags — Cashfree is the source of truth here.
+      // ✅ We use "Paid" so downstream checks on paymentStatus
+      //    that look for "paid" (case-insensitive) match cleanly.
+      //    For advance-based services the UI also checks
+      //    `statusAdvancedPaidAt` for the "Advance Paid" label.
       paymentMethod: orderPayload.paymentMethod || "online",
       paymentStatus: "Paid",
-      orderStatus: "Placed",
+
+      // ✅ AUTO-ACCEPT: the order immediately moves to "Accepted"
+      //    so the chef can begin preparation without admin gating.
+      orderStatus: "Accepted",
 
       // ==================== CASHFREE FIELDS ====================
       cashfreeOrderId: cf_order_id,
       cashfreePaymentId: cfPaymentId,
       paymentCaptured: true,
-      paidAt: new Date(),
+      paidAt: now,
       // ========================================================
 
       // ✅ Auto-verify since Cashfree already confirmed the payment.
       //    Admin no longer needs to tap "Payment Received".
       isAdvanceVerified: true,
 
-      // Advance/balance split.
-      //  • Mealbox/Catering: 45% advance, 55% balance (fallback math)
-      //  • Homemade/QuickBites online: full amount paid (advance=total, balance=0)
-      //  • Homemade/QuickBites COD: not routed through this endpoint
-      advancePaidAmount:
-        Number(orderPayload.advancePaidAmount) ||
-        (isHomemadeOrQuickBites
-          ? Number(orderPayload.totalAmount) || 0
-          : Math.round((Number(orderPayload.totalAmount) || 0) * 0.45 * 100) / 100),
-      balanceAmountToCollect:
-        Number(orderPayload.balanceAmountToCollect) ||
-        (isHomemadeOrQuickBites
-          ? 0
-          : Math.round(
-              ((Number(orderPayload.totalAmount) || 0) -
-                (Number(orderPayload.advancePaidAmount) ||
-                  (Number(orderPayload.totalAmount) || 0) * 0.45)) *
-                100
-            ) / 100),
+      // ✅ Advance/balance split (consistent with COD branch).
+      advancePaidAmount: resolvedAdvancePaidAmount,
+      balanceAmountToCollect: resolvedBalanceAmountToCollect,
+
+      // ✅ AUTO-ACCEPT timestamps (see block comment above).
+      statusAdvancedPaidAt: resolvedStatusAdvancedPaidAt,
+      fullPaymentPaidAt: resolvedFullPaymentPaidAt,
+      adminAcceptedAt: resolvedAdminAcceptedAt,
+      adminAcceptedBy: resolvedAdminAcceptedBy,
+
+      // ✅ Status timeline documents the auto-accept.
+      statusTimeline: [
+        {
+          status: "Accepted",
+          timestamp: now,
+          note: autoAcceptNote,
+        },
+      ],
 
       // ✅ Use the sanitized items array (guaranteed schema-compliant).
       items: sanitizedItems,
@@ -443,119 +690,81 @@ export const verifyPaymentAndCreateOrder = async (
       selections: orderPayload.selections || null,
 
       // ✅ Homemade/QuickBites-specific fields
-      isQuickBites: orderPayload.isQuickBites === "true" || orderPayload.isQuickBites === true,
+      isQuickBites:
+        orderPayload.isQuickBites === "true" ||
+        orderPayload.isQuickBites === true,
       estimatedDeliveryAt: orderPayload.estimatedDeliveryAtMs
         ? new Date(Number(orderPayload.estimatedDeliveryAtMs))
         : undefined,
-      deliveryWindowMinutes: Number(orderPayload.deliveryWindowMinutes) || 0,
+      deliveryWindowMinutes:
+        Number(orderPayload.deliveryWindowMinutes) || 0,
 
       // ✅ Geo coordinates
-      latitude: orderPayload.latitude !== undefined ? Number(orderPayload.latitude) : undefined,
-      longitude: orderPayload.longitude !== undefined ? Number(orderPayload.longitude) : undefined,
+      latitude: parseNumberOrUndefined(orderPayload.latitude),
+      longitude: parseNumberOrUndefined(orderPayload.longitude),
+
+      // ✅ Catering-specific fields (mirrors orders.controller.ts)
+      restaurantName: orderPayload.restaurantName || "",
+      restaurantImage: orderPayload.restaurantImage || "",
+      occasion: orderPayload.occasion || "",
+      guests: Number(orderPayload.guests) || 0,
+      eventDate: orderPayload.eventDate || "",
+      eventTime: orderPayload.eventTime || "",
+      deliveryType: orderPayload.deliveryType || "Standard",
+      pricePerPlate: Number(orderPayload.pricePerPlate) || 0,
+      addons: Array.isArray(orderPayload.addons)
+        ? orderPayload.addons
+        : [],
     });
 
     const savedOrder = await newOrder.save();
 
     // ------------------------------------------------------------------
-    // 9. ✅ Auto-notify the chef + customer + admin the moment the
-    //    payment is confirmed. No admin tap required.
+    // 12. Update User + Chef orderHistory so the order surfaces in
+    //     "My Orders" and the chef's dashboard.
+    //     (Mirrors orders.controller.ts → createOrder())
     // ------------------------------------------------------------------
     try {
-      // ---- Socket emits (identical shape to verifyAdvancePayment) ----
-      io.emit("advance_payment_verified", savedOrder);
-      io.emit("order_updated", savedOrder);
-      io.emit("new_order_placed", savedOrder);
-
-      if (savedOrder.userId) {
-        io.to(String(savedOrder.userId)).emit("advance_payment_verified", savedOrder);
-        io.to(String(savedOrder.userId)).emit("order_updated", savedOrder);
-        io.to(String(savedOrder.userId)).emit("new_order_placed", savedOrder);
+      if (
+        savedOrder.userId &&
+        mongoose.Types.ObjectId.isValid(String(savedOrder.userId))
+      ) {
+        await User.findByIdAndUpdate(savedOrder.userId, {
+          $addToSet: { orderHistory: savedOrder._id },
+        });
       }
 
-      // ---- Resolve the assigned chef's user document for push ----
-      const chefIdentifier = savedOrder.chefId;
-      let chefUserDoc: any = null;
-      let resolvedChefUserId: string | null = null;
-
-      if (chefIdentifier && mongoose.Types.ObjectId.isValid(chefIdentifier)) {
-        const chefDoc = await Chef.findById(chefIdentifier);
-        if (chefDoc?.user) {
-          chefUserDoc = await User.findById(chefDoc.user);
-          resolvedChefUserId = String(chefDoc.user);
-          io.to(String(chefDoc.user)).emit("new_chef_order", savedOrder);
-          io.to(String(chefDoc.user)).emit("order_updated", savedOrder);
-        }
-      }
-      if (!chefUserDoc && savedOrder.chefName) {
-        const chefDoc = await Chef.findOne({ name: savedOrder.chefName });
-        if (chefDoc?.user) {
-          chefUserDoc = await User.findById(chefDoc.user);
-          resolvedChefUserId = String(chefDoc.user);
-          io.to(String(chefDoc.user)).emit("new_chef_order", savedOrder);
-          io.to(String(chefDoc.user)).emit("order_updated", savedOrder);
-        }
-      }
-      if (chefIdentifier) {
-        io.to(String(chefIdentifier)).emit("new_chef_order", savedOrder);
-        io.to(String(chefIdentifier)).emit("order_updated", savedOrder);
-      }
-
-      // ---- Chef alarm push (identical config to verifyAdvancePayment) ----
-      if (chefUserDoc?.pushToken && isValidExpoToken(chefUserDoc.pushToken)) {
-        try {
-          await sendExpoPush({
-            token: String(chefUserDoc.pushToken),
-            title: `🔔 New Verified Order ${savedOrder.orderId}`,
-            body: `${savedOrder.userName || "Customer"} → ₹${savedOrder.totalAmount}. Tap to accept now!`,
-            data: {
-              orderId: savedOrder.orderId,
-              screen: "chef-orders",
-              role: "chef",
-              chefId: resolvedChefUserId || String(chefUserDoc._id || ""),
-            },
-            sound: ORDER_ALARM_SOUND,
-            channelId: CHEF_ORDER_CHANNEL_ID,
-            priority: "max",
-            vibrate: [0, 600, 300, 600, 300],
+      if (savedOrder.chefId) {
+        if (mongoose.Types.ObjectId.isValid(String(savedOrder.chefId))) {
+          await Chef.findByIdAndUpdate(savedOrder.chefId, {
+            $addToSet: { orderHistory: savedOrder._id },
           });
-          console.log(
-            `[verifyPaymentAndCreateOrder] Chef alarm push sent for order ${savedOrder.orderId}`
+          await Chef.findOneAndUpdate(
+            { user: savedOrder.chefId },
+            { $addToSet: { orderHistory: savedOrder._id } }
           );
-        } catch (chefPushErr) {
-          console.log("Chef alarm push error:", chefPushErr);
+        } else if (savedOrder.chefName) {
+          await Chef.findOneAndUpdate(
+            { name: savedOrder.chefName },
+            { $addToSet: { orderHistory: savedOrder._id } }
+          );
         }
       }
-
-      // ---- Customer confirmation push (default sound, not alarm) ----
-      if (savedOrder.userId && mongoose.Types.ObjectId.isValid(savedOrder.userId)) {
-        try {
-          const customerDoc = await User.findById(savedOrder.userId);
-          if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
-            await sendExpoPush({
-              token: String(customerDoc.pushToken),
-              title: "Payment Verified! 🎉",
-              body: `Your payment for order #${savedOrder.orderId} has been confirmed. We're preparing your order now.`,
-              data: {
-                orderId: savedOrder.orderId,
-                screen: "orders",
-                role: "customer",
-              },
-              sound: "default",
-              priority: "high",
-            });
-          }
-        } catch (customerPushErr) {
-          console.log("Customer confirmation push error:", customerPushErr);
-        }
-      }
-    } catch (notifyErr) {
-      // Notifications are best-effort — never block the payment response.
-      console.log("Post-payment notification error:", notifyErr);
+    } catch (historyErr) {
+      // Non-fatal — order is already saved. Log and continue.
+      console.log("Order-history linkage warning:", historyErr);
     }
+
+    // ------------------------------------------------------------------
+    // 13. ✅ IMMEDIATELY notify the chef (alarm push + sockets) and the
+    //     customer (confirmation push). No admin tap required.
+    // ------------------------------------------------------------------
+    await notifyChefAboutVerifiedOrder(savedOrder);
 
     return res.status(201).json({
       success: true,
-      message: "Payment verified successfully & order persisted.",
+      message:
+        "Payment verified successfully & order auto-accepted. Chef has been notified.",
       order: savedOrder,
     });
   } catch (error: any) {

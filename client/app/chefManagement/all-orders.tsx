@@ -1,3 +1,4 @@
+// chefmanagement/all-orders.tsx
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
@@ -347,6 +348,80 @@ const formatCoordLabel = (lat: any, lng: any): string => {
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 };
 
+// ==================================================================
+// ✅ NEW SHARED HELPER — Determine whether an order is TRULY fully
+// settled (i.e., the FULL amount has been collected — not just the
+// 45% advance). Mirrors the exact same helper in admin/all-orders.tsx
+// so both screens stay perfectly in sync.
+//
+// Business rules enforced here:
+//   • Mealbox / Catering (advance-based):
+//       isFullySettled = TRUE only when the balance has been collected
+//       (balanceAmountToCollect <= 0) AND paymentStatus reflects full
+//       settlement ("Fully Paid" / "Balance Collected") OR orderStatus
+//       is Completed / Cash Collected / Delivered.
+//       A VERIFIED ADVANCE ALONE MUST NOT FLIP THIS TO TRUE.
+//
+//   • Homemade / QuickBites:
+//       - ONLINE (Cashfree): full amount was captured at placement
+//         → advancePaidAmount === totalAmount AND balance === 0
+//         → isFullySettled = TRUE immediately.
+//       - COD: settled only when status is Delivered / Completed /
+//         Cash Collected.
+//
+// Used by:
+//   • The active-order `isCashCollected` memo
+//   • The pill color logic in the header strip
+//   • The status dropdown lock
+// ==================================================================
+const computeIsFullySettled = (order: any): boolean => {
+  if (!order) return false;
+
+  const pStatus = String(order.paymentStatus || '').toLowerCase().trim();
+  const oStatus = String(order.orderStatus || '').toLowerCase().trim();
+  const serviceType = String(order.serviceType || '').toLowerCase();
+  const advAmt = Number(order.advancePaidAmount || 0);
+  const balAmt = Number(order.balanceAmountToCollect || 0);
+  const total = Number(order.totalAmount || 0);
+
+  const isHomemadeLike =
+    serviceType === 'homemade' || serviceType === 'quickbites';
+  const isAdvanceBased =
+    serviceType === 'catering' || serviceType === 'mealbox';
+
+  // ---- Explicit full-settlement markers written by the backend ----
+  const isFullyPaidStatus =
+    pStatus.includes('fully paid') ||
+    pStatus.includes('balance collected');
+
+  const isFullyPaidOrderStatus =
+    oStatus === 'completed' ||
+    oStatus.includes('cash collected') ||
+    oStatus.includes('amount collected') ||
+    oStatus === 'delivered';
+
+  // ---- Homemade/QuickBites ONLINE: full amount captured at placement ----
+  const isHomemadeOnlineFullyPaid =
+    isHomemadeLike &&
+    advAmt > 0 &&
+    balAmt <= 0 &&
+    Math.abs(advAmt - total) < 0.01;
+
+  // ---- Mealbox/Catering: settled ONLY when balance is cleared AND
+  //      paymentStatus explicitly confirms full settlement ----
+  const isBalanceCleared =
+    isAdvanceBased &&
+    balAmt <= 0 &&
+    (pStatus.includes('fully paid') || pStatus.includes('balance collected'));
+
+  return (
+    isFullyPaidStatus ||
+    isFullyPaidOrderStatus ||
+    isHomemadeOnlineFullyPaid ||
+    isBalanceCleared
+  );
+};
+
 // ─── DeliverySlotCountdownWidget ──────────────────────────────────
 function DeliverySlotCountdownWidget({
   deliveryDate,
@@ -678,14 +753,31 @@ export default function AllOrdersScreen() {
     try {
       const res = await api.get('/api/orders/chef-orders');
       if (res.data && res.data.success) {
-        // Only show orders where advance payment has been verified by Admin ("Payment Received" / isAdvanceVerified: true)
+        // ✅ The backend `/api/orders/chef-orders` already filters to
+        //    only return orders where `adminAcceptedAt` is set. Those
+        //    are either:
+        //      • Auto-accepted online orders (Cashfree success) — the
+        //        chef is notified by the backend the moment payment is
+        //        verified.
+        //      • Admin-accepted COD orders.
+        //    We retain the defensive filter on `isAdvanceVerified` to
+        //    be compatible with any legacy orders that may predate the
+        //    auto-accept rollout.
         const allFetched = res.data.orders || [];
         const fetched = allFetched.filter((o: any) => o.isAdvanceVerified === true);
         setOrders(fetched);
 
-        const hasPendingOrder = fetched.find(
-          (o: any) => (o.orderStatus || 'Placed').toLowerCase() === 'placed'
-        );
+        // ✅ UPDATED: Only alarm for COD orders that still await an
+        //    admin/chef response (status "Placed" AND payment "cod").
+        //    Auto-accepted online orders do NOT need a local alarm —
+        //    the backend already pushed the chef alarm the moment
+        //    Cashfree confirmed the payment.
+        const hasPendingOrder = fetched.find((o: any) => {
+          const status = String(o.orderStatus || 'Placed').toLowerCase();
+          const payment = String(o.paymentMethod || '').toLowerCase();
+          const fullySettled = computeIsFullySettled(o);
+          return status === 'placed' && payment === 'cod' && !fullySettled;
+        });
 
         if (hasPendingOrder) {
           initAlarmCycleForPendingOrder(hasPendingOrder);
@@ -767,7 +859,16 @@ export default function AllOrdersScreen() {
             }
             return [newOrder, ...prev];
           });
-          initAlarmCycleForPendingOrder(newOrder);
+
+          // ✅ UPDATED: Only ring the local alarm for COD orders that
+          //    still need an admin/chef decision. Auto-accepted online
+          //    orders are already ringing via the backend push — the
+          //    socket is just to update the list UI.
+          const status = String(newOrder.orderStatus || 'Placed').toLowerCase();
+          const payment = String(newOrder.paymentMethod || '').toLowerCase();
+          if (status === 'placed' && payment === 'cod') {
+            initAlarmCycleForPendingOrder(newOrder);
+          }
         }
       });
     }
@@ -793,8 +894,7 @@ export default function AllOrdersScreen() {
 
   const activeOrder = orders[selectedOrderIndex] || null;
 
-  const orderTimeFormatted = activeOrder?.createdAt
-    ? new Date(activeOrder.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const orderTimeFormatted = activeOrder?.createdAt    ? new Date(activeOrder.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'Today, 09:41 AM';
 
   const parsedSelections = useMemo(() => {
@@ -932,11 +1032,65 @@ export default function AllOrdersScreen() {
     currentStatus.toLowerCase() !== 'cancelled';
   const isCurrentOrderDelivered = currentStatus.toLowerCase() === 'delivered';
 
-  const isCashCollected =
-    (activeOrder?.paymentStatus || '').toLowerCase() === 'collected' ||
-    (activeOrder?.paymentStatus || '').toLowerCase() === 'paid' ||
-    currentStatus.toLowerCase().includes('cash collected') ||
-    currentStatus.toLowerCase().includes('amount collected');
+  // ==================================================================
+  // ✅ FIX #1 — CRITICAL: Refined "Cash Collected" determination
+  //
+  // The previous logic incorrectly marked Mealbox/Catering orders as
+  // "Cash Collected" the moment the 45% advance was verified, because
+  // paymentStatus became "Advance Paid (Verified)" and the string
+  // checks were too loose. This caused the chef to see a locked
+  // status dropdown ("Payment Settled • Cash Collected") and lose
+  // the ability to update delivery status while a 55% balance was
+  // still outstanding.
+  //
+  // ✅ Correct behaviour (now delegated to computeIsFullySettled):
+  //   • For Mealbox/Catering (advance-based flows):
+  //       - isCashCollected = TRUE only when the FULL total has been
+  //         collected (paymentStatus contains "Fully Paid"/"Balance
+  //         Collected" AND balanceAmountToCollect <= 0).
+  //       - A verified advance MUST NOT lock the status dropdown.
+  //   • For Homemade/QuickBites:
+  //       - COD orders: isCashCollected = TRUE only after delivery
+  //         status flips to "Cash Collected"/"Delivered".
+  //       - Online-paid orders: isCashCollected = TRUE because the
+  //         full amount was already captured by Cashfree at placement.
+  //
+  // The shared helper `computeIsFullySettled` enforces this rule for
+  // BOTH the active order view AND the pill color logic below.
+  // ==================================================================
+  const isCashCollected = useMemo(
+    () => computeIsFullySettled(activeOrder),
+    [
+      activeOrder?.paymentStatus,
+      activeOrder?.orderStatus,
+      activeOrder?.advancePaidAmount,
+      activeOrder?.balanceAmountToCollect,
+      activeOrder?.totalAmount,
+      activeOrder?.serviceType,
+    ]
+  );
+
+  // ==================================================================
+  // ✅ FIX #2 — Derived balance amount that the chef should see as
+  // the amount still owed by the customer. For Mealbox/Catering this
+  // equals the 55% balance (totalAmount - advancePaidAmount) until
+  // the balance is collected. For Homemade/QuickBites COD this
+  // equals the full total. For Homemade/QuickBites online this is 0.
+  // ==================================================================
+  const displayedBalanceAmount = useMemo(() => {
+    const bal = Number(activeOrder?.balanceAmountToCollect || 0);
+    if (isCashCollected) return 0;
+    if (bal > 0) return bal;
+    // Fallback: if backend didn't persist balance, compute from advance
+    const total = Number(activeOrder?.totalAmount || 0);
+    const adv = Number(activeOrder?.advancePaidAmount || 0);
+    return Math.max(0, Math.round((total - adv) * 100) / 100);
+  }, [
+    activeOrder?.balanceAmountToCollect,
+    activeOrder?.totalAmount,
+    activeOrder?.advancePaidAmount,
+    isCashCollected,
+  ]);
 
   // Resolved list of all upcoming delivery dates for mealbox
   const allMealboxSchedules: Array<{
@@ -1516,59 +1670,39 @@ export default function AllOrdersScreen() {
                 {orders.map((o: any, idx: number) => {
                   const isSelected = selectedOrderIndex === idx;
                   const status = (o.orderStatus || 'Placed').toLowerCase();
-                  const pStatus = (o.paymentStatus || '').toLowerCase();
-                  const oServiceType = (o.serviceType || '').toLowerCase();
-                  const isOrderMealbox = oServiceType === 'mealbox';
 
-                  let isOrderDeliveredOrCollected = false;
-
-                  if (isOrderMealbox) {
-                    const explicitSchedules = Array.isArray(o.deliverySchedules) ? o.deliverySchedules : [];
-                    const upcomingList = Array.isArray(o.upcomingDeliveries) ? o.upcomingDeliveries : [];
-
-                    const dateKeys = Array.from(new Set([
-                      ...explicitSchedules.map((s: any) => s.date),
-                      ...upcomingList,
-                    ])).filter(Boolean);
-
-                    const allSchedulesDelivered =
-                      dateKeys.length > 0 &&
-                      dateKeys.every((dateStr) => {
-                        const match = explicitSchedules.find((s: any) => s.date === dateStr);
-                        return (match?.status || '').toLowerCase() === 'delivered';
-                      });
-
-                    isOrderDeliveredOrCollected =
-                      allSchedulesDelivered ||
-                      pStatus === 'collected' ||
-                      pStatus === 'paid' ||
-                      status.includes('cash collected') ||
-                      status.includes('amount collected');
-                  } else {
-                    isOrderDeliveredOrCollected =
-                      status === 'delivered' ||
-                      status === 'completed' ||
-                      pStatus === 'collected' ||
-                      pStatus === 'paid' ||
-                      status.includes('cash collected') ||
-                      status.includes('amount collected');
-                  }
-
-                  const isPendingUnaccepted = status === 'placed';
+                  // ==================================================================
+                  // ✅ FIX #2 — Pill colour now reflects the TRUE fulfilment state
+                  // of the order, NOT merely whether the advance was paid.
+                  //
+                  // Green ("Delivered") is reserved for orders whose FULL balance
+                  // has been settled or whose status is genuinely Delivered/
+                  // Completed. A mere verified advance on a Mealbox/Catering
+                  // order keeps the pill RED (awaiting chef action) until the
+                  // chef accepts, then YELLOW (in progress), and only turns
+                  // GREEN once the balance is collected.
+                  //
+                  // We use the shared `computeIsFullySettled` helper (defined at
+                  // the top of this file) so the pill logic and the active-order
+                  // UI stay perfectly in sync.
+                  // ==================================================================
+                  const isOrderFullySettled = computeIsFullySettled(o);
+                  const isPendingUnaccepted = status === 'placed' && !isOrderFullySettled;
+                  const isCancelled = status === 'cancelled';
 
                   let pillStyle = styles.orderTabPillPending; // Red
                   let dotStyle = styles.tabIndicatorDotPending;
                   let textStyle = styles.orderTabPillTextPending;
 
-                  if (isOrderDeliveredOrCollected) {
-                    pillStyle = styles.orderTabPillDelivered; // Green
+                  if (isOrderFullySettled) {
+                    pillStyle = styles.orderTabPillDelivered; // Green — completed
                     dotStyle = styles.tabIndicatorDotDelivered;
                     textStyle = styles.orderTabPillTextDelivered;
-                  } else if (!isPendingUnaccepted && status !== 'cancelled') {
-                    pillStyle = styles.orderTabPillAccepted; // Yellow
+                  } else if (!isPendingUnaccepted && !isCancelled) {
+                    pillStyle = styles.orderTabPillAccepted; // Yellow — in progress
                     dotStyle = styles.tabIndicatorDotAccepted;
                     textStyle = styles.orderTabPillTextAccepted;
-                  } else if (status === 'cancelled') {
+                  } else if (isCancelled) {
                     pillStyle = styles.orderTabPillCancelled;
                     dotStyle = styles.tabIndicatorDotCancelled;
                     textStyle = styles.orderTabPillTextCancelled;
@@ -2747,7 +2881,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  // ✅ NEW: QuickBites banner styles (chef green theme)
+  // ✅ QuickBites banner styles (chef green theme)
   quickBitesBannerCard: {
     flexDirection: 'row',
     alignItems: 'center',

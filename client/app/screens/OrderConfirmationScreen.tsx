@@ -19,7 +19,7 @@ import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import api from "@/src/lib/api";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 // Occasion Emoji Resolver Helper
 const getOccasionEmoji = (occasionName: string) => {
@@ -147,13 +147,12 @@ export default function OrderConfirmationScreen() {
   }, [initialOrderId]);
 
   // Determine Service Flow dynamically.
-  // ✅ QuickBites is treated as a sibling of homemade (same UI), while
-  //    its stored serviceType stays "quickbites" so titles/labels can
-  //    reflect the specific flow.
   const serviceType = dbOrder?.serviceType || (params.serviceType as string) || "mealbox";
   const isQuickBitesFlow = serviceType === "quickbites";
   const isCateringFlow = serviceType === "catering";
   const isHomemadeFlow = serviceType === "homemade" || isQuickBitesFlow;
+  // ✅ Advance-based services: catering & mealbox (require Cashfree advance)
+  const isAdvanceBasedFlow = isCateringFlow || (!isHomemadeFlow && serviceType === "mealbox");
 
   // Dynamic fallback values if loading direct route params or MongoDB document
   const orderId = dbOrder?.orderId || initialOrderId;
@@ -184,9 +183,6 @@ export default function OrderConfirmationScreen() {
   const rawDurationType = dbOrder?.durationType || (params.durationType as string) || "Flexible Days (2 Days Running)";
 
   // ✅ HOMEMADE / QUICKBITES ONLY: resolve the persisted delivery date & slot
-  // from db order / route params. Both the new `deliverySlot` field and the
-  // legacy `deliveryTimeSlot` are checked so that older records created
-  // before the field existed still render.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return "";
     return String(
@@ -208,9 +204,6 @@ export default function OrderConfirmationScreen() {
   }, [dbOrder, params.deliverySlot, params.deliveryTimeSlot, isHomemadeFlow]);
 
   // ✅ Resolve the absolute estimated delivery time from the persisted order.
-  // This is the "source of truth" that was computed by the backend at the
-  // moment the order was placed. When present, we use it to render a live
-  // "arriving by X" message instead of the historical label.
   const orderPlacedAtResolved: Date | null = useMemo(() => {
     const raw = dbOrder?.orderPlacedAt;
     if (!raw) return null;
@@ -225,8 +218,7 @@ export default function OrderConfirmationScreen() {
     return isNaN(d.getTime()) ? null : d;
   }, [dbOrder]);
 
-  // ✅ QuickBites detection combines both the persisted flag AND the
-  // resolved serviceType so that downstream labels are always correct.
+  // ✅ QuickBites detection
   const isQuickBitesOrder = Boolean(dbOrder?.isQuickBites) || isQuickBitesFlow;
 
   // ✅ Compute a friendly label for the estimated delivery time
@@ -249,32 +241,51 @@ export default function OrderConfirmationScreen() {
   const totalAmount = dbOrder ? String(dbOrder.totalAmount) : ((params.totalAmount as string) || "687");
   const numericTotal = Number(totalAmount) || 0;
 
-  // ✅ UPDATED: fallback ratio changed from 0.40 → 0.45 to match the new
-  //    Mealbox/Catering advance rule. Backend always writes the real value,
-  //    so this fallback only applies to legacy orders without the field.
+  // ✅ fallback ratio 45% to match Mealbox/Catering advance rule.
   const advancePaidAmount = dbOrder?.advancePaidAmount !== undefined ? dbOrder.advancePaidAmount : Math.round(numericTotal * 0.45 * 100) / 100;
   const balanceAmountToCollect = dbOrder?.balanceAmountToCollect !== undefined ? dbOrder.balanceAmountToCollect : Math.round((numericTotal - advancePaidAmount) * 100) / 100;
 
-  // ==================================================================
-  // UTR number — COMMENTED OUT.
-  // The Cashfree payment flow does not use UTR numbers; payments are
-  // verified server-side via Cashfree's API using cashfreeOrderId and
-  // cashfreePaymentId. This variable is kept only as a reference in
-  // case a manual-verification fallback is ever re-introduced.
-  // ==================================================================
+  // UTR number — COMMENTED OUT. Cashfree flow does not use UTRs.
   const utrNumber = dbOrder?.utrNumber || "";
-  // ==================================================================
 
   const subtotal = dbOrder ? dbOrder.subtotal : Number(params.subtotal) || Number(totalAmount);
   const deliveryPrice = dbOrder ? dbOrder.deliveryPrice : Number(params.deliveryPrice) || 0;
   const discount = dbOrder ? dbOrder.discount : Number(params.discount) || 0;
   const paymentMethod = dbOrder?.paymentMethod || (params.paymentMethod as string) || "cod";
 
+  // ==================================================================
+  // ✅ Resolve the current order status & payment status. These drive
+  // the header subtitle and the "What's Next" timeline.
+  //
+  // ✅ REVISED: With the new auto-accept behaviour, Cashfree-paid orders
+  // immediately land with orderStatus = "Accepted". The admin does not
+  // need to intervene. COD orders remain "Placed" and wait for admin.
+  // ==================================================================
+  const currentOrderStatus = String(dbOrder?.orderStatus || "Placed");
+  const currentPaymentStatus = String(dbOrder?.paymentStatus || "");
+  const isAdminAccepted = Boolean(dbOrder?.adminAcceptedAt);
+
+  // ✅ Whether the customer paid the FULL amount online at placement
+  //    (this is true for Homemade/QuickBites online orders).
+  const isFullAmountPaidOnline =
+    isHomemadeFlow &&
+    String(paymentMethod).toLowerCase() === "online" &&
+    Number(advancePaidAmount) > 0 &&
+    Number(balanceAmountToCollect) <= 0;
+
+  // ✅ Whether an advance was paid online (Catering/Mealbox Cashfree)
+  const isAdvancePaidOnline =
+    isAdvanceBasedFlow &&
+    Number(advancePaidAmount) > 0 &&
+    (currentPaymentStatus.toLowerCase().includes("advance paid") ||
+      currentOrderStatus.toLowerCase() === "accepted");
+
+  // ✅ Whether this is a COD order still waiting for admin acceptance
+  const isCodAwaitingAdmin =
+    String(paymentMethod).toLowerCase() === "cod" && !isAdminAccepted;
+
   /* ─────────────────────────────────────────────────────────
-     ✅ FIX — Defensive parsing for selections / items / addons.
-     These may arrive from MongoDB already as arrays (newly created
-     orders) OR as JSON strings (legacy orders or direct route params).
-     Never throws; always returns the correct type.
+     Defensive parsing for selections / items / addons.
      ───────────────────────────────────────────────────────── */
   const parsedSelections = useMemo(() => {
     const raw = dbOrder?.selections ?? params.selections;
@@ -321,10 +332,10 @@ export default function OrderConfirmationScreen() {
     }
   }, [parsedSelections]);
 
-  const sheetAnim = useRef(new Animated.Value(400)).current;
+  const sheetAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
 
   const openSheet = () => {
-    sheetAnim.setValue(400);
+    sheetAnim.setValue(SCREEN_HEIGHT);
     Animated.timing(sheetAnim, {
       toValue: 0,
       duration: 300,
@@ -334,7 +345,7 @@ export default function OrderConfirmationScreen() {
 
   const closeSheet = () => {
     Animated.timing(sheetAnim, {
-      toValue: 400,
+      toValue: SCREEN_HEIGHT,
       duration: 250,
       useNativeDriver: true,
     }).start(() => {
@@ -376,15 +387,15 @@ export default function OrderConfirmationScreen() {
 
   const isCod = String(paymentMethod).toLowerCase() === "cod";
 
-  // ✅ Whether the order actually has an advance paid (used to decide
-  //    whether to show "Advance Paid" vs "Paid Online" labels for
-  //    Homemade/QuickBites branches — see the price breakdown JSX below).
+  // ✅ Whether the order actually has an advance paid
   const hasAdvancePaid = Number(advancePaidAmount) > 0;
 
+  // ✅ Whether the order is fully settled
+  const isFullySettled =
+    currentPaymentStatus.toLowerCase().includes("fully paid") ||
+    currentOrderStatus.toLowerCase() === "completed";
+
   // Dynamic Date Display Resolvers
-  // ✅ For homemade / quickbites: combine the selected date with the
-  // selected slot (when both exist). Falls back to the legacy
-  // "Today (within 30–45 min)" message when neither is available.
   const confirmedFirstDeliveryDate = isCateringFlow
     ? `${eventDate} • ${eventTime}`
     : isHomemadeFlow
@@ -467,11 +478,8 @@ export default function OrderConfirmationScreen() {
         selections: parsedSelections ? JSON.stringify(parsedSelections) : undefined,
         items: parsedItems ? JSON.stringify(parsedItems) : undefined,
         addons: parsedAddons ? JSON.stringify(parsedAddons) : undefined,
-        // ✅ For homemade / quickbites, forward the resolved date + slot so
-        // the Orders tab can display them without needing to refetch.
         deliverySlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
         deliveryTimeSlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
-        // ✅ Preserve the quickbites flag so downstream screens (Orders tab) can render correctly.
         isQuickBites: isQuickBitesFlow ? "true" : "false",
       },
     });
@@ -570,14 +578,15 @@ export default function OrderConfirmationScreen() {
           </Text>
 
           {/* ==================================================================
-              ✅ UPDATED HEADER SUBTITLE — Catering & Mealbox flows now show
-              a clear 3-line breakdown so the customer always knows the
-              advance already paid and the balance still due after delivery,
-              plus a short note that the balance can be paid online or in
-              cash. Homemade/QuickBites and COD flows keep their existing
-              single-line messages.
+              ✅ REVISED HEADER SUBTITLE
+              
+              Two distinct states:
+               • Cashfree-paid orders → immediately ACCEPTED (auto). No admin
+                 gating. The header reflects "Order Accepted & Preparing".
+               • COD orders → wait for admin acceptance. The header reflects
+                 "Awaiting Admin Acceptance".
               ================================================================== */}
-          {isCateringFlow || isMealBoxFlow ? (
+          {isAdvanceBasedFlow ? (
             <View style={styles.headerAdvanceBalanceBlock}>
               <Text style={styles.headerAdvanceLine}>
                 ✓ Advance collected:{" "}
@@ -588,15 +597,29 @@ export default function OrderConfirmationScreen() {
                 <Text style={styles.headerBalanceValue}>₹{balanceAmountToCollect}</Text>
               </Text>
               <Text style={styles.headerPaymentNote}>
-                You can pay the balance on delivery via UPI or cash.
+                {isAdminAccepted
+                  ? "✓ Order accepted. Chef is preparing your order."
+                  : "Awaiting admin acceptance. You'll be notified once confirmed."}
+              </Text>
+            </View>
+          ) : isFullAmountPaidOnline ? (
+            <View style={styles.headerFullPaidBlock}>
+              <Text style={styles.headerFullPaidLine}>
+                ✓ Full amount paid:{" "}
+                <Text style={styles.headerFullPaidValue}>₹{totalAmount}</Text>
+              </Text>
+              <Text style={styles.headerFullPaidNote}>
+                {isAdminAccepted
+                  ? "✓ Order accepted. Chef is preparing your order."
+                  : "Awaiting admin acceptance. You'll be notified once confirmed."}
               </Text>
             </View>
           ) : (
             <Text style={styles.orderConfirmedSubtitle}>
               {isCod
                 ? (hasAdvancePaid
-                    ? `Advance (₹${advancePaidAmount}) paid successfully.\nPlease keep ₹${balanceAmountToCollect} ready for delivery.`
-                    : `Pay ₹${balanceAmountToCollect} in cash upon delivery.\nNo online payment required right now.`)
+                    ? `Advance (₹${advancePaidAmount}) paid successfully.\nPlease keep ₹${balanceAmountToCollect} ready for delivery.\n${isAdminAccepted ? "Order accepted by admin." : "Awaiting admin acceptance."}`
+                    : `Pay ₹${balanceAmountToCollect} in cash upon delivery.\nNo online payment required right now.\n${isAdminAccepted ? "Order accepted by admin." : "Awaiting admin acceptance."}`)
                 : `Yay! Your payment was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
             </Text>
           )}
@@ -616,21 +639,7 @@ export default function OrderConfirmationScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* ==================================================================
-              UTR Reference pill — COMMENTED OUT.
-              The Cashfree payment flow does not use UTR numbers; the payment
-              is verified server-side via Cashfree's API (cashfreeOrderId /
-              cashfreePaymentId), so there is no manual UTR to display.
-              Kept here as a reference in case a manual-verification fallback
-              is ever re-introduced.
-              ==================================================================
-          {utrNumber ? (
-            <View style={[styles.orderIdBadgePill, { marginTop: 8, borderColor: "rgba(16, 124, 65, 0.4)" }]}>
-              <Text style={[styles.orderIdLabelText, { color: "#34D399" }]}>UTR Ref</Text>
-              <Text style={styles.orderIdValueText}>{utrNumber}</Text>
-            </View>
-          ) : null}
-          */}
+          {/* UTR Reference pill — COMMENTED OUT for Cashfree flow */}
         </View>
       </View>
 
@@ -643,7 +652,7 @@ export default function OrderConfirmationScreen() {
         ]}
       >
         <View>
-          {/* 1. DYNAMIC ORDER SUMMARY CARD (HOMEMADE / QUICKBITES / CATERING / MEALBOX) */}
+          {/* 1. DYNAMIC ORDER SUMMARY CARD */}
           {isHomemadeFlow ? (
             <View style={styles.cateringMainSummaryCard}>
               <View style={[styles.cateringOccasionTopStrip, { backgroundColor: "rgba(22, 99, 72, 0.08)", borderColor: "rgba(22, 99, 72, 0.16)" }]}>
@@ -663,7 +672,7 @@ export default function OrderConfirmationScreen() {
                 <Text style={styles.homemadeChefBadgeText}>Cooked by {chefName}</Text>
               </View>
 
-              {/* ✅ HOMEMADE / QUICKBITES DELIVERY DATE & SLOT STRIP */}
+              {/* HOMEMADE / QUICKBITES DELIVERY DATE & SLOT STRIP */}
               {(estimatedDeliveryAtResolved || homemadeDeliveryDateResolved || homemadeDeliverySlotResolved) ? (
                 <View style={styles.homemadeConfirmedDeliveryStripContainer}>
                   {!!homemadeDeliveryDateResolved && (
@@ -772,22 +781,21 @@ export default function OrderConfirmationScreen() {
 
               <View style={styles.solidDivider} />
 
-              {/* ✅ Dynamic payment breakdown for Homemade / QuickBites:
-                  - If advance was paid (user chose online full payment),
-                    show the online amount and 0 balance.
-                  - If no advance was paid (user chose COD), show ₹0 online
-                    and the full amount due on delivery. */}
               <View style={styles.priceBreakdownRow}>
                 <Text style={styles.breakdownLabelText}>
-                  {hasAdvancePaid ? "Paid Online" : "Advance Paid"}
+                  {hasAdvancePaid ? "Paid Online (Full)" : "Paid Online"}
                 </Text>
-                <Text style={[styles.breakdownValueText, { color: "#166348" }]}>₹{advancePaidAmount}</Text>
+                <Text style={[styles.breakdownValueText, { color: "#166348" }]}>
+                  ₹{hasAdvancePaid ? numericTotal : 0}
+                </Text>
               </View>
               <View style={styles.priceBreakdownRow}>
                 <Text style={styles.breakdownLabelText}>
-                  {hasAdvancePaid ? "Balance to Collect upon Delivery" : "Pay on Delivery"}
+                  {hasAdvancePaid ? "Pay on Delivery" : "Pay on Delivery"}
                 </Text>
-                <Text style={styles.breakdownValueText}>₹{balanceAmountToCollect}</Text>
+                <Text style={styles.breakdownValueText}>
+                  ₹{hasAdvancePaid ? 0 : numericTotal}
+                </Text>
               </View>
 
               <View style={styles.solidDivider} />
@@ -880,7 +888,6 @@ export default function OrderConfirmationScreen() {
 
               <View style={styles.solidDivider} />
 
-              {/* ✅ UPDATED to 45% advance / 55% balance */}
               <View style={styles.priceBreakdownRow}>
                 <Text style={styles.breakdownLabelText}>Advance Paid (45%)</Text>
                 <Text style={[styles.breakdownValueText, { color: "#166538" }]}>₹{advancePaidAmount}</Text>
@@ -947,7 +954,6 @@ export default function OrderConfirmationScreen() {
 
               <View style={styles.solidDivider} />
 
-              {/* ✅ UPDATED to 45% advance / 55% balance */}
               <View style={styles.priceBreakdownRow}>
                 <Text style={styles.breakdownLabelText}>Advance Paid (45%)</Text>
                 <Text style={[styles.breakdownValueText, { color: "#166538" }]}>₹{advancePaidAmount}</Text>
@@ -1017,7 +1023,10 @@ export default function OrderConfirmationScreen() {
             </View>
           )}
 
-          {/* 3. What's Next Tracker Card */}
+          {/* 3. What's Next Tracker Card
+              ✅ REVISED: For Cashfree-paid orders (auto-accepted), the
+              first step is "Order Accepted". For COD orders, the first
+              step is "Awaiting Admin Acceptance". */}
           <View style={styles.whatsNextCard}>
             <View style={styles.whatsNextHeaderRow}>
               <Text style={styles.cardHeaderTitle}>What's Next?</Text>
@@ -1033,6 +1042,7 @@ export default function OrderConfirmationScreen() {
             </View>
 
             <View style={styles.timelineContainer}>
+              {/* STEP 1 — Order Placed & Payment Status */}
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.completedStepCircle}>
@@ -1042,23 +1052,65 @@ export default function OrderConfirmationScreen() {
                 </View>
                 <View style={styles.timelineContentRight}>
                   <Text style={styles.activeStepTitle}>
-                    {isCateringFlow ? "Booking Confirmed & Advance Paid" : "Order Confirmed & Advance Paid"}
+                    {isAdvanceBasedFlow
+                      ? "Order Placed & Advance Paid"
+                      : isFullAmountPaidOnline
+                      ? "Order Placed & Full Amount Paid"
+                      : "Order Placed"}
                   </Text>
                   <Text style={styles.stepTimestampText}>
-                    {isCateringFlow ? `Event Date: ${confirmedFirstDeliveryDate}` : `1st Delivery: ${confirmedFirstDeliveryDate}`}
+                    {isAdvanceBasedFlow
+                      ? `Advance ₹${advancePaidAmount} received • Balance ₹${balanceAmountToCollect} due on delivery`
+                      : isFullAmountPaidOnline
+                      ? `Full amount ₹${totalAmount} received`
+                      : `Pay ₹${balanceAmountToCollect} on delivery`}
                   </Text>
                 </View>
               </View>
 
+              {/* STEP 2 — Admin Acceptance / Auto-Acceptance
+                  ✅ REVISED:
+                    • Cashfree orders → step is auto-completed (isAdminAccepted is true)
+                    • COD orders → step is current/pending until admin accepts */}
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
-                  <View style={styles.currentStepCircle}>
-                    <MaterialCommunityIcons name="chef-hat" size={16} color="#15803D" />
+                  <View style={isAdminAccepted ? styles.completedStepCircle : styles.currentStepCircle}>
+                    {isAdminAccepted ? (
+                      <Ionicons name="checkmark" size={13} color="#FAF8F5" />
+                    ) : (
+                      <Ionicons name="shield-checkmark-outline" size={14} color="#15803D" />
+                    )}
+                  </View>
+                  <View style={isAdminAccepted ? styles.activeTimelineLine : styles.inactiveTimelineLine} />
+                </View>
+                <View style={styles.timelineContentRight}>
+                  <Text style={isAdminAccepted ? styles.activeStepTitle : styles.currentStepTitle}>
+                    {isAdminAccepted
+                      ? (String(paymentMethod).toLowerCase() === "online"
+                          ? "Order Auto-Accepted (Payment Confirmed)"
+                          : "Order Accepted by Admin")
+                      : "Awaiting Admin Acceptance"}
+                  </Text>
+                  <Text style={styles.stepSubtitleText}>
+                    {isAdminAccepted
+                      ? (String(paymentMethod).toLowerCase() === "online"
+                          ? "Your payment was verified instantly and the order has been forwarded to the kitchen."
+                          : "Our team has accepted your order and forwarded it to the kitchen.")
+                      : "Our team is reviewing your COD order. You'll be notified as soon as it's accepted."}
+                  </Text>
+                </View>
+              </View>
+
+              {/* STEP 3 — Kitchen Preparation */}
+              <View style={styles.timelineStepRow}>
+                <View style={styles.timelineLeftColumn}>
+                  <View style={styles.inactiveStepCircle}>
+                    <MaterialCommunityIcons name="chef-hat" size={16} color="#9EA8A3" />
                   </View>
                   <View style={styles.inactiveTimelineLine} />
                 </View>
                 <View style={styles.timelineContentRight}>
-                  <Text style={styles.currentStepTitle}>
+                  <Text style={styles.inactiveStepTitle}>
                     {isCateringFlow
                       ? "Platter Preparation by Catering Chefs"
                       : (isHomemadeFlow ? `Cooking by Chef ${chefName}` : "Preparing by Chef")}
@@ -1066,11 +1118,12 @@ export default function OrderConfirmationScreen() {
                   <Text style={styles.stepSubtitleText}>
                     {isCateringFlow
                       ? "Fresh ingredients are sourced and kitchen staff prepares dishes right on schedule."
-                      : (isHomemadeFlow ? "The home chef has received your order and started freshly preparing your meals." : "We will notify you once your meals are being prepared")}
+                      : (isHomemadeFlow ? "The home chef has received your order and started freshly preparing your meals." : "We will notify you once your meals are being prepared.")}
                   </Text>
                 </View>
               </View>
 
+              {/* STEP 4 — Delivery */}
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.inactiveStepCircle}>
@@ -1090,6 +1143,7 @@ export default function OrderConfirmationScreen() {
                 </View>
               </View>
 
+              {/* STEP 5 — Balance Collection / Final Handoff */}
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.inactiveStepCircle}>
@@ -1098,10 +1152,18 @@ export default function OrderConfirmationScreen() {
                 </View>
                 <View style={styles.timelineContentRight}>
                   <Text style={styles.inactiveStepTitle}>
-                    {isCateringFlow ? "Balance Collection & Feast" : "Balance Collection & Delivery"}
+                    {isAdvanceBasedFlow
+                      ? "Balance Collection & Feast"
+                      : isFullAmountPaidOnline
+                      ? "Delivery Handover"
+                      : "Balance Collection & Delivery"}
                   </Text>
                   <Text style={styles.stepSubtitleText}>
-                    Pay balance ₹{balanceAmountToCollect} upon delivery and enjoy your fresh meal!
+                    {isAdvanceBasedFlow
+                      ? `Pay balance ₹${balanceAmountToCollect} upon delivery and enjoy your fresh meal!`
+                      : isFullAmountPaidOnline
+                      ? "Nothing to pay on delivery — your order is fully paid. Enjoy your meal!"
+                      : `Pay ₹${balanceAmountToCollect} upon delivery and enjoy your fresh meal!`}
                   </Text>
                 </View>
               </View>
@@ -1130,14 +1192,25 @@ export default function OrderConfirmationScreen() {
       </ScrollView>
 
       {/* Dynamic Selections Preview Modal */}
-      <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closeSheet}>
-        <BlurView intensity={30} tint="dark" style={styles.modalOverlay}>
+      <Modal
+        visible={showPreviewModal}
+        transparent
+        animationType="none"
+        onRequestClose={closeSheet}
+        statusBarTranslucent
+      >
+        <View style={styles.modalOverlay}>
+          <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFillObject} />
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeSheet} />
 
           <Animated.View
             style={[
               styles.previewModalContent,
-              { transform: [{ translateY: sheetAnim }], height: "82%" },
+              {
+                transform: [{ translateY: sheetAnim }],
+                maxHeight: SCREEN_HEIGHT * 0.92,
+                paddingBottom: Math.max(insets.bottom, 20) + 100,
+              },
             ]}
           >
             <View style={styles.drawerHandle} />
@@ -1158,7 +1231,6 @@ export default function OrderConfirmationScreen() {
               </View>
             </View>
 
-            {/* MealBox Tab Pills Header (Mealbox only) */}
             {isMealBoxFlow && parsedSelections && !Array.isArray(parsedSelections) && (
               <View style={styles.pillTabsWrapperBlock}>
                 {Object.keys(parsedSelections).map((dayKey) => {
@@ -1211,7 +1283,12 @@ export default function OrderConfirmationScreen() {
               </View>
             )}
 
-            <ScrollView style={{ width: "100%", marginTop: 8 }} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={{ width: "100%", flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 20 }}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+            >
               {isCateringFlow ? (
                 <>
                   {Array.isArray(parsedSelections) &&
@@ -1413,7 +1490,7 @@ export default function OrderConfirmationScreen() {
               </TouchableOpacity>
             </View>
           </Animated.View>
-        </BlurView>
+        </View>
       </Modal>
     </View>
   );
@@ -1485,7 +1562,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginBottom: 18,
   },
-  /* ✅ NEW: Advance / Balance header block used only for Catering & Mealbox */
+  /* ✅ Advance / Balance header block — Catering & Mealbox */
   headerAdvanceBalanceBlock: {
     alignItems: "center",
     marginBottom: 16,
@@ -1522,6 +1599,38 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   headerPaymentNote: {
+    fontSize: 11.5,
+    color: "#D1FAE5",
+    fontWeight: "500",
+    textAlign: "center",
+    lineHeight: 15,
+    fontStyle: "italic",
+  },
+  /* ✅ Full-payment header block — Homemade/QuickBites online */
+  headerFullPaidBlock: {
+    alignItems: "center",
+    marginBottom: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: "rgba(16, 124, 65, 0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(167, 243, 208, 0.35)",
+    alignSelf: "stretch",
+  },
+  headerFullPaidLine: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#A7F3D0",
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  headerFullPaidValue: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+  headerFullPaidNote: {
     fontSize: 11.5,
     color: "#D1FAE5",
     fontWeight: "500",
@@ -1710,7 +1819,7 @@ const styles = StyleSheet.create({
     color: "#0B261D",
   },
 
-  /* ✅ HOMEMADE / QUICKBITES CONFIRMED DELIVERY DATE & SLOT STRIP */
+  /* HOMEMADE / QUICKBITES CONFIRMED DELIVERY DATE & SLOT STRIP */
   homemadeConfirmedDeliveryStripContainer: {
     flexDirection: "row",
     alignItems: "center",

@@ -1093,6 +1093,44 @@ const HomeMadeOrderReview = () => {
           <View style={styles.billSummaryOuterContainer}>
             <Text style={styles.billSummaryHeading}>Bill Summary</Text>
 
+            {editableItems.length > 0 && (
+              <View style={styles.billItemsSimpleListBlock}>
+                {editableItems.map((item, idx) => {
+                  const itemLineTotal = (Number(item.price) || 0) * (Number(item.quantity) || 1);
+                  return (
+                    <View
+                      key={`bill-line-${item.id}-${idx}`}
+                      style={styles.billItemSimpleRow}
+                    >
+                      <View style={styles.billItemSimpleLeftCol}>
+                        <View
+                          style={[
+                            styles.billItemVegDot,
+                            !item.isVeg && styles.billItemNonVegDot,
+                          ]}
+                        />
+                        <Text
+                          style={styles.billItemSimpleNameText}
+                          numberOfLines={2}
+                        >
+                          {item.name}
+                          <Text style={styles.billItemSimpleQtyText}>
+                            {'  '}× {item.quantity}
+                          </Text>
+                        </Text>
+                      </View>
+
+                      <Text style={styles.billItemSimpleLineTotalText}>
+                        ₹{itemLineTotal}
+                      </Text>
+                    </View>
+                  );
+                })}
+
+                <View style={styles.billItemsDivider} />
+              </View>
+            )}
+
             <View style={styles.billRow}>
               <Text style={styles.billRowLabel}>
                 Item Total ({computedTotalItems} {computedTotalItems === 1 ? 'item' : 'items'})
@@ -2450,6 +2488,61 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#0F382A',
     letterSpacing: -0.3,
+  },
+
+  /* ✅ Simple per-item list inside the Bill Summary (no cards) */
+  billItemsSimpleListBlock: {
+    marginBottom: 10,
+  },
+  billItemSimpleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  billItemSimpleLeftCol: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flex: 1,
+    paddingRight: 10,
+  },
+  billItemVegDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 2,
+    borderWidth: 1,
+    borderColor: '#16A34A',
+    backgroundColor: '#FFFFFF',
+    marginRight: 8,
+    marginTop: 5,
+  },
+  billItemNonVegDot: {
+    borderColor: '#DC2626',
+  },
+  billItemSimpleNameText: {
+    fontSize: 12.5,
+    color: '#0B261D',
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 18,
+  },
+  billItemSimpleQtyText: {
+    fontSize: 12.5,
+    color: '#5B756C',
+    fontWeight: '600',
+  },
+  billItemSimpleLineTotalText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F382A',
+    textAlign: 'right',
+    minWidth: 60,
+  },
+  billItemsDivider: {
+    height: 1,
+    backgroundColor: 'rgba(15, 56, 42, 0.08)',
+    marginTop: 8,
+    marginBottom: 6,
   },
 
   /* FRESHNESS BANNER */

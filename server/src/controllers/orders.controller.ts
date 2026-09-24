@@ -85,9 +85,8 @@ const calculateSlotTargetTime = (dateStr: string, slotStr: string): Date => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ NEW HELPER — Safely parse a value that may arrive as a JSON
-   string (from multipart/form-data) or already as an array/object
-   (from application/json). Never throws.
+   ✅ HELPER — Safely parse a value that may arrive as a JSON
+   string or already as an array/object. Never throws.
    ───────────────────────────────────────────────────────────────── */
 const parseIfJsonString = (value: any, fallback: any = null) => {
   if (value === undefined || value === null) return fallback;
@@ -102,9 +101,7 @@ const parseIfJsonString = (value: any, fallback: any = null) => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ NEW HELPER — Safely parse a numeric coordinate value that
-   may arrive as a string from multipart/form-data. Returns
-   undefined for invalid/empty values so MongoDB does not store NaN.
+   ✅ HELPER — Safely parse a numeric coordinate value.
    ───────────────────────────────────────────────────────────────── */
 const parseNumberOrUndefined = (val: any): number | undefined => {
   if (val === undefined || val === null || val === "") return undefined;
@@ -113,9 +110,7 @@ const parseNumberOrUndefined = (val: any): number | undefined => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ NEW HELPER — Format an absolute Date into "4:30 PM" style string.
-   Used to build the delivery slot label. This is the ONLY format
-   that will be persisted for QuickBites / homemade delivery slots.
+   ✅ HELPER — Format an absolute Date into "4:30 PM".
    ───────────────────────────────────────────────────────────────── */
 const formatTimeShort = (d: Date): string => {
   try {
@@ -130,8 +125,7 @@ const formatTimeShort = (d: Date): string => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ NEW HELPER — Format an absolute Date into "17 Sep" style string.
-   Used only for the delivery date label.
+   ✅ HELPER — Format an absolute Date into "17 Sep".
    ───────────────────────────────────────────────────────────────── */
 const formatDateShort = (d: Date): string => {
   try {
@@ -141,6 +135,103 @@ const formatDateShort = (d: Date): string => {
   } catch {
     return "";
   }
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ HELPER — Determine whether a service type is advance-based.
+   ───────────────────────────────────────────────────────────────── */
+const isAdvanceBasedService = (serviceType: string): boolean => {
+  const s = String(serviceType || "").toLowerCase();
+  return s === "catering" || s === "mealbox";
+};
+
+const isHomemadeLikeService = (serviceType: string): boolean => {
+  const s = String(serviceType || "").toLowerCase();
+  return s === "homemade" || s === "quickbites";
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ HELPER — Build the initial orderStatus for a freshly-created
+   order based on service type and payment method.
+
+   ✅ REVISED BUSINESS RULE:
+     • Any ONLINE-paid order (Cashfree success) is AUTO-ACCEPTED
+       immediately. The chef is notified right away — the admin does
+       NOT need to tap "Accept".
+         → orderStatus = "Accepted"
+         → adminAcceptedAt = orderPlacedAt
+         → adminAcceptedBy = "system:cashfree"
+
+     • Any COD order (Homemade/QuickBites only) starts as "Placed"
+       and waits for the ADMIN to accept. The chef is NOT notified
+       until the admin accepts.
+         → orderStatus = "Placed"
+         → adminAcceptedAt = null
+         → adminAcceptedBy = ""
+
+   The `autoAccepted` boolean returned by this helper tells the
+   caller whether it should immediately notify the chef.
+   ───────────────────────────────────────────────────────────────── */
+const buildInitialStatuses = (
+  serviceType: string,
+  paymentMethod: string,
+  totalAmount: number,
+  advancePaidAmount: number
+): {
+  orderStatus: string;
+  paymentStatus: string;
+  isAdvanceVerified: boolean;
+  autoAccepted: boolean;
+} => {
+  const isAdvance = isAdvanceBasedService(serviceType);
+  const isHomemadeLike = isHomemadeLikeService(serviceType);
+  const isOnline = String(paymentMethod || "").toLowerCase() === "online";
+
+  if (isAdvance) {
+    // Catering / Mealbox — always online (Cashfree advance), auto-accept.
+    if (isOnline && advancePaidAmount > 0) {
+      return {
+        orderStatus: "Accepted",
+        paymentStatus: "Advance Paid (Verified)",
+        isAdvanceVerified: true,
+        autoAccepted: true,
+      };
+    }
+    // Fallback (should not happen in the new flow)
+    return {
+      orderStatus: "Placed",
+      paymentStatus: "Verification Pending",
+      isAdvanceVerified: false,
+      autoAccepted: false,
+    };
+  }
+
+  if (isHomemadeLike) {
+    if (isOnline) {
+      // Homemade / QuickBites online — auto-accept (paid in full).
+      return {
+        orderStatus: "Accepted",
+        paymentStatus: "Paid",
+        isAdvanceVerified: true,
+        autoAccepted: true,
+      };
+    }
+    // COD — wait for admin acceptance.
+    return {
+      orderStatus: "Placed",
+      paymentStatus: "Payment Pending (COD)",
+      isAdvanceVerified: true,
+      autoAccepted: false,
+    };
+  }
+
+  // Fallback for unknown service types
+  return {
+    orderStatus: "Placed",
+    paymentStatus: "Verification Pending",
+    isAdvanceVerified: false,
+    autoAccepted: false,
+  };
 };
 
 const uploadBufferToCloudinary = (fileBuffer: Buffer) => {
@@ -163,12 +254,8 @@ const uploadBufferToCloudinary = (fileBuffer: Buffer) => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ UPDATED — Local wrapper now delegates to the centralized
-   `sendExpoPush` helper from ../utils/expoPush.
-   Signature kept IDENTICAL so all existing call sites
-   (customer pushes in feedback cron + order flows) keep working
-   with zero changes. Uses the OS default sound (NOT the alarm)
-   so customer-facing notifications remain unchanged.
+   ✅ Wrapper delegating to the centralized `sendExpoPush` helper.
+   Uses the OS default sound (NOT the alarm).
    ───────────────────────────────────────────────────────────────── */
 const sendExpoPushNotification = async (
   pushToken: string,
@@ -187,10 +274,8 @@ const sendExpoPushNotification = async (
 };
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ NEW HELPER — Human-readable title + body for customer-facing
-   order status push notifications. Maps every status value that
-   the admin/chef dropdowns can produce to a friendly message.
-   Falls back to a generic message for any unmapped status.
+   ✅ HELPER — Human-readable title + body for customer-facing
+   order status push notifications.
    ───────────────────────────────────────────────────────────────── */
 const getCustomerStatusMessage = (
   rawStatus: string,
@@ -199,7 +284,20 @@ const getCustomerStatusMessage = (
   const s = String(rawStatus || "").trim().toLowerCase();
   const shortId = orderId ? `#${orderId}` : "";
 
-  // Accepted / Prep started
+  if (s === "advance paid" || s === "advance paid (verified)") {
+    return {
+      title: "✅ Advance Payment Received",
+      body: `We've received your advance for order ${shortId}. Your order is confirmed and being prepared.`,
+    };
+  }
+
+  if (s === "full amount paid" || s === "paid") {
+    return {
+      title: "✅ Payment Received in Full",
+      body: `Your full payment for order ${shortId} was successful. Your order is confirmed and being prepared.`,
+    };
+  }
+
   if (s === "accepted") {
     return {
       title: "✅ Order Accepted",
@@ -207,7 +305,6 @@ const getCustomerStatusMessage = (
     };
   }
 
-  // Preparing
   if (s === "preparing" || s === "prep") {
     return {
       title: "👨‍🍳 Order Being Prepared",
@@ -215,7 +312,6 @@ const getCustomerStatusMessage = (
     };
   }
 
-  // Packed
   if (
     s === "prepared & packing" ||
     s === "prepared and packing" ||
@@ -228,7 +324,6 @@ const getCustomerStatusMessage = (
     };
   }
 
-  // Out for delivery
   if (s === "out for delivery" || s === "out_for_delivery" || s === "dispatched") {
     return {
       title: "🚴 Out for Delivery",
@@ -236,7 +331,6 @@ const getCustomerStatusMessage = (
     };
   }
 
-  // Delivered / completed
   if (s === "delivered" || s === "completed") {
     return {
       title: "🎉 Order Delivered",
@@ -244,7 +338,6 @@ const getCustomerStatusMessage = (
     };
   }
 
-  // Cancelled
   if (s === "cancelled" || s === "canceled") {
     return {
       title: "❌ Order Cancelled",
@@ -252,7 +345,6 @@ const getCustomerStatusMessage = (
     };
   }
 
-  // Cash collected / fully paid
   if (
     s === "cash collected" ||
     s === "cash_collected" ||
@@ -266,7 +358,6 @@ const getCustomerStatusMessage = (
     };
   }
 
-  // Paused / Unpaused (mealbox schedule)
   if (s === "paused") {
     return {
       title: "⏸ Delivery Paused",
@@ -280,11 +371,82 @@ const getCustomerStatusMessage = (
     };
   }
 
-  // Generic fallback for any unmapped status
   return {
     title: "📋 Order Update",
     body: `Your order ${shortId} status: ${rawStatus}`,
   };
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ HELPER — Resolve the chef's user document and push token.
+   ───────────────────────────────────────────────────────────────── */
+const resolveChefUser = async (
+  order: any
+): Promise<{ chefUserDoc: any | null; resolvedChefUserId: string | null }> => {
+  const chefIdentifier = order?.chefId;
+  let chefUserDoc: any = null;
+  let resolvedChefUserId: string | null = null;
+
+  if (chefIdentifier && mongoose.Types.ObjectId.isValid(chefIdentifier)) {
+    const chefDoc = await Chef.findById(chefIdentifier);
+    if (chefDoc?.user) {
+      chefUserDoc = await User.findById(chefDoc.user);
+      resolvedChefUserId = String(chefDoc.user);
+    }
+  }
+  if (!chefUserDoc && order?.chefName) {
+    const chefDoc = await Chef.findOne({ name: order.chefName });
+    if (chefDoc?.user) {
+      chefUserDoc = await User.findById(chefDoc.user);
+      resolvedChefUserId = String(chefDoc.user);
+    }
+  }
+  return { chefUserDoc, resolvedChefUserId };
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ HELPER — Fire the chef alarm push for an order.
+   ───────────────────────────────────────────────────────────────── */
+const notifyChefAboutOrder = async (order: any) => {
+  try {
+    const { chefUserDoc, resolvedChefUserId } = await resolveChefUser(order);
+    const chefIdentifier = order?.chefId;
+
+    io.emit("new_chef_order", order);
+    io.emit("order_updated", order);
+
+    if (chefUserDoc?._id) {
+      io.to(String(chefUserDoc._id)).emit("new_chef_order", order);
+      io.to(String(chefUserDoc._id)).emit("order_updated", order);
+    }
+    if (chefIdentifier) {
+      io.to(String(chefIdentifier)).emit("new_chef_order", order);
+      io.to(String(chefIdentifier)).emit("order_updated", order);
+    }
+    if (order?.userId) {
+      io.to(String(order.userId)).emit("order_updated", order);
+    }
+
+    if (chefUserDoc?.pushToken && isValidExpoToken(chefUserDoc.pushToken)) {
+      await sendExpoPush({
+        token: String(chefUserDoc.pushToken),
+        title: `🔔 New Order ${order.orderId}`,
+        body: `${order.userName || "Customer"} → ₹${order.totalAmount}. Tap to accept now!`,
+        data: {
+          orderId: order.orderId,
+          screen: "chef-orders",
+          role: "chef",
+          chefId: resolvedChefUserId || String(chefUserDoc._id || ""),
+        },
+        sound: ORDER_ALARM_SOUND,
+        channelId: CHEF_ORDER_CHANNEL_ID,
+        priority: "max",
+        vibrate: [0, 600, 300, 600, 300],
+      });
+    }
+  } catch (err) {
+    console.log("notifyChefAboutOrder warning:", err);
+  }
 };
 
 // Background cron reminder for feedbacks
@@ -336,56 +498,26 @@ setInterval(async () => {
 /**
  * POST /api/orders/create
  *
- * IMPORTANT: When an order is created, it goes ONLY to the Admin.
- * The chef is NOT notified here. Chef receives the order only after
- * admin verifies advance payment via /verify-advance.
+ * ✅ REVISED (Auto-Accept for Cashfree payments):
  *
- * ✅ QuickBites flow:
- *    When serviceType === "quickbites" (or isQuickBites === "true", or the
- *    category normalizes to "quickbites"), the order is saved through the
- *    dedicated QuickBitesOrderModel — a discriminated sibling of homemade
- *    that reuses the same schema but persists serviceType = "quickbites"
- *    on the shared Orders collection. Every downstream behaviour
- *    (admin alarm, chef alarm on verify, status timeline, feedback cron)
- *    stays identical to a homemade order.
+ * 1) ONLINE-PAID ORDERS (Cashfree success) ARE AUTO-ACCEPTED:
+ *    Regardless of service type, when the Cashfree payment succeeds:
+ *      → orderStatus = "Accepted"
+ *      → adminAcceptedAt = now
+ *      → adminAcceptedBy = "system:cashfree"
+ *      → CHEF IS NOTIFIED IMMEDIATELY (alarm push + socket)
+ *    This applies to:
+ *      • Catering / Mealbox  (45% advance paid)
+ *      • Homemade / QuickBites (100% paid online)
  *
- * ✅ The controller computes and persists three additional timestamp
- *    fields on the order document at the exact moment of order placement:
+ * 2) COD ORDERS (Homemade / QuickBites only) STILL WAIT FOR ADMIN:
+ *      → orderStatus = "Placed"
+ *      → adminAcceptedAt = null
+ *      → chef is NOT notified until the admin taps "Accept"
  *
- *      • orderPlacedAt          → the server time when createOrder ran.
- *      • estimatedDeliveryAt    → absolute Date when delivery is expected.
- *      • deliveryWindowMinutes  → the window size (75 for QuickBites, else 0).
- *
- *    ✅ The human-readable delivery slot label that gets stored in
- *       MongoDB is now ONLY the time in "4:30 PM" format (e.g. "4:30 PM"),
- *       never the long "ASAP (Within 75 minutes...)" string.
- *
- *    ✅ latitude & longitude are also persisted on the order and
- *       on each delivery schedule so downstream map actions can pin
- *       the exact location.
- *
- *    ✅ After the order is saved, EVERY user with isAdmin === true
- *       receives an Expo push with the bundled alarm.mp3 sound +
- *       admin_orders_alarm channel + data.role = "admin". This makes
- *       the admin's phone ring even when the app is fully closed.
- *
- * ✅ NEW (Option A): Homemade & QuickBites orders are AUTO-VERIFIED
- *    inside this handler. Because these flows don't require a manual
- *    45% advance:
- *      • If the user paid the full amount online via Cashfree, the
- *        order lands with paymentStatus = "Paid" (Cashfree already
- *        verified server-side).
- *      • If the user chose Cash on Delivery, the order lands with
- *        paymentStatus = "Payment Pending (COD)" and isAdvanceVerified
- *        = true (nothing to verify).
- *    In BOTH cases we immediately:
- *      • flip isAdvanceVerified to true
- *      • emit "advance_payment_verified", "new_chef_order" and
- *        "order_updated" socket events
- *      • fire the chef alarm push (alarm.mp3 + chef_orders_alarm
- *        channel + priority "max")
- *    Mealbox & Catering orders are UNAFFECTED — they still require
- *    the admin to tap "Payment Received" to notify the chef.
+ * 3) ADMIN ALARM STILL FIRES:
+ *    Every admin always receives the alarm push on new orders
+ *    (whether online or COD) so they know an order has arrived.
  */
 export const createOrder = async (req: AuthRequest, res: Response) => {
   try {
@@ -407,7 +539,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       menuImage,
       durationType,
       deliveryTimeSlot,
-      // ✅ New: top-level delivery slot label for homemade (mirror of deliveryTimeSlot)
       deliverySlot,
       addressDetails,
       deliveryAddress,
@@ -433,16 +564,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       deliveryType,
       pricePerPlate,
       addons,
-      // ✅ QuickBites flow hint + optional client-provided absolute timestamp
       isQuickBites,
       estimatedDeliveryAtMs,
       deliveryWindowMinutes,
-      // ✅ geo coordinates for map pinning
       latitude,
       longitude,
     } = req.body;
 
-    // ✅ Normalize coordinates once (works for JSON and multipart/form-data)
     const resolvedLatitude = parseNumberOrUndefined(latitude);
     const resolvedLongitude = parseNumberOrUndefined(longitude);
 
@@ -494,7 +622,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Handle Screenshot Upload if provided via multer
     let screenshotData = { url: "", cloudinaryId: "" };
     const uploadedFile = req.file;
     if (uploadedFile) {
@@ -515,10 +642,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     const effectiveChefName = chefName || restaurantName || "";
     const effectiveRestaurantName = restaurantName || chefName || "";
 
-    // ✅ Normalize the incoming serviceType to lowercase so we always
-    // compare apples-to-apples when choosing the correct discriminator.
     const resolvedServiceType = serviceType ? String(serviceType).toLowerCase() : "mealbox";
-
     const resolvedAddress = String(deliveryAddress || addressDetails || "");
 
     const numericTotal = Number(totalAmount) || 0;
@@ -545,13 +669,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     }
 
     // ────────────────────────────────────────────────────────────────
-    // ✅ Compute absolute delivery timestamps at order placement.
-    //    • orderPlacedAt = server "now"
-    //    • QuickBites = serviceType === "quickbites" OR isQuickBites === "true"
-    //      OR category normalizes to "quickbites".
-    //      → estimatedDeliveryAt = now + 75 min (or supplied window)
-    //    • Else if client sent an absolute ms timestamp: use it.
-    //    • Else: leave estimatedDeliveryAt unset.
+    // Compute absolute delivery timestamps
     // ────────────────────────────────────────────────────────────────
     const orderPlacedAt = new Date();
     const quickBitesFlag =
@@ -563,7 +681,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     let resolvedEstimatedDeliveryAt: Date | undefined = undefined;
 
     if (quickBitesFlag) {
-      // Default to 75 minutes when the client didn't specify
       if (!resolvedWindowMinutes || resolvedWindowMinutes <= 0) {
         resolvedWindowMinutes = 75;
       }
@@ -577,11 +694,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // ✅ Format the human-readable delivery slot label so downstream UIs
-    // can display a fixed string even without reading the Date.
-    //
-    // ✅ The slot label is now ALWAYS just the time — "4:30 PM" —
-    // never the long "ASAP (Within 75 minutes…)" string.
     let finalDeliverySlotLabel = String(deliverySlot || deliveryTimeSlot || "").trim();
     let finalDeliveryDateLabel = String(deliveryDate || "").trim();
 
@@ -590,11 +702,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       const dateStr = formatDateShort(orderPlacedAt);
 
       if (quickBitesFlag) {
-        // ✅ Just the time, e.g. "4:30 PM"
         finalDeliveryDateLabel = `Today, ${dateStr}`;
         finalDeliverySlotLabel = timeStr;
       } else if (!finalDeliverySlotLabel) {
-        // ✅ Just the time
         finalDeliverySlotLabel = timeStr;
       }
       if (!finalDeliveryDateLabel) {
@@ -602,39 +712,42 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // ✅ Compute auto-verification flags for Homemade/QuickBites.
-    //    These flows don't require a manual 45% advance check:
-    //      • If the user paid online (Cashfree) → payment already verified server-side.
-    //      • If the user chose COD → nothing to verify.
-    const isHomemadeOrQuickBites =
-      resolvedServiceType === "homemade" ||
-      resolvedServiceType === "quickbites";
-
-    // Determine the persisted paymentMethod for the new order.
-    // For Homemade/QuickBites the client sends either "online" (Cashfree full
-    // payment — the Cashfree verify endpoint would have been used, but for the
-    // direct-order path we treat the incoming flag as authoritative) or "cod".
+    // ────────────────────────────────────────────────────────────────
+    // ✅ REVISED: Compute initial statuses. Online payments are now
+    // AUTO-ACCEPTED (orderStatus = "Accepted"). COD orders stay "Placed"
+    // and wait for admin acceptance.
+    // ────────────────────────────────────────────────────────────────
     const incomingPaymentMethod = String(paymentMethod || "").toLowerCase();
-    const isCodOrder = incomingPaymentMethod === "cod";
+    const initialStatuses = buildInitialStatuses(
+      resolvedServiceType,
+      incomingPaymentMethod,
+      numericTotal,
+      finalAdvance
+    );
 
-    // Compute the initial paymentStatus based on the flow:
-    //  - Homemade/QuickBites COD      → "Payment Pending (COD)"
-    //  - Homemade/QuickBites online   → "Paid"
-    //  - Mealbox/Catering             → "Verification Pending" (unchanged)
-    let initialPaymentStatus = "Verification Pending";
-    let initialIsAdvanceVerified = false;
+    const isOnline = incomingPaymentMethod === "online";
+    const isAutoAccepted = initialStatuses.autoAccepted;
 
-    if (isHomemadeOrQuickBites) {
-      initialIsAdvanceVerified = true;
-      initialPaymentStatus = isCodOrder ? "Payment Pending (COD)" : "Paid";
-    }
+    // Compute the admin-acceptance timestamps:
+    //   • Auto-accepted (online) → adminAcceptedAt = orderPlacedAt
+    //   • COD                    → null (waits for real admin)
+    const resolvedAdminAcceptedAt = isAutoAccepted ? orderPlacedAt : null;
+    const resolvedAdminAcceptedBy = isAutoAccepted ? "system:cashfree" : "";
+
+    const statusAdvancedPaidAt =
+      isAdvanceBasedService(resolvedServiceType) && isOnline && finalAdvance > 0
+        ? orderPlacedAt
+        : null;
+    const fullPaymentPaidAt =
+      isHomemadeLikeService(resolvedServiceType) && isOnline
+        ? orderPlacedAt
+        : null;
 
     let savedOrder: any = null;
 
-    // ✅ Homemade AND QuickBites share the same schema, but they are
-    //    saved through DIFFERENT discriminator models so that the
-    //    persisted serviceType correctly stays as "homemade" or
-    //    "quickbites" respectively on the shared Orders collection.
+    // ────────────────────────────────────────────────────────────────
+    // Branch 1: Homemade / QuickBites
+    // ────────────────────────────────────────────────────────────────
     if (resolvedServiceType === "homemade" || resolvedServiceType === "quickbites") {
       const parsedItemsRaw = parseIfJsonString(items, []);
 
@@ -652,15 +765,12 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           }))
         : [];
 
-      // ✅ Resolve the delivery slot label for homemade / quickbites —
-      // prefer the new top-level `deliverySlot` param, fall back to
-      // legacy `deliveryTimeSlot`.
       const resolvedHomemadeSlot = finalDeliverySlotLabel || "";
-
-      // ✅ Pick the correct discriminator model.
       const ModelToUse = resolvedServiceType === "quickbites"
         ? QuickBitesOrderModel
         : HomemadeOrderModel;
+
+      const isCodOrder = incomingPaymentMethod === "cod";
 
       const newHomemadeOrder = new ModelToUse({
         orderId: generatedOrderId,
@@ -671,22 +781,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         chefId: effectiveChefId,
         chefName: effectiveChefName,
         chefPhone: resolvedChefPhone,
-        // ✅ Always persist the resolved serviceType so downstream
-        // screens (CartScreen, Orders tab, admin dashboard) can key
-        // off the correct value: "homemade" or "quickbites".
         serviceType: resolvedServiceType,
         items: sanitizedItems,
         deliveryAddress: resolvedAddress,
         deliveryTimeSlot: resolvedHomemadeSlot,
         deliverySlot: resolvedHomemadeSlot,
         deliveryDate: finalDeliveryDateLabel || "Today",
-        // ✅ Persist the QuickBites flag alongside the timestamps
         isQuickBites: quickBitesFlag,
-        // ✅ Persist the absolute delivery timestamps computed from "now"
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
         deliveryWindowMinutes: resolvedWindowMinutes,
-        // ✅ Persist geo coordinates for map pinning
         latitude: resolvedLatitude,
         longitude: resolvedLongitude,
         subtotal: Number(subtotal) || 0,
@@ -694,46 +798,39 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         discount: Number(discount) || 0,
         appliedCoupon: appliedCoupon || "",
         totalAmount: numericTotal,
-        // ✅ For Homemade/QuickBites online (Cashfree), the full amount is
-        // paid at order time → advance = total, balance = 0.
-        // For COD, advance = 0, balance = total.
-        // The client (CheckOutScreen) sends the correct values in
-        // `advancePaidAmount` and `balanceAmountToCollect` — we honour them
-        // but fall back to computing them correctly if missing.
-        advancePaidAmount: isCodOrder
-          ? 0
-          : (advancePaidAmount !== undefined
-              ? Number(advancePaidAmount)
-              : numericTotal),
+        advancePaidAmount: isCodOrder ? 0 : numericTotal,
         balanceAmountToCollect: isCodOrder
           ? (balanceAmountToCollect !== undefined
               ? Number(balanceAmountToCollect)
               : numericTotal)
-          : (balanceAmountToCollect !== undefined
-              ? Number(balanceAmountToCollect)
-              : 0),
+          : 0,
         utrNumber: utrNumber || "",
         advancePaymentScreenshot: screenshotData,
-        // ✅ Auto-verify for Homemade/QuickBites
-        isAdvanceVerified: initialIsAdvanceVerified,
-        paymentMethod: paymentMethod || (isCodOrder ? "cod" : "online"),
-        paymentStatus: initialPaymentStatus,
-        orderStatus: "Placed",
+        isAdvanceVerified: initialStatuses.isAdvanceVerified,
+        paymentMethod: incomingPaymentMethod || (isCodOrder ? "cod" : "online"),
+        paymentStatus: initialStatuses.paymentStatus,
+        orderStatus: initialStatuses.orderStatus,
+        statusAdvancedPaidAt: null,
+        fullPaymentPaidAt: fullPaymentPaidAt,
+        // ✅ Auto-accepted for online; null for COD
+        adminAcceptedAt: resolvedAdminAcceptedAt,
+        adminAcceptedBy: resolvedAdminAcceptedBy,
         statusTimeline: [
           {
-            status: "Placed",
+            status: initialStatuses.orderStatus,
             timestamp: orderPlacedAt,
-            note: isHomemadeOrQuickBites
-              ? (isCodOrder
-                  ? "COD order placed - payment to be collected on delivery"
-                  : "Online payment confirmed - order placed")
-              : `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending`,
+            note: isAutoAccepted
+              ? "Online payment confirmed — order auto-accepted and chef notified"
+              : "COD order placed — awaiting admin acceptance",
           },
         ],
       });
 
       savedOrder = await newHomemadeOrder.save();
     }
+    // ────────────────────────────────────────────────────────────────
+    // Branch 2: Catering
+    // ────────────────────────────────────────────────────────────────
     else if (resolvedServiceType === "catering") {
       const newCateringOrder = new CateringOrderModel({
         orderId: generatedOrderId,
@@ -759,11 +856,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         addons: Array.isArray(addons) ? addons : [],
         selections: selections || null,
         items: items || [],
-        // ✅ Timestamps for downstream UIs
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
         deliveryWindowMinutes: resolvedWindowMinutes,
-        // ✅ Persist geo coordinates for map pinning
         latitude: resolvedLatitude,
         longitude: resolvedLongitude,
         subtotal: Number(subtotal) || 0,
@@ -775,20 +870,32 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         balanceAmountToCollect: finalBalance,
         utrNumber: utrNumber || "",
         advancePaymentScreenshot: screenshotData,
-        isAdvanceVerified: false,
-        paymentMethod: paymentMethod || "cod",
-        paymentStatus: "Verification Pending",
-        orderStatus: "Placed",
+        isAdvanceVerified: initialStatuses.isAdvanceVerified,
+        paymentMethod: incomingPaymentMethod || "cod",
+        paymentStatus: initialStatuses.paymentStatus,
+        orderStatus: initialStatuses.orderStatus,
+        statusAdvancedPaidAt: statusAdvancedPaidAt,
+        fullPaymentPaidAt: null,
+        // ✅ Auto-accepted for online; null for COD
+        adminAcceptedAt: resolvedAdminAcceptedAt,
+        adminAcceptedBy: resolvedAdminAcceptedBy,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          {
+            status: initialStatuses.orderStatus,
+            timestamp: orderPlacedAt,
+            note: isAutoAccepted
+              ? `Advance of ₹${finalAdvance} paid via Cashfree — order auto-accepted and chef notified`
+              : "Advance pending — awaiting admin verification",
+          },
         ],
       });
 
       savedOrder = await newCateringOrder.save();
     }
+    // ────────────────────────────────────────────────────────────────
+    // Branch 3: Mealbox
+    // ────────────────────────────────────────────────────────────────
     else {
-      // ✅ Copy coordinates onto each schedule as well so per-schedule
-      // map actions can pin the exact drop location.
       const initialSchedules = sortedDeliveries.map((dateItem: string) => ({
         date: dateItem,
         status: "Scheduled",
@@ -822,11 +929,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         pausedDates: [],
         selections: selections || null,
         items: items || [],
-        // ✅ Timestamps for downstream UIs
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
         deliveryWindowMinutes: resolvedWindowMinutes,
-        // ✅ Persist geo coordinates for map pinning
         latitude: resolvedLatitude,
         longitude: resolvedLongitude,
         subtotal: Number(subtotal) || 0,
@@ -838,12 +943,23 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         balanceAmountToCollect: finalBalance,
         utrNumber: utrNumber || "",
         advancePaymentScreenshot: screenshotData,
-        isAdvanceVerified: false,
-        paymentMethod: paymentMethod || "cod",
-        paymentStatus: "Verification Pending",
-        orderStatus: "Placed",
+        isAdvanceVerified: initialStatuses.isAdvanceVerified,
+        paymentMethod: incomingPaymentMethod || "cod",
+        paymentStatus: initialStatuses.paymentStatus,
+        orderStatus: initialStatuses.orderStatus,
+        statusAdvancedPaidAt: statusAdvancedPaidAt,
+        fullPaymentPaidAt: null,
+        // ✅ Auto-accepted for online; null for COD
+        adminAcceptedAt: resolvedAdminAcceptedAt,
+        adminAcceptedBy: resolvedAdminAcceptedBy,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          {
+            status: initialStatuses.orderStatus,
+            timestamp: orderPlacedAt,
+            note: isAutoAccepted
+              ? `Advance of ₹${finalAdvance} paid via Cashfree — order auto-accepted and chef notified`
+              : "Advance pending — awaiting admin verification",
+          },
         ],
       });
 
@@ -877,21 +993,38 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       await Cart.updateMany({ user: finalUserId, status: "in-cart" }, { $set: { status: "ordered" } });
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // ✅ Socket + push notifications
+    //
+    // Customer gets a confirmation push.
+    // Admin gets the alarm push (always — online or COD).
+    // Chef is notified IMMEDIATELY if the order was auto-accepted
+    //   (i.e. Cashfree payment succeeded); otherwise the chef is
+    //   notified later via `acceptOrderByAdmin`.
+    // ────────────────────────────────────────────────────────────────
     try {
       if (finalUserId) {
         io.to(finalUserId).emit("new_order_placed", savedOrder);
         const customerDoc = await User.findById(finalUserId);
         if (customerDoc?.pushToken) {
+          let customerTitle = "Order Placed 🕒";
+          let customerBody = `Your order #${savedOrder.orderId} has been placed.`;
+
+          if (isAutoAccepted && isAdvanceBasedService(resolvedServiceType)) {
+            customerTitle = "Advance Payment Received ✅";
+            customerBody = `We've received your advance of ₹${savedOrder.advancePaidAmount} for order #${savedOrder.orderId}. Your order is confirmed and being prepared.`;
+          } else if (isAutoAccepted && isHomemadeLikeService(resolvedServiceType)) {
+            customerTitle = "Payment Received in Full ✅";
+            customerBody = `Your full payment of ₹${savedOrder.totalAmount} for order #${savedOrder.orderId} was successful. Your order is confirmed and being prepared.`;
+          } else if (String(savedOrder.paymentMethod).toLowerCase() === "cod") {
+            customerTitle = "Order Placed - Cash on Delivery 🕒";
+            customerBody = `Your order #${savedOrder.orderId} has been placed. Please keep ₹${savedOrder.balanceAmountToCollect} ready for delivery.`;
+          }
+
           await sendExpoPushNotification(
             customerDoc.pushToken,
-            isHomemadeOrQuickBites
-              ? (isCodOrder ? "Order Placed - Cash on Delivery 🕒" : "Order Placed - Payment Confirmed ✅")
-              : "Order Placed - Verification Pending 🕒",
-            isHomemadeOrQuickBites
-              ? (isCodOrder
-                  ? `Your order #${savedOrder.orderId} has been placed. Please keep ₹${savedOrder.balanceAmountToCollect} ready for delivery.`
-                  : `Your order #${savedOrder.orderId} has been placed successfully.`)
-              : `Your order #${savedOrder.orderId} advance payment is being verified by admin.`,
+            customerTitle,
+            customerBody,
             { orderId: savedOrder.orderId, screen: "orders" }
           );
         }
@@ -899,15 +1032,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
       io.emit("new_order_placed", savedOrder);
 
-      /* ──────────────────────────────────────────────────────────
-         ✅ Notify EVERY admin with the alarm sound.
-         • Runs AFTER the order is safely saved.
-         • Uses the batch endpoint so all admins are notified
-           in a single HTTP call.
-         • Sound = alarm.mp3, channel = admin_orders_alarm,
-           priority = "max", data.role = "admin".
-         • Never throws — wrapped in its own try/catch.
-         ────────────────────────────────────────────────────────── */
+      // Notify every admin with the alarm sound (always)
       try {
         const admins = await User.find({
           isAdmin: true,
@@ -922,7 +1047,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           const adminPayloads = validAdmins.map((admin: any) => ({
             token: String(admin.pushToken),
             title: `🚨 New Order ${savedOrder.orderId}`,
-            body: `${savedOrder.userName || "A customer"} placed an order of ₹${savedOrder.totalAmount}. Tap to review.`,
+            body: isAutoAccepted
+              ? `${savedOrder.userName || "A customer"} paid ₹${savedOrder.totalAmount}. Order auto-accepted.`
+              : `${savedOrder.userName || "A customer"} placed a COD order of ₹${savedOrder.totalAmount}. Tap to review & accept.`,
             data: {
               orderId: savedOrder.orderId,
               screen: "admin-orders",
@@ -943,81 +1070,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         console.log("Admin push notification error:", adminPushErr);
       }
 
-      /* ──────────────────────────────────────────────────────────
-         ✅ NEW (Option A) — Auto-notify the chef for
-         Homemade / QuickBites orders.
-
-         Because these flows don't require manual admin verification
-         of a 45% advance, we skip the admin-verify step entirely and
-         immediately trigger the same socket events + chef alarm push
-         that `verifyAdvancePayment` fires for Mealbox/Catering.
-
-         Mealbox & Catering are UNAFFECTED — they still wait for the
-         admin to tap "Payment Received".
-         ────────────────────────────────────────────────────────── */
-      if (isHomemadeOrQuickBites && savedOrder) {
-        try {
-          // Emit the same socket events that verifyAdvancePayment emits
-          io.emit("advance_payment_verified", savedOrder);
-          io.emit("order_updated", savedOrder);
-
-          if (savedOrder.userId) {
-            io.to(String(savedOrder.userId)).emit("advance_payment_verified", savedOrder);
-            io.to(String(savedOrder.userId)).emit("order_updated", savedOrder);
-          }
-
-          // Resolve the chef's user document to find their push token
-          const chefIdentifier = savedOrder.chefId;
-          let chefUserDoc: any = null;
-          let resolvedChefUserId: string | null = null;
-
-          if (chefIdentifier && mongoose.Types.ObjectId.isValid(chefIdentifier)) {
-            const chefDoc = await Chef.findById(chefIdentifier);
-            if (chefDoc?.user) {
-              chefUserDoc = await User.findById(chefDoc.user);
-              resolvedChefUserId = String(chefDoc.user);
-              io.to(String(chefDoc.user)).emit("new_chef_order", savedOrder);
-              io.to(String(chefDoc.user)).emit("order_updated", savedOrder);
-            }
-          }
-          if (!chefUserDoc && savedOrder.chefName) {
-            const chefDoc = await Chef.findOne({ name: savedOrder.chefName });
-            if (chefDoc?.user) {
-              chefUserDoc = await User.findById(chefDoc.user);
-              resolvedChefUserId = String(chefDoc.user);
-              io.to(String(chefDoc.user)).emit("new_chef_order", savedOrder);
-              io.to(String(chefDoc.user)).emit("order_updated", savedOrder);
-            }
-          }
-          if (chefIdentifier) {
-            io.to(String(chefIdentifier)).emit("new_chef_order", savedOrder);
-            io.to(String(chefIdentifier)).emit("order_updated", savedOrder);
-          }
-
-          // Fire the chef alarm push — same config used by verifyAdvancePayment
-          if (chefUserDoc?.pushToken && isValidExpoToken(chefUserDoc.pushToken)) {
-            await sendExpoPush({
-              token: String(chefUserDoc.pushToken),
-              title: `🔔 New ${resolvedServiceType === "quickbites" ? "QuickBites" : "Homemade"} Order ${savedOrder.orderId}`,
-              body: `${savedOrder.userName || "Customer"} → ₹${savedOrder.totalAmount}. Tap to accept now!`,
-              data: {
-                orderId: savedOrder.orderId,
-                screen: "chef-orders",
-                role: "chef",
-                chefId: resolvedChefUserId || String(chefUserDoc._id || ""),
-              },
-              sound: ORDER_ALARM_SOUND,
-              channelId: CHEF_ORDER_CHANNEL_ID,
-              priority: "max",
-              vibrate: [0, 600, 300, 600, 300],
-            });
-            console.log(
-              `[createOrder] Auto-notified chef for ${resolvedServiceType} order ${savedOrder.orderId}`
-            );
-          }
-        } catch (autoChefNotifyErr) {
-          console.log("Auto chef-notify error (Homemade/QuickBites):", autoChefNotifyErr);
-        }
+      // ✅ Notify the chef IMMEDIATELY if the order was auto-accepted
+      //    (Cashfree success). For COD orders, the chef will be
+      //    notified later via `/admin-accept`.
+      if (isAutoAccepted && savedOrder) {
+        await notifyChefAboutOrder(savedOrder);
+        console.log(
+          `[createOrder] Auto-notified chef for order ${savedOrder.orderId} (Cashfree success)`
+        );
       }
     } catch (e) {
       console.log("Order creation notification emit warning:", e);
@@ -1025,11 +1085,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     return res.status(201).json({
       success: true,
-      message: isHomemadeOrQuickBites
-        ? (isCodOrder
-            ? "Order placed successfully. Payment to be collected on delivery."
-            : "Order placed successfully. Payment confirmed.")
-        : "Order placed successfully. Advance verification pending.",
+      message: isAutoAccepted
+        ? "Order placed successfully. Payment received and chef notified."
+        : "Order placed successfully. Awaiting admin acceptance.",
       order: savedOrder,
     });
   } catch (error: any) {
@@ -1043,12 +1101,119 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 };
 
 /**
+ * PATCH /api/orders/:orderId/admin-accept
+ *
+ * ✅ NEW ENDPOINT — used primarily for COD orders.
+ *
+ * When the admin taps "Accept" on a COD order, this endpoint:
+ *   1) Sets `adminAcceptedAt = now` and `adminAcceptedBy = <adminId>`.
+ *   2) Moves orderStatus from "Placed" to "Accepted".
+ *   3) Appends a status timeline entry.
+ *   4) Notifies the assigned CHEF (alarm push + `new_chef_order`).
+ *   5) Emits `order_updated` so all UIs refresh.
+ *   6) Sends a customer-facing "Order Accepted" push.
+ *
+ * NOTE: This endpoint is idempotent — calling it on an already-accepted
+ * order is a no-op (returns success).
+ */
+export const acceptOrderByAdmin = async (req: AuthRequest, res: Response) => {
+  try {
+    const rawAdminId = req.user?.userId || req.user?._id || req.user?.id;
+    const { orderId } = req.params;
+
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const currentStatus = String(order.orderStatus || "Placed");
+    const s = currentStatus.toLowerCase();
+
+    if (s === "cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "Cancelled orders cannot be accepted.",
+      });
+    }
+    if (order.adminAcceptedAt) {
+      return res.status(200).json({
+        success: true,
+        message: "Order was already accepted.",
+        order,
+      });
+    }
+
+    const now = new Date();
+    order.adminAcceptedAt = now;
+    order.adminAcceptedBy = String(rawAdminId || "");
+    order.orderStatus = "Accepted";
+    order.statusTimeline = order.statusTimeline || [];
+    order.statusTimeline.push({
+      status: "Accepted",
+      timestamp: now,
+      note: `Admin accepted order${rawAdminId ? ` (admin: ${rawAdminId})` : ""}`,
+    });
+
+    const updatedOrder = await order.save();
+
+    // ✅ Notify the chef
+    await notifyChefAboutOrder(updatedOrder);
+
+    // Emit order_updated so admin & customer UIs refresh
+    try {
+      io.emit("order_updated", updatedOrder);
+      io.emit("order_status_updated", updatedOrder);
+      if (updatedOrder.userId) {
+        io.to(String(updatedOrder.userId)).emit("order_updated", updatedOrder);
+        io.to(String(updatedOrder.userId)).emit("order_status_updated", updatedOrder);
+      }
+    } catch (e) {
+      console.log("Socket emit warning (admin-accept):", e);
+    }
+
+    // Customer-facing "Order Accepted" push
+    try {
+      if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
+        const customerDoc = await User.findById(updatedOrder.userId);
+        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+          const msg = getCustomerStatusMessage("Accepted", updatedOrder.orderId);
+          await sendExpoPush({
+            token: String(customerDoc.pushToken),
+            title: msg.title,
+            body: msg.body,
+            data: {
+              orderId: updatedOrder.orderId,
+              screen: "orders",
+              role: "customer",
+              status: "Accepted",
+            },
+            sound: "default",
+            priority: "high",
+          });
+        }
+      }
+    } catch (customerPushErr) {
+      console.log("Customer accept push error:", customerPushErr);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Order accepted and chef notified.",
+      order: updatedOrder,
+    });
+  } catch (error: any) {
+    console.error("Error in acceptOrderByAdmin:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
  * PATCH /api/orders/:orderId/verify-advance
  *
- * ✅ UPDATED: The push to the assigned chef now uses the bundled
- *    alarm.mp3 sound + chef_orders_alarm channel + priority "max",
- *    and includes data.role = "chef" and data.chefId so the client
- *    can route + alarm correctly even when the app is closed.
+ * Manual advance verification (screenshot / UTR flows). NO chef
+ * notification here — for auto-accepted online orders the chef has
+ * already been notified in `createOrder`; for COD orders the chef is
+ * notified later via `/admin-accept`.
  */
 export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
   try {
@@ -1068,81 +1233,45 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
       note: `Admin verified advance payment of ₹${order.advancePaidAmount}`,
     });
 
+    if (!order.statusAdvancedPaidAt) {
+      order.statusAdvancedPaidAt = new Date();
+    }
+
     const updatedOrder = await order.save();
 
     try {
       io.emit("advance_payment_verified", updatedOrder);
       io.emit("order_updated", updatedOrder);
+      io.emit("order_status_updated", updatedOrder);
 
       if (order.userId) {
         io.to(order.userId).emit("advance_payment_verified", updatedOrder);
         io.to(order.userId).emit("order_updated", updatedOrder);
+        io.to(order.userId).emit("order_status_updated", updatedOrder);
+      }
+    } catch (e) {
+      console.log("Socket emit warning (verify-advance):", e);
+    }
+
+    try {
+      if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
         const userDoc = await User.findById(order.userId);
-        if (userDoc?.pushToken) {
+        if (userDoc?.pushToken && isValidExpoToken(userDoc.pushToken)) {
           await sendExpoPushNotification(
             userDoc.pushToken,
             "Advance Payment Verified! 🎉",
-            `Your advance payment for order #${order.orderId} has been verified by the team.`,
+            `Your advance payment for order #${order.orderId} has been verified.`,
             { orderId: order.orderId, screen: "orders" }
           );
         }
       }
-
-      const chefIdentifier = order.chefId;
-      let chefUserDoc: any = null;
-      let resolvedChefUserId: string | null = null;
-
-      if (chefIdentifier && mongoose.Types.ObjectId.isValid(chefIdentifier)) {
-        const chefDoc = await Chef.findById(chefIdentifier);
-        if (chefDoc?.user) {
-          chefUserDoc = await User.findById(chefDoc.user);
-          resolvedChefUserId = String(chefDoc.user);
-          io.to(String(chefDoc.user)).emit("new_chef_order", updatedOrder);
-        }
-      }
-      if (!chefUserDoc && order.chefName) {
-        const chefDoc = await Chef.findOne({ name: order.chefName });
-        if (chefDoc?.user) {
-          chefUserDoc = await User.findById(chefDoc.user);
-          resolvedChefUserId = String(chefDoc.user);
-          io.to(String(chefDoc.user)).emit("new_chef_order", updatedOrder);
-        }
-      }
-      if (chefIdentifier) {
-        io.to(String(chefIdentifier)).emit("new_chef_order", updatedOrder);
-        io.to(String(chefIdentifier)).emit("order_updated", updatedOrder);
-      }
-
-      /* ──────────────────────────────────────────────────────────
-         ✅ Chef push now uses the bundled alarm sound,
-         the chef alarm channel, priority "max", and carries
-         data.role = "chef" + data.chefId for client-side routing
-         and chef-scoped alarms.
-         ────────────────────────────────────────────────────────── */
-      if (chefUserDoc?.pushToken && isValidExpoToken(chefUserDoc.pushToken)) {
-        await sendExpoPush({
-          token: String(chefUserDoc.pushToken),
-          title: `🔔 New Verified Order ${order.orderId}`,
-          body: `${order.userName || "Customer"} → ₹${order.totalAmount}. Tap to accept now!`,
-          data: {
-            orderId: order.orderId,
-            screen: "chef-orders",
-            role: "chef",
-            chefId: resolvedChefUserId || String(chefUserDoc._id || ""),
-          },
-          sound: ORDER_ALARM_SOUND,
-          channelId: CHEF_ORDER_CHANNEL_ID,
-          priority: "max",
-          vibrate: [0, 600, 300, 600, 300],
-        });
-      }
-    } catch (e) {
-      console.log("Socket emit warning:", e);
+    } catch (custErr) {
+      console.log("Customer verify-advance push warning:", custErr);
     }
 
     return res.status(200).json({
       success: true,
-      message: "Advance payment verified successfully",
+      message: "Advance payment verified successfully.",
       order: updatedOrder,
     });
   } catch (error: any) {
@@ -1152,6 +1281,9 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
 
 /**
  * GET /api/orders/chef-orders
+ *
+ * ✅ Only returns orders the ADMIN has accepted (or that were
+ * auto-accepted via Cashfree). Cancelled orders are always excluded.
  */
 export const getChefOrders = async (req: AuthRequest, res: Response) => {
   try {
@@ -1176,10 +1308,18 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
     }
 
     const orders = await Order.find({
-      $or: [
-        { chefId: { $in: queryChefIds } },
-        { chefName: chefProfile?.name || "" },
-        { _id: { $in: chefProfile?.orderHistory || [] } },
+      $and: [
+        {
+          $or: [
+            { chefId: { $in: queryChefIds } },
+            { chefName: chefProfile?.name || "" },
+            { _id: { $in: chefProfile?.orderHistory || [] } },
+          ],
+        },
+        // ✅ Only orders the admin has accepted (or auto-accepted)
+        { adminAcceptedAt: { $ne: null } },
+        // ✅ Never show cancelled orders
+        { orderStatus: { $nin: ["Cancelled", "cancelled"] } },
       ],
     }).sort({ createdAt: -1 });
 
@@ -1201,14 +1341,13 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
 /**
  * PATCH /api/orders/:orderId/status
  *
- * ✅ UPDATED: Now also sends a push notification to the customer
- *    whenever the order status changes (chef or admin). Works
- *    whether the customer's app is open, backgrounded, or killed.
+ * Handles all status transitions including the new flow.
  */
 export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { orderId } = req.params;
     const { status } = req.body;
+    const rawAdminId = req.user?.userId || req.user?._id || req.user?.id;
 
     const order = await Order.findOne({ orderId });
     if (!order) {
@@ -1219,23 +1358,63 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
     const normalizedLower = normalized.toLowerCase();
     order.statusTimeline = order.statusTimeline || [];
 
-    const isCashCollected =
+    const now = new Date();
+
+    if (normalizedLower === "advance paid") {
+      order.orderStatus = "Advance Paid";
+      order.isAdvanceVerified = true;
+      if (!order.statusAdvancedPaidAt) {
+        order.statusAdvancedPaidAt = now;
+      }
+      if (!String(order.paymentStatus || "").toLowerCase().includes("advance paid")) {
+        order.paymentStatus = "Advance Paid (Verified)";
+      }
+      order.statusTimeline.push({
+        status: "Advance Paid",
+        timestamp: now,
+        note: `Advance of ₹${order.advancePaidAmount || 0} marked as paid`,
+      });
+    } else if (normalizedLower === "full amount paid") {
+      order.orderStatus = "Full Amount Paid";
+      order.isAdvanceVerified = true;
+      if (!order.fullPaymentPaidAt) {
+        order.fullPaymentPaidAt = now;
+      }
+      order.paymentStatus = "Paid";
+      order.paymentCaptured = true;
+      order.paidAt = order.paidAt || now;
+      order.statusTimeline.push({
+        status: "Full Amount Paid",
+        timestamp: now,
+        note: `Full payment of ₹${order.totalAmount || 0} received`,
+      });
+    } else if (normalizedLower === "accepted") {
+      order.orderStatus = "Accepted";
+      if (!order.adminAcceptedAt) {
+        order.adminAcceptedAt = now;
+        order.adminAcceptedBy = String(rawAdminId || "");
+      }
+      order.statusTimeline.push({
+        status: "Accepted",
+        timestamp: now,
+        note: "Order accepted",
+      });
+    } else if (
       normalizedLower === "cash collected" ||
       normalizedLower === "cash_collected" ||
       normalizedLower === "collected" ||
-      normalizedLower === "balance collected";
-
-    if (isCashCollected) {
+      normalizedLower === "balance collected"
+    ) {
       order.paymentStatus = "Fully Paid (Balance Collected)";
       order.paymentCaptured = true;
-      order.paidAt = new Date();
+      order.paidAt = now;
       order.orderStatus = "Completed";
       if (!order.actualDeliveredAt) {
-        order.actualDeliveredAt = new Date();
+        order.actualDeliveredAt = now;
       }
       order.statusTimeline.push({
         status: "Balance Collected",
-        timestamp: new Date(),
+        timestamp: now,
         note: `Balance amount of ₹${order.balanceAmountToCollect || 0} collected upon delivery`,
       });
 
@@ -1245,12 +1424,12 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
           if (sStatus !== "delivered" && sStatus !== "completed" && sStatus !== "cash collected") {
             schedule.status = "Delivered";
             if (!schedule.actualDeliveredAt) {
-              schedule.actualDeliveredAt = new Date();
+              schedule.actualDeliveredAt = now;
             }
             if (!schedule.statusTimeline) schedule.statusTimeline = [];
             schedule.statusTimeline.push({
               status: "Delivered",
-              timestamp: new Date(),
+              timestamp: now,
               note: "Auto-marked delivered upon balance collection",
             });
           }
@@ -1261,16 +1440,15 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       order.orderStatus = normalized;
       order.statusTimeline.push({
         status: normalized,
-        timestamp: new Date(),
+        timestamp: now,
         note: `Order status changed to ${normalized}`,
       });
 
       if (normalized === "Preparing" || normalized === "Accepted") {
         if (!order.prepStartedAt) {
-          order.prepStartedAt = new Date();
+          order.prepStartedAt = now;
         }
         if (!order.targetDeliveryTime) {
-          // ✅ Prefer the persisted estimatedDeliveryAt if we have one
           if (order.estimatedDeliveryAt) {
             order.targetDeliveryTime = order.estimatedDeliveryAt;
           } else {
@@ -1283,10 +1461,14 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       }
 
       if (normalized === "Delivered" || normalized === "Completed") {
-        order.actualDeliveredAt = order.actualDeliveredAt || new Date();
+        order.actualDeliveredAt = order.actualDeliveredAt || now;
         const target = order.targetDeliveryTime ? new Date(order.targetDeliveryTime).getTime() : Date.now();
         const graceMs = (order.gracePeriodMinutes || 0) * 60 * 1000;
         order.deliveredOnTime = Date.now() <= target + graceMs;
+      }
+
+      if (normalizedLower === "cancelled" || normalizedLower === "canceled") {
+        order.orderStatus = "Cancelled";
       }
     }
 
@@ -1307,17 +1489,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       console.log("Socket emit warning:", e);
     }
 
-    /* ──────────────────────────────────────────────────────────
-       ✅ Push notification to the CUSTOMER on every status
-       change (by chef or admin). Works when the customer's app
-       is open, backgrounded, or fully killed.
-
-       • Uses the DEFAULT phone sound (NOT alarm.mp3).
-       • data.screen === "orders" → tap opens the customer's Orders tab.
-       • data.role === "customer" → lets any customer-side listener
-         filter out non-customer pushes.
-       • Never throws — wrapped in its own try/catch.
-       ────────────────────────────────────────────────────────── */
     try {
       if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
         const customerDoc = await User.findById(order.userId);
@@ -1354,11 +1525,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
 
 /**
  * PATCH /api/orders/:orderId/schedule-status
- *
- * ✅ UPDATED: Now also sends a push notification to the customer
- *    whenever an individual scheduled delivery (meal-box orders)
- *    changes status (chef or admin). Works whether the customer's
- *    app is open, backgrounded, or killed.
  */
 export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
   try {
@@ -1374,8 +1540,16 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
+    if (String(order.orderStatus || "").toLowerCase() === "cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot update schedules on a cancelled order.",
+      });
+    }
+
     const normalizedStatus = String(status).trim();
     const normalizedStatusLower = normalizedStatus.toLowerCase();
+    const now = new Date();
     const isCashCollectedForSchedule =
       normalizedStatusLower === "cash collected" ||
       normalizedStatusLower === "cash_collected" ||
@@ -1398,12 +1572,12 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
         statusTimeline: [
           {
             status: isCashCollectedForSchedule ? "Delivered" : normalizedStatus,
-            timestamp: new Date(),
+            timestamp: now,
             note: `Delivery status for ${dateStr} changed to ${normalizedStatus}`,
           },
         ],
         actualDeliveredAt:
-          isCashCollectedForSchedule || normalizedStatus === "Delivered" ? new Date() : undefined,
+          isCashCollectedForSchedule || normalizedStatus === "Delivered" ? now : undefined,
       } as any);
     } else {
       const schedule = order.deliverySchedules[foundIndex];
@@ -1411,19 +1585,19 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
       if (!schedule.statusTimeline) schedule.statusTimeline = [];
       schedule.statusTimeline.push({
         status: isCashCollectedForSchedule ? "Delivered" : normalizedStatus,
-        timestamp: new Date(),
+        timestamp: now,
         note: `Delivery status for ${dateStr} changed to ${normalizedStatus}`,
       });
       if (isCashCollectedForSchedule || normalizedStatus === "Delivered") {
-        schedule.actualDeliveredAt = new Date();
+        schedule.actualDeliveredAt = now;
       }
     }
 
     if (isCashCollectedForSchedule) {
       order.paymentStatus = "Fully Paid (Balance Collected)";
       order.paymentCaptured = true;
-      order.paidAt = new Date();
-      if (!order.actualDeliveredAt) order.actualDeliveredAt = new Date();
+      order.paidAt = now;
+      if (!order.actualDeliveredAt) order.actualDeliveredAt = now;
     }
 
     order.markModified("deliverySchedules");
@@ -1440,18 +1614,6 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
       console.log("Socket emit warning:", e);
     }
 
-    /* ──────────────────────────────────────────────────────────
-       ✅ Push notification to the CUSTOMER for THIS scheduled
-       delivery's status change. Works when the customer's app is
-       open, backgrounded, or fully killed.
-
-       • Uses the DEFAULT phone sound (NOT alarm.mp3).
-       • Includes the affected date in the title so the customer
-         knows which delivery changed.
-       • data.screen === "orders" → tap opens the customer's Orders tab.
-       • data.role === "customer".
-       • Never throws — wrapped in its own try/catch.
-       ────────────────────────────────────────────────────────── */
     try {
       if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
         const customerDoc = await User.findById(order.userId);

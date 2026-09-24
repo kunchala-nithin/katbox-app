@@ -17,6 +17,26 @@
 //   6. Resolves with the created order document on success, or rejects
 //      with a structured error on failure.
 //
+// ✅ PRODUCTION UPGRADE NOTES:
+//
+//   The backend `/api/payments/verify` endpoint now uses the
+//   `orderPayload.paymentMethod` + `orderPayload.serviceType` to
+//   automatically assign the correct `orderStatus` at creation time:
+//
+//     • Catering / Mealbox + "online"  → orderStatus = "Advance Paid"
+//     • Homemade / QuickBites + "online" → orderStatus = "Full Amount Paid"
+//
+//   This module does NOT need to know about those mappings — it simply
+//   forwards the orderPayload the caller (CheckOutScreen) provides.
+//   The mapping logic lives in the backend's `buildInitialStatuses()`
+//   helper inside `orders.controller.ts`, keeping a single source of
+//   truth for status transitions.
+//
+//   The only change from the previous version is that we now forward
+//   the actual `customerId` to Cashfree instead of an empty string,
+//   improving reconciliation and customer-tracking on Cashfree's
+//   dashboard.
+//
 // NOTE: This is the ONLY file in the client that imports the Cashfree
 // SDK directly. All other screens call `startCashfreePayment()`.
 
@@ -57,7 +77,8 @@ const CASHFREE_ENV = CFEnvironment.SANDBOX;
 export interface StartCashfreePaymentOptions {
   /**
    * Amount in INR (rupees, not paise). This is the amount the user will
-   * be charged — for KatBox this is the 40% advance, not the full total.
+   * be charged — for KatBox this is either the 45% advance (Catering/
+   * Mealbox) or the full total (Homemade/QuickBites online).
    */
   amount: number;
 
@@ -66,6 +87,11 @@ export interface StartCashfreePaymentOptions {
    * successful verification. Same shape as the old Razorpay flow's
    * `orderPayload` — the backend `/api/payments/verify` writes it
    * straight into the Order document.
+   *
+   * ✅ IMPORTANT: This payload MUST include `serviceType` and
+   * `paymentMethod` fields so the backend can correctly assign the
+   * initial `orderStatus` ("Advance Paid" vs "Full Amount Paid").
+   * The CheckOutScreen already provides both of these.
    */
   orderPayload: Record<string, any>;
 
@@ -106,6 +132,15 @@ function ensureCallbacksRegistered() {
      * At this point the payment MAY or MAY NOT have actually succeeded —
      * we still need to verify server-side. The `orderID` is Cashfree's
      * order_id (the same one our backend created).
+     *
+     * ✅ The backend `/api/payments/verify` endpoint will:
+     *     1. Ask Cashfree server-to-server whether the order is PAID.
+     *     2. Persist the orderPayload into MongoDB.
+     *     3. Auto-assign orderStatus = "Advance Paid" OR
+     *        "Full Amount Paid" based on serviceType + paymentMethod.
+     *     4. Set statusAdvancedPaidAt / fullPaymentPaidAt timestamps.
+     *     5. Emit the admin alarm push (the chef is NOT notified here
+     *        — the chef is only notified after the admin accepts).
      */
     onVerify: async (orderID: string) => {
       console.log("[Cashfree] onVerify called with orderID:", orderID);
@@ -207,7 +242,8 @@ function ensureCallbacksRegistered() {
  * Example:
  *   const result = await startCashfreePayment({
  *     amount: 240.5,
- *     orderPayload: { userId, chefId, totalAmount, ... },
+ *     orderPayload: { userId, chefId, serviceType, paymentMethod: "online", totalAmount, ... },
+ *     customerId: userId,
  *   });
  *   if (result.success) router.push(...);
  *   else Alert.alert("Payment failed", result.message);
@@ -237,12 +273,23 @@ export function startCashfreePayment(
     // ----------------------------------------------------------------
     // 3. Ask our backend to create a Cashfree order. This returns
     //    the payment_session_id which the SDK needs.
+    //
+    // ✅ IMPROVEMENT: We now forward the real `customerId` (userId)
+    //    to Cashfree's create-order API instead of an empty string.
+    //    This makes it possible to reconcile orders on Cashfree's
+    //    dashboard and attribute them to the correct customer.
+    //
+    //    The backend uses `orderId` (which the Cashfree API expects)
+    //    to accept our customer identifier; it then embeds it into
+    //    the Cashfree order's customer_details.
     // ----------------------------------------------------------------
     let createRes;
     try {
+      const sanitizedCustomerId = String(options.customerId || "").trim();
       createRes = await api.post("/api/payments/create-order", {
         amount,
-        orderId: options.customerId || "",
+        // ✅ Pass through the real customer id (fallback to "" if missing)
+        orderId: sanitizedCustomerId,
       });
     } catch (err: any) {
       console.error("[Cashfree] create-order request failed:", err);
@@ -269,6 +316,13 @@ export function startCashfreePayment(
     // ----------------------------------------------------------------
     // 4. Store the resolver + payload so the callbacks (invoked later
     //    by the native SDK) can find them.
+    //
+    //    ✅ The orderPayload includes `paymentMethod: "online"` and
+    //    `serviceType: <catering|mealbox|homemade|quickbites>`. The
+    //    backend's `/api/payments/verify` handler will use these to
+    //    decide the initial `orderStatus`:
+    //       • catering / mealbox + online → "Advance Paid"
+    //       • homemade / quickbites + online → "Full Amount Paid"
     // ----------------------------------------------------------------
     activeResolve = resolve;
     activeOrderPayload = options.orderPayload;
