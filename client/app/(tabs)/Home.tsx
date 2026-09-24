@@ -21,6 +21,7 @@ import {
   NativeScrollEvent,
   Modal,
   Pressable,
+  Linking,
 } from 'react-native';
 import {
   Ionicons,
@@ -332,6 +333,15 @@ export default function HomeScreen() {
   // Screen-Open Permission Prompt Modal State
   const [isPermissionPopupVisible, setIsPermissionPopupVisible] = useState<boolean>(false);
   const [isRequestingPermission, setIsRequestingPermission] = useState<boolean>(false);
+
+  // ✅ NEW: Location Services (GPS) OFF modal state — separate from permission modal
+  const [isLocationServicesOffModalVisible, setIsLocationServicesOffModalVisible] = useState<boolean>(false);
+
+  // ✅ NEW: Guard so the location-permission popup is not shown repeatedly
+  //         within the same session once the user has already responded.
+  const hasPromptedLocationRef = useRef<boolean>(false);
+  // ✅ NEW: Guard so we don't keep re-opening the "services off" modal in a loop.
+  const hasShownServicesOffRef = useRef<boolean>(false);
 
   // ─── ✅ NEW: Notification Permission Prompt States ───
   const [isNotificationPopupVisible, setIsNotificationPopupVisible] = useState<boolean>(false);
@@ -762,23 +772,62 @@ export default function HomeScreen() {
     }
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ FIXED: checkLocationStatusAndPrompt
+  //
+  //   Root cause of the infinite-popup bug:
+  //   When device-wide Location Services (GPS) is OFF, calling
+  //   `Location.requestForegroundPermissionsAsync()` cannot grant anything —
+  //   there is nothing to grant at the app level. The app-level permission
+  //   may already be "granted", but the OS still returns "no location
+  //   available". Previously the code re-opened the SAME permission popup,
+  //   which the user could not satisfy → loop.
+  //
+  //   New behaviour:
+  //     1. If device Location Services are OFF → show a DIFFERENT modal
+  //        (`isLocationServicesOffModalVisible`) whose button opens the
+  //        device Settings app, and DON'T re-show the standard permission
+  //        modal.
+  //     2. If app foreground permission is not granted → show the standard
+  //        permission modal, but ONLY ONCE per session (guarded by
+  //        `hasPromptedLocationRef`).
+  //     3. If everything is fine → fetch GPS once.
+  // ─────────────────────────────────────────────────────────────────────────
   const checkLocationStatusAndPrompt = async () => {
     try {
       const servicesEnabled = await Location.hasServicesEnabledAsync();
       const { status } = await Location.getForegroundPermissionsAsync();
 
-      if (!servicesEnabled || status !== 'granted') {
-        if (!isDataRefreshingRef.current) {
+      if (!servicesEnabled) {
+        // ── CASE A: Device GPS is turned OFF ──
+        // Show the "services off" modal once; guide user to device Settings.
+        setIsPermissionPopupVisible(false);
+        if (!hasShownServicesOffRef.current) {
+          hasShownServicesOffRef.current = true;
+          setIsLocationServicesOffModalVisible(true);
+        }
+        return;
+      }
+
+      // ── CASE B: GPS is ON but app permission not granted ──
+      if (status !== 'granted') {
+        // Show the standard permission modal only once per session.
+        if (!hasPromptedLocationRef.current) {
+          hasPromptedLocationRef.current = true;
           setIsPermissionPopupVisible(true);
         }
-      } else {
-        setIsPermissionPopupVisible(false);
-        if (!hasAppliedGpsOnceRef.current) {
-          fetchCurrentLocationDynamically();
-        }
+        return;
+      }
+
+      // ── CASE C: Everything is fine ──
+      setIsPermissionPopupVisible(false);
+      if (!hasAppliedGpsOnceRef.current) {
+        fetchCurrentLocationDynamically();
       }
     } catch (e) {
-      if (!isDataRefreshingRef.current) {
+      // On unexpected error, only prompt once per session.
+      if (!hasPromptedLocationRef.current) {
+        hasPromptedLocationRef.current = true;
         setIsPermissionPopupVisible(true);
       }
     }
@@ -948,21 +997,43 @@ export default function HomeScreen() {
     return () => clearInterval(interval);
   }, [activeBannerIndex]);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ FIXED: fetchCurrentLocationDynamically
+  //
+  //   Previously, when device Location Services were OFF, this function
+  //   re-opened the standard permission modal, which the user could not
+  //   satisfy → infinite popup loop.
+  //
+  //   New behaviour:
+  //     • If device Location Services are OFF → show the "services off"
+  //       modal (opens device Settings on tap) instead of the permission modal.
+  //     • If app permission is denied → show the standard permission modal
+  //       (guarded to appear once per session).
+  //     • Otherwise proceed to fetch GPS.
+  // ─────────────────────────────────────────────────────────────────────────
   const fetchCurrentLocationDynamically = async () => {
     if (hasAppliedGpsOnceRef.current) return;
     setIsLoadingLocation(true);
     try {
+      // ── Check device-wide Location Services first ──
       const servicesEnabled = await Location.hasServicesEnabledAsync();
       if (!servicesEnabled) {
         setIsLoadingLocation(false);
-        setIsPermissionPopupVisible(true);
+        // Show the "services off" modal, NOT the permission modal.
+        setIsPermissionPopupVisible(false);
+        setIsLocationServicesOffModalVisible(true);
         return;
       }
 
+      // ── Now check app-level permission ──
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         setIsLoadingLocation(false);
-        setIsPermissionPopupVisible(true);
+        // Only show the permission modal once per session.
+        if (!hasPromptedLocationRef.current) {
+          hasPromptedLocationRef.current = true;
+          setIsPermissionPopupVisible(true);
+        }
         return;
       }
 
@@ -1021,10 +1092,34 @@ export default function HomeScreen() {
     }
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ FIXED: handleAllowLocationPopup
+  //
+  //   The old code called fetchCurrentLocationDynamically(), which when GPS
+  //   was OFF re-opened the permission modal → loop.
+  //
+  //   New behaviour:
+  //     • Hide the permission modal immediately.
+  //     • Re-check device services; if OFF → show the "services off" modal.
+  //     • Otherwise try to fetch GPS.
+  //   The "services off" modal has a button that opens device Settings.
+  // ─────────────────────────────────────────────────────────────────────────
   const handleAllowLocationPopup = async () => {
     setIsRequestingPermission(true);
     try {
+      // Hide the standard permission modal first.
       setIsPermissionPopupVisible(false);
+
+      // Check device services BEFORE requesting permission.
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        // Location services are OFF → show the "services off" modal
+        // (its button opens the device Settings app).
+        setIsLocationServicesOffModalVisible(true);
+        return;
+      }
+
+      // Services are ON — request permission and fetch location.
       hasAppliedGpsOnceRef.current = false;
       await fetchCurrentLocationDynamically();
     } catch (e) {
@@ -1032,6 +1127,33 @@ export default function HomeScreen() {
     } finally {
       setIsRequestingPermission(false);
     }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ NEW: Open the device Settings app so the user can enable Location
+  //         Services (GPS). Called from the "services off" modal button.
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleOpenDeviceSettings = async () => {
+    try {
+      await Linking.openSettings();
+    } catch (e) {
+      console.log('Error opening device settings:', e);
+    } finally {
+      // Close the modal once we've sent the user to Settings.
+      setIsLocationServicesOffModalVisible(false);
+      // Allow the "services off" modal to be shown again next time the user
+      // returns if services are still off.
+      hasShownServicesOffRef.current = false;
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ NEW: Dismiss the "services off" modal without opening Settings.
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleDismissServicesOffModal = () => {
+    setIsLocationServicesOffModalVisible(false);
+    // Do not re-show in the same session unless something explicitly triggers it.
+    hasShownServicesOffRef.current = true;
   };
 
   const handleSelectSavedAddress = async (item: SavedAddress) => {
@@ -2204,6 +2326,69 @@ export default function HomeScreen() {
                   <Feather name="arrow-right" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
                 </>
               )}
+            </TouchableOpacity>
+
+            {/* ✅ NEW: "Maybe later" dismiss option so the user is never trapped
+                in the permission popup. */}
+            <TouchableOpacity
+              style={{ marginTop: 12, paddingVertical: 6 }}
+              onPress={() => setIsPermissionPopupVisible(false)}
+              activeOpacity={0.7}
+            >
+              <Text style={{ fontSize: 12.5, color: '#64748B', fontWeight: '600' }}>Maybe later</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ─── ✅ NEW: LOCATION SERVICES (GPS) OFF MODAL ─── */}
+      {/* Shown when device-wide Location Services are turned OFF. */}
+      {/* The action button opens the device Settings app instead of         */}
+      {/* re-requesting the (useless) app-level permission.                  */}
+      <Modal
+        visible={isLocationServicesOffModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleDismissServicesOffModal}
+      >
+        <View style={styles.permissionModalBackdrop}>
+          <View style={styles.permissionCardContainer}>
+            <View style={[styles.permissionIllustrationCircle, { backgroundColor: '#FEF3C7' }]}>
+              <Ionicons name="location" size={38} color="#D97706" />
+              <View style={[styles.permissionPulseDot, { borderColor: 'rgba(217, 119, 6, 0.3)' }]} />
+            </View>
+
+            <Text style={styles.permissionCardTitle}>Turn On Location Services</Text>
+            <Text style={styles.permissionCardDescription}>
+              Your device's location (GPS) is currently turned off. To find nearby chefs and get accurate delivery estimates, please enable Location Services in your device settings.
+            </Text>
+
+            <View style={styles.permissionFeaturesList}>
+              <View style={styles.permissionFeatureItem}>
+                <Ionicons name="checkmark-circle" size={16} color="#D97706" style={{ marginRight: 8 }} />
+                <Text style={styles.permissionFeatureText}>Open Settings → Location → Turn On</Text>
+              </View>
+              <View style={styles.permissionFeatureItem}>
+                <Ionicons name="checkmark-circle" size={16} color="#D97706" style={{ marginRight: 8 }} />
+                <Text style={styles.permissionFeatureText}>Then return to the app to continue</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.permissionAllowButton, { backgroundColor: '#D97706', shadowColor: '#D97706' }]}
+              activeOpacity={0.88}
+              onPress={handleOpenDeviceSettings}
+            >
+              <Text style={styles.permissionAllowButtonText}>Open Device Settings</Text>
+              <Feather name="settings" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ marginTop: 12, paddingVertical: 6 }}
+              onPress={handleDismissServicesOffModal}
+              activeOpacity={0.7}
+            >
+              <Text style={{ fontSize: 12.5, color: '#64748B', fontWeight: '600' }}>Maybe later</Text>
             </TouchableOpacity>
           </View>
         </View>

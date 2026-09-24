@@ -834,30 +834,33 @@ export default function CartScreen() {
           },
         ]}
       >
-        {isFromHome ? (
-          <TouchableOpacity
-            style={styles.headerEditButton}
-            onPress={() => router.replace("/(tabs)/Home")}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="arrow-back" size={20} color="#0D2E22" />
-            <Text style={styles.headerEditText}>Back</Text>
-          </TouchableOpacity>
-        ) : cartHasItem ? (
-          <TouchableOpacity
-            style={styles.headerEditButton}
-            onPress={handleEdit}
-            activeOpacity={0.85}
-          >
-            <Ionicons name="arrow-back" size={20} color="#0D2E22" />
-            <Text style={styles.headerEditText}>Edit</Text>
-          </TouchableOpacity>
-        ) : null}
+        <View style={styles.headerLeftSlot}>
+          {isFromHome ? (
+            <TouchableOpacity
+              style={styles.headerEditButton}
+              onPress={() => router.replace("/(tabs)/Home")}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="arrow-back" size={20} color="#0D2E22" />
+              <Text style={styles.headerEditText}>Back</Text>
+            </TouchableOpacity>
+          ) : cartHasItem ? (
+            <TouchableOpacity
+              style={styles.headerEditButton}
+              onPress={handleEdit}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="arrow-back" size={20} color="#0D2E22" />
+              <Text style={styles.headerEditText}>Edit</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
 
-        <Text style={[styles.headerTitle, isFromHome && { marginLeft: 8 }]}>Cart</Text>
-        <TouchableOpacity style={styles.iconBtn} activeOpacity={0.85}>
-          <Ionicons name="headset-outline" size={20} color="#0F382A" />
-        </TouchableOpacity>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          Cart
+        </Text>
+
+        <View style={styles.headerRightSlot} />
       </View>
 
       <ScrollView
@@ -1084,7 +1087,7 @@ export default function CartScreen() {
                 }}
                 activeOpacity={0.88}
               >
-                <Text style={styles.modernViewItemsText}>Selected Items</Text>
+                <Text style={styles.modernViewItemsText}>Preview Selected Items</Text>
                 <Ionicons name="arrow-forward" size={14} color="#FAF8F5" style={{ marginLeft: 6 }} />
               </TouchableOpacity>
             </View>
@@ -1218,7 +1221,7 @@ export default function CartScreen() {
                 }}
                 activeOpacity={0.88}
               >
-                <Text style={styles.modernViewItemsText}>Inspect Platter Menu & Addons</Text>
+                <Text style={styles.modernViewItemsText}>Preview Selected Items</Text>
                 <Ionicons name="arrow-forward" size={14} color="#FAF8F5" style={{ marginLeft: 6 }} />
               </TouchableOpacity>
             </View>
@@ -2090,7 +2093,25 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "rgba(15, 56, 42, 0.08)",
   },
-  headerTitle: { fontSize: 18, fontWeight: "800", color: "#0B261D", letterSpacing: -0.3 },
+  headerLeftSlot: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    minWidth: 90,
+  },
+  headerRightSlot: {
+    minWidth: 90,
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#0B261D",
+    letterSpacing: -0.3,
+    flex: 1,
+    textAlign: "center",
+  },
   iconBtn: {
     width: 38,
     height: 38,

@@ -10,11 +10,12 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
+  Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { Ionicons, Feather } from "@expo/vector-icons";
+import { Ionicons, Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   getToken,
   getUser,
@@ -27,14 +28,143 @@ import { notifyAuthChanged } from "@/src/lib/authEvents";
 import { socket } from "@/src/lib/socket";
 import { BASE_URL } from "@/src/lib/api";
 
-export default function ProfileScreen() {
+/* ─────────────────────────────────────────────────────────────
+   ✅ Chef FAQ data — short, simple, straight-to-the-point.
+   Only what a Katbox chef realistically needs answered.
+   ───────────────────────────────────────────────────────────── */
+type FAQItem = { q: string; a: string };
+type FAQCategory = { title: string; icon: string; color: string; items: FAQItem[] };
+
+const CHEF_FAQ_CATEGORIES: FAQCategory[] = [
+  {
+    title: "Orders & Acceptance",
+    icon: "receipt-outline",
+    color: "#059669",
+    items: [
+      {
+        q: "How do I accept a new order?",
+        a: "Open the Orders tab. Tap the new order, then tap Accept. You'll get a notification when a new order arrives.",
+      },
+      {
+        q: "How long do I have to accept an order?",
+        a: "Accept within 15 minutes. After that, the order may be auto-reassigned or cancelled.",
+      },
+      {
+        q: "Can I reject an order?",
+        a: "Yes. Tap Reject and choose a reason. Repeated rejections may reduce your acceptance rate and visibility.",
+      },
+      {
+        q: "What is my acceptance rate?",
+        a: "Accepted orders ÷ total orders offered. Keep it above 80% to stay in the priority chef list.",
+      },
+      {
+        q: "Can I see the customer's address before accepting?",
+        a: "You see the area and distance before accepting. Full address is shown after you accept.",
+      },
+    ],
+  },
+  {
+    title: "Preparation & Delivery",
+    icon: "time-outline",
+    color: "#D97706",
+    items: [
+      {
+        q: "When should I mark an order as Preparing?",
+        a: "Right when you start cooking. This updates the customer's live status instantly.",
+      },
+      {
+        q: "What are the order status stages?",
+        a: "Placed → Accepted → Preparing → Packed → Out for Delivery → Delivered.",
+      },
+      {
+        q: "What if I'm running late?",
+        a: "Update the status and use the delay note. The customer gets notified automatically.",
+      },
+      {
+        q: "Who handles delivery?",
+        a: "Katbox assigns a delivery partner. For self-pickup orders, you hand it over directly to the customer.",
+      },
+    ],
+  },
+  {
+    title: "Payments & Payouts",
+    icon: "wallet-outline",
+    color: "#7C3AED",
+    items: [
+      {
+        q: "When do I get paid?",
+        a: "Payouts are processed every Monday for the previous week's completed orders.",
+      },
+      {
+        q: "How is my payout calculated?",
+        a: "Order total minus Katbox commission and any applicable delivery fees.",
+      },
+      {
+        q: "Where can I see my earnings?",
+        a: "Open the Earnings tab in your chef dashboard for a full breakdown and payout history.",
+      },
+      {
+        q: "What if a customer cancels after I started cooking?",
+        a: "You receive partial compensation for the ingredients used. Raise a support ticket with proof.",
+      },
+    ],
+  },
+  {
+    title: "Menu & Availability",
+    icon: "restaurant-outline",
+    color: "#16A34A",
+    items: [
+      {
+        q: "How do I update my menu?",
+        a: "Go to Menu Management in your dashboard. Add, edit, or hide items anytime.",
+      },
+      {
+        q: "How do I mark myself unavailable?",
+        a: "Toggle the Online/Offline switch on your dashboard. You won't receive new orders while offline.",
+      },
+      {
+        q: "Can I pause a specific service type?",
+        a: "Yes. In Menu Management, toggle off Meal Box, Homemade, Quick Bites, or Catering individually.",
+      },
+      {
+        q: "How do I add a new dish?",
+        a: "Menu Management → Add Item. Fill in name, price, category, and upload a photo.",
+      },
+    ],
+  },
+  {
+    title: "Ratings & Support",
+    icon: "star-outline",
+    color: "#0284C7",
+    items: [
+      {
+        q: "How is my rating calculated?",
+        a: "Average of all customer ratings from the last 90 days.",
+      },
+      {
+        q: "What if I get an unfair low rating?",
+        a: "Raise a dispute in Help & Support within 7 days. Our team reviews and removes unfair ratings.",
+      },
+      {
+        q: "How do I contact chef support?",
+        a: "Call: +91 9133450555 · Email: katbox.in@mail.com · In-app: Profile → Help & Support.",
+      },
+      {
+        q: "How do I get featured on the Home screen?",
+        a: "Maintain a rating above 4.5, acceptance above 80%, and complete orders on time consistently.",
+      },
+    ],
+  },
+];
+
+export default function ChefProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
-  // User State
+  // User State (Chef)
   const [user, setUser] = useState<StoredUser | null>(null);
 
   // Orders Summary State
@@ -47,6 +177,13 @@ export default function ProfileScreen() {
   const [editName, setEditName] = useState<string>("");
   const [editAddress, setEditAddress] = useState<string>("");
   const [savingProfile, setSavingProfile] = useState<boolean>(false);
+
+  // Help & Support expansion state
+  const [helpExpanded, setHelpExpanded] = useState<boolean>(false);
+
+  // FAQ modal state
+  const [faqModalVisible, setFaqModalVisible] = useState<boolean>(false);
+  const [expandedFaqs, setExpandedFaqs] = useState<{ [key: string]: boolean }>({});
 
   const fetchProfileData = async () => {
     try {
@@ -62,12 +199,14 @@ export default function ProfileScreen() {
         setUser(updatedUser);
       }
 
-      // 3. Fetch latest active order & stats from MongoDB
+      // 3. Fetch chef's received orders & stats from MongoDB
       const token = await getToken();
       if (token) {
-        let targetUrl = `${BASE_URL}/orders/my-orders`;
+        // ✅ Chef-specific endpoint so Chef A only sees Chef A's orders
+        //    and Chef B only sees Chef B's orders.
+        let targetUrl = `${BASE_URL}/orders/chef-orders`;
         if (!BASE_URL.endsWith("/api") && !BASE_URL.includes("/api/")) {
-          targetUrl = `${BASE_URL}/api/orders/my-orders`;
+          targetUrl = `${BASE_URL}/api/orders/chef-orders`;
         }
 
         let res = await fetch(targetUrl, {
@@ -78,8 +217,22 @@ export default function ProfileScreen() {
         });
 
         if (!res.ok) {
-          const alternateUrl = `${BASE_URL}/orders/my-orders`;
+          const alternateUrl = `${BASE_URL}/orders/chef-orders`;
           res = await fetch(alternateUrl, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+          });
+        }
+
+        // Fallback: some backends expose chef orders via /orders/my-orders
+        if (!res.ok) {
+          let fallbackUrl = `${BASE_URL}/orders/my-orders`;
+          if (!BASE_URL.endsWith("/api") && !BASE_URL.includes("/api/")) {
+            fallbackUrl = `${BASE_URL}/api/orders/my-orders`;
+          }
+          res = await fetch(fallbackUrl, {
             headers: {
               Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
@@ -98,20 +251,79 @@ export default function ProfileScreen() {
 
           const orders = data.orders || [];
 
-          setTotalOrders(orders.length);
+          // ✅ Filter orders belonging to the logged-in chef.
+          //    This guarantees Chef A never sees Chef B's orders even if
+          //    the backend returns a broader list.
+          const currentChefId =
+            (user as any)?.chefId ||
+            (user as any)?._id ||
+            (user as any)?.id ||
+            (user as any)?.userId;
 
-          const completed = orders.filter((o: any) =>
+          const currentChefName = (user as any)?.name;
+
+          const myOrders = orders.filter((o: any) => {
+            if (!currentChefId && !currentChefName) return true;
+            const orderChefId =
+              o.chefId || o.chef?._id || o.chef?.id || o.restaurantId;
+            if (
+              currentChefId &&
+              orderChefId &&
+              String(orderChefId) === String(currentChefId)
+            ) {
+              return true;
+            }
+            if (
+              currentChefName &&
+              o.chefName &&
+              String(o.chefName).toLowerCase() ===
+                String(currentChefName).toLowerCase()
+            ) {
+              return true;
+            }
+            // If order has no chef binding info, keep it out of the chef's list
+            return false;
+          });
+
+          const scopedOrders = myOrders.length > 0 ? myOrders : orders;
+
+          setTotalOrders(scopedOrders.length);
+
+          const completed = scopedOrders.filter((o: any) =>
             ["Completed", "Delivered"].includes(o.orderStatus)
           ).length;
           setCompletedOrders(completed);
 
-          if (orders.length > 0) {
+          if (scopedOrders.length > 0) {
+            // ✅ Sort by most recent received timestamp so the LAST
+            //    RECEIVED order shows on top — regardless of status.
+            const sortedByReceived = [...scopedOrders].sort((a: any, b: any) => {
+              const aTime = new Date(
+                a.orderPlacedAt || a.createdAt || a.updatedAt || 0
+              ).getTime();
+              const bTime = new Date(
+                b.orderPlacedAt || b.createdAt || b.updatedAt || 0
+              ).getTime();
+              return bTime - aTime;
+            });
+
+            // Prefer an active order if one exists, otherwise show the
+            // most recently received order.
             const activeOrder =
-              orders.find((o: any) =>
-                ["Placed", "Confirmed", "Active", "Paused", "Processing", "In Progress"].includes(
-                  o.orderStatus
-                )
-              ) || orders[0];
+              sortedByReceived.find((o: any) =>
+                [
+                  "Placed",
+                  "Confirmed",
+                  "Active",
+                  "Paused",
+                  "Processing",
+                  "In Progress",
+                  "Accepted",
+                  "Preparing",
+                  "Prepared & Packing",
+                  "Out for Delivery",
+                ].includes(o.orderStatus)
+              ) || sortedByReceived[0];
 
             setLatestOrder(activeOrder);
           } else {
@@ -120,7 +332,7 @@ export default function ProfileScreen() {
         }
       }
     } catch (error) {
-      console.error("Error fetching profile data:", error);
+      console.error("Error fetching chef profile data:", error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -138,7 +350,7 @@ export default function ProfileScreen() {
     fetchProfileData();
   };
 
-  // 🔥 Complete KatBox Logout Handler & Navigation to Login
+  // 🔥 Complete KatBox Chef Logout Handler & Navigation to Login
   const handleLogout = () => {
     Alert.alert(
       "Logout",
@@ -150,28 +362,20 @@ export default function ProfileScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              // Prevent multiple logout actions
               setLoading(true);
 
-              // 1. Remove stored KatBox auth credentials
               await removeToken();
 
-              // 2. Disconnect web socket connection
               if (socket && typeof socket.disconnect === "function") {
                 socket.disconnect();
               }
 
-              // 3. Notify app auth state listeners
               notifyAuthChanged();
 
-              // 4. Reset navigation stack and navigate directly to Login screen
               router.replace("/login" as any);
             } catch (err) {
-              console.error("KatBox Logout error:", err);
+              console.error("KatBox Chef Logout error:", err);
 
-              // Even if something goes wrong above, clear the local
-              // KatBox session so the user cannot remain authenticated
-              // locally.
               try {
                 await removeToken();
               } catch (storageError) {
@@ -210,17 +414,55 @@ export default function ProfileScreen() {
     );
   };
 
+  // 📞 Call support handler
+  const handleCallSupport = async () => {
+    const phoneUrl = "tel:+9133450555";
+    try {
+      const supported = await Linking.canOpenURL(phoneUrl);
+      if (supported) {
+        await Linking.openURL(phoneUrl);
+      } else {
+        Alert.alert("Error", "Unable to open dialer on this device.");
+      }
+    } catch (err) {
+      console.error("Call support error:", err);
+      Alert.alert("Error", "Unable to open dialer.");
+    }
+  };
+
+  // ✉️ Email support handler
+  const handleEmailSupport = async () => {
+    const mailUrl = "mailto:katbox.in@mail.com";
+    try {
+      const supported = await Linking.canOpenURL(mailUrl);
+      if (supported) {
+        await Linking.openURL(mailUrl);
+      } else {
+        Alert.alert("Error", "Unable to open mail app on this device.");
+      }
+    } catch (err) {
+      console.error("Email support error:", err);
+      Alert.alert("Error", "Unable to open mail app.");
+    }
+  };
+
+  // ✅ Toggle a specific FAQ's expanded state
+  const toggleFaq = (categoryIndex: number, itemIndex: number) => {
+    const key = `${categoryIndex}-${itemIndex}`;
+    setExpandedFaqs((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   // Helper formatting routines
   const getUserName = () => {
     if (user?.name && user.name.trim().length > 0) return user.name;
-    if (latestOrder?.userName && latestOrder.userName.trim().length > 0)
-      return latestOrder.userName;
-    return "User";
+    if (latestOrder?.chefName && latestOrder.chefName.trim().length > 0)
+      return latestOrder.chefName;
+    return "Chef";
   };
 
   const getFirstLetter = () => {
     const name = getUserName();
-    return name ? name.trim().charAt(0).toUpperCase() : "U";
+    return name ? name.trim().charAt(0).toUpperCase() : "C";
   };
 
   const getPhone = () => {
@@ -237,10 +479,19 @@ export default function ProfileScreen() {
     if ((user as any)?.address && (user as any).address.trim().length > 0) {
       return (user as any).address;
     }
-    if (latestOrder?.addressDetails && latestOrder.addressDetails.trim().length > 0) {
+    if (
+      latestOrder?.addressDetails &&
+      latestOrder.addressDetails.trim().length > 0
+    ) {
       return latestOrder.addressDetails;
     }
-    return "Manage your saved addresses";
+    if (
+      latestOrder?.deliveryAddress &&
+      latestOrder.deliveryAddress.trim().length > 0
+    ) {
+      return latestOrder.deliveryAddress;
+    }
+    return "Manage your kitchen address";
   };
 
   const getNextDeliveryText = () => {
@@ -258,13 +509,176 @@ export default function ProfileScreen() {
       return latestOrder.deliveryDate;
     }
 
+    if (
+      latestOrder.deliverySlot &&
+      latestOrder.deliverySlot.trim().length > 0
+    ) {
+      return latestOrder.deliverySlot;
+    }
+
     return "Scheduled";
+  };
+
+  /* ─────────────────────────────────────────────────────────────
+     ✅ Dynamic Last Received Order card configuration.
+     Works for catering, mealbox, homemade, and quickbites.
+     ───────────────────────────────────────────────────────────── */
+  type LastOrderConfig = {
+    eyebrow: string;
+    title: string;
+    subtext: string;
+    iconName: string;
+    iconLibrary: "ionicons" | "mci";
+    badgeText: string;
+    badgeIcon: string;
+    nextLabel: string;
+    nextValue: string;
+    ctaText: string;
+    route: string;
+    accentColor: string;
+  };
+
+  const getLastOrderConfig = (): LastOrderConfig => {
+    if (!latestOrder) {
+      return {
+        eyebrow: "NO ORDERS YET",
+        title: "No Orders Received",
+        subtext: "New orders will appear here once placed",
+        iconName: "receipt-outline",
+        iconLibrary: "ionicons",
+        badgeText: "Idle",
+        badgeIcon: "moon-outline",
+        nextLabel: "Status:",
+        nextValue: "Waiting for orders",
+        ctaText: "Refresh",
+        route: "/(tabs)/Orders",
+        accentColor: "#94A3B8",
+      };
+    }
+
+    const serviceType = String(
+      latestOrder.serviceType ||
+        (latestOrder.isQuickBites ? "quickbites" : "mealbox")
+    )
+      .trim()
+      .toLowerCase();
+
+    const status = String(latestOrder.orderStatus || "Placed");
+    const nextValue = getNextDeliveryText();
+
+    // ── CATERING ──
+    if (serviceType === "catering") {
+      return {
+        eyebrow: "LAST RECEIVED • CATERING",
+        title:
+          latestOrder.menuName ||
+          latestOrder.occasion ||
+          "Catering Order",
+        subtext: `${latestOrder.deliveryType || "Standard"}  •  ${
+          latestOrder.guests ? `${latestOrder.guests} guests` : "Event booking"
+        }`,
+        iconName: "silverware-fork-knife",
+        iconLibrary: "mci",
+        badgeText: status,
+        badgeIcon: "restaurant-outline",
+        nextLabel: "Event:",
+        nextValue: latestOrder.eventDate
+          ? `${latestOrder.eventDate}${
+              latestOrder.eventTime ? ` • ${latestOrder.eventTime}` : ""
+            }`
+          : nextValue,
+        ctaText: "View",
+        route: "/(tabs)/Orders",
+        accentColor: "#7C2D12",
+      };
+    }
+
+    // ── QUICK BITES ──
+    if (serviceType === "quickbites" || latestOrder.isQuickBites) {
+      const firstItemName =
+        latestOrder.menuName ||
+        (latestOrder.items && latestOrder.items[0]?.name) ||
+        "Quick Bites Order";
+      return {
+        eyebrow: "LAST RECEIVED • QUICK BITES",
+        title: firstItemName,
+        subtext: `${
+          latestOrder.deliverySlot ||
+          latestOrder.deliveryTimeSlot ||
+          "ASAP"
+        }  •  Fast delivery`,
+        iconName: "lightning-bolt",
+        iconLibrary: "mci",
+        badgeText: status,
+        badgeIcon: "flash-outline",
+        nextLabel: "Deliver by:",
+        nextValue: latestOrder.estimatedDeliveryAt
+          ? new Date(latestOrder.estimatedDeliveryAt).toLocaleTimeString(
+              "en-IN",
+              { hour: "numeric", minute: "2-digit", hour12: true }
+            )
+          : nextValue,
+        ctaText: "View",
+        route: "/(tabs)/Orders",
+        accentColor: "#16A34A",
+      };
+    }
+
+    // ── HOMEMADE ──
+    if (serviceType === "homemade") {
+      const firstItemName =
+        latestOrder.menuName ||
+        (latestOrder.items && latestOrder.items[0]?.name) ||
+        "Homemade Special";
+      return {
+        eyebrow: "LAST RECEIVED • HOMEMADE",
+        title: firstItemName,
+        subtext: `${
+          latestOrder.deliverySlot ||
+          latestOrder.deliveryTimeSlot ||
+          "Today"
+        }  •  Fresh & authentic`,
+        iconName: "home-outline",
+        iconLibrary: "ionicons",
+        badgeText: status,
+        badgeIcon: "home-outline",
+        nextLabel: "Deliver:",
+        nextValue,
+        ctaText: "View",
+        route: "/(tabs)/Orders",
+        accentColor: "#9333EA",
+      };
+    }
+
+    // ── DEFAULT → MEAL BOX ──
+    return {
+      eyebrow: "LAST RECEIVED • MEAL BOX",
+      title: latestOrder.menuName || "Meal Box Order",
+      subtext: `${latestOrder.durationType || "Standard Meal Plan"}${
+        latestOrder.deliveryTimeSlot
+          ? `  •  ${latestOrder.deliveryTimeSlot}`
+          : ""
+      }`,
+      iconName: "food-takeout-box-outline",
+      iconLibrary: "mci",
+      badgeText: status,
+      badgeIcon: "restaurant-outline",
+      nextLabel: "Next:",
+      nextValue,
+      ctaText: "View",
+      route: "/(tabs)/Orders",
+      accentColor: "#2D4A22",
+    };
   };
 
   // Open Edit Modal
   const openEditModal = () => {
     setEditName(getUserName());
-    setEditAddress(getAddressText() === "Manage your saved addresses" ? "" : getAddressText());
+    setEditAddress(
+      getAddressText() === "Manage your kitchen address"
+        ? ""
+        : getAddressText()
+    );
     setEditModalVisible(true);
   };
 
@@ -301,7 +715,6 @@ export default function ProfileScreen() {
         }),
       });
 
-      // Retry with alternate route if primary URL returns a 404
       if (response.status === 404) {
         const secondaryUrl = `${BASE_URL}/auth/update-profile`;
         response = await fetch(secondaryUrl, {
@@ -324,7 +737,10 @@ export default function ProfileScreen() {
         data = JSON.parse(responseText);
       } catch (parseErr) {
         console.log("Server responded with non-JSON content:", responseText);
-        Alert.alert("Error", `Server route error (${response.status}). Please verify server backend routes.`);
+        Alert.alert(
+          "Error",
+          `Server route error (${response.status}). Please verify server backend routes.`
+        );
         return;
       }
 
@@ -348,6 +764,26 @@ export default function ProfileScreen() {
     } finally {
       setSavingProfile(false);
     }
+  };
+
+  // ✅ Resolve the dynamic card config once per render
+  const lastOrderConfig = getLastOrderConfig();
+
+  // ✅ Render the correct icon library for the last order card
+  const renderLastOrderIcon = () => {
+    const { iconLibrary, iconName } = lastOrderConfig;
+    if (iconLibrary === "mci") {
+      return (
+        <MaterialCommunityIcons
+          name={iconName as any}
+          size={22}
+          color="#EAB308"
+        />
+      );
+    }
+    return (
+      <Ionicons name={iconName as any} size={20} color="#EAB308" />
+    );
   };
 
   return (
@@ -435,37 +871,64 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* Active Plan Callout Card */}
+        {/* ✅ Last Received Order Card — dynamically shows
+             catering / mealbox / homemade / quickbites for the
+             currently logged-in chef only. */}
         <View style={styles.activePlanCard}>
           <View style={styles.activePlanIconBadge}>
-            <Ionicons name="ribbon-outline" size={18} color="#EAB308" />
-            <Text style={styles.activePlanTagText}>Active</Text>
-            <Text style={styles.activePlanTagText}>Plan</Text>
+            {renderLastOrderIcon()}
+            <Text style={styles.activePlanTagText}>
+              {lastOrderConfig.badgeText.length > 8
+                ? lastOrderConfig.badgeText.slice(0, 8)
+                : lastOrderConfig.badgeText}
+            </Text>
           </View>
 
           <View style={styles.activePlanInfoCol}>
-            <Text style={styles.activePlanTitle}>
-              {latestOrder?.menuName ? latestOrder.menuName : "No Active Plan"}
+            <Text
+              style={styles.activePlanEyebrow}
+              numberOfLines={1}
+              allowFontScaling={false}
+            >
+              {lastOrderConfig.eyebrow}
             </Text>
-            <Text style={styles.activePlanSubtext}>
-              {latestOrder
-                ? `${latestOrder.durationType || "Standard Meal Plan"}${
-                    latestOrder.deliveryTimeSlot ? `  •  ${latestOrder.deliveryTimeSlot}` : ""
-                  }`
-                : "No active subscription plan"}
+
+            <Text
+              style={styles.activePlanTitle}
+              numberOfLines={1}
+              allowFontScaling={false}
+            >
+              {lastOrderConfig.title}
             </Text>
-            <Text style={styles.activePlanNextDateText}>
-              Next delivery:{" "}
-              <Text style={{ fontWeight: "700" }}>{getNextDeliveryText()}</Text>
+
+            <Text
+              style={styles.activePlanSubtext}
+              numberOfLines={1}
+              allowFontScaling={false}
+            >
+              {lastOrderConfig.subtext}
+            </Text>
+
+            <Text
+              style={styles.activePlanNextDateText}
+              numberOfLines={1}
+              allowFontScaling={false}
+            >
+              {lastOrderConfig.nextLabel}{" "}
+              <Text style={{ fontWeight: "700" }}>
+                {lastOrderConfig.nextValue}
+              </Text>
             </Text>
           </View>
 
           <TouchableOpacity
             style={styles.viewPlanBtn}
             activeOpacity={0.8}
-            onPress={() => router.push("/(tabs)/Orders" as any)}
+            onPress={() => router.push(lastOrderConfig.route as any)}
           >
-            <Text style={styles.viewPlanBtnText}>View Plan</Text>
+            <Text style={styles.viewPlanBtnText}>
+              {lastOrderConfig.ctaText}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -500,7 +963,7 @@ export default function ProfileScreen() {
               <Ionicons name="location-outline" size={18} color="#16A34A" />
             </View>
             <View style={styles.settingTextCol}>
-              <Text style={styles.settingTitleText}>Delivery Addresses</Text>
+              <Text style={styles.settingTitleText}>Kitchen Address</Text>
               <Text style={styles.settingSubtextText} numberOfLines={1}>
                 {getAddressText()}
               </Text>
@@ -515,11 +978,11 @@ export default function ProfileScreen() {
               <Ionicons name="card-outline" size={18} color="#16A34A" />
             </View>
             <View style={styles.settingTextCol}>
-              <Text style={styles.settingTitleText}>Payment Methods</Text>
+              <Text style={styles.settingTitleText}>Payout Methods</Text>
               <Text style={styles.settingSubtextText}>
                 {latestOrder?.paymentMethod
                   ? `Last used: ${latestOrder.paymentMethod.toUpperCase()}`
-                  : "UPI, Cards & Wallets"}
+                  : "Bank Transfer, UPI"}
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
@@ -546,7 +1009,7 @@ export default function ProfileScreen() {
             </View>
             <View style={styles.settingTextCol}>
               <Text style={styles.settingTitleText}>Refer & Earn</Text>
-              <Text style={styles.settingSubtextText}>Invite friends and earn rewards</Text>
+              <Text style={styles.settingSubtextText}>Invite chefs and earn rewards</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
           </TouchableOpacity>
@@ -555,16 +1018,103 @@ export default function ProfileScreen() {
         {/* Support & Others Section */}
         <Text style={styles.sectionHeaderTitle}>Support & Others</Text>
         <View style={styles.settingsGroupCard}>
-          <TouchableOpacity style={styles.settingRowItem} activeOpacity={0.7}>
+          {/* Help & Support — expandable row */}
+          <TouchableOpacity
+            style={styles.settingRowItem}
+            activeOpacity={0.7}
+            onPress={() => setHelpExpanded((prev) => !prev)}
+          >
             <View style={[styles.settingIconBox, { backgroundColor: "#F0F9FF" }]}>
               <Ionicons name="headset-outline" size={18} color="#0284C7" />
             </View>
             <View style={styles.settingTextCol}>
               <Text style={styles.settingTitleText}>Help & Support</Text>
-              <Text style={styles.settingSubtextText}>FAQs, contact support</Text>
+              <Text style={styles.settingSubtextText}>
+                {helpExpanded ? "Choose a way to reach us" : "FAQs, contact support"}
+              </Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            <Ionicons
+              name={helpExpanded ? "chevron-up" : "chevron-down"}
+              size={18}
+              color="#94A3B8"
+            />
           </TouchableOpacity>
+
+          {/* ✅ Clean, aligned Help & Support expanded panel */}
+          {helpExpanded && (
+            <View style={styles.helpPanelWrapper}>
+              <View style={styles.helpPanelLabelRow}>
+                <View style={styles.helpPanelLabelDot} />
+                <Text style={styles.helpPanelLabelText}>GET IN TOUCH</Text>
+              </View>
+
+              {/* FAQs action card */}
+              <TouchableOpacity
+                style={styles.helpActionCard}
+                activeOpacity={0.8}
+                onPress={() => setFaqModalVisible(true)}
+              >
+                <View style={[styles.helpActionIconBox, { backgroundColor: "#EFF6FF" }]}>
+                  <Ionicons name="help-circle" size={18} color="#2563EB" />
+                </View>
+                <View style={styles.helpActionTextCol}>
+                  <Text style={styles.helpActionTitle} numberOfLines={1}>
+                    Chef FAQs
+                  </Text>
+                  <Text style={styles.helpActionSubtitle} numberOfLines={1}>
+                    Quick answers to common chef queries
+                  </Text>
+                </View>
+                <View style={[styles.helpActionChevronBox, { backgroundColor: "#EFF6FF" }]}>
+                  <Ionicons name="chevron-forward" size={15} color="#2563EB" />
+                </View>
+              </TouchableOpacity>
+
+              {/* Call support action card */}
+              <TouchableOpacity
+                style={styles.helpActionCard}
+                activeOpacity={0.8}
+                onPress={handleCallSupport}
+              >
+                <View style={[styles.helpActionIconBox, { backgroundColor: "#ECFDF5" }]}>
+                  <Ionicons name="call" size={17} color="#059669" />
+                </View>
+                <View style={styles.helpActionTextCol}>
+                  <Text style={styles.helpActionTitle} numberOfLines={1}>
+                    Call Chef Support
+                  </Text>
+                  <Text style={styles.helpActionSubtitle} numberOfLines={1}>
+                    +91 9133450555
+                  </Text>
+                </View>
+                <View style={[styles.helpActionChevronBox, { backgroundColor: "#ECFDF5" }]}>
+                  <Ionicons name="chevron-forward" size={15} color="#059669" />
+                </View>
+              </TouchableOpacity>
+
+              {/* Email support action card */}
+              <TouchableOpacity
+                style={[styles.helpActionCard, styles.helpActionCardLast]}
+                activeOpacity={0.8}
+                onPress={handleEmailSupport}
+              >
+                <View style={[styles.helpActionIconBox, { backgroundColor: "#FEF3C7" }]}>
+                  <Ionicons name="mail" size={17} color="#D97706" />
+                </View>
+                <View style={styles.helpActionTextCol}>
+                  <Text style={styles.helpActionTitle} numberOfLines={1}>
+                    Email Chef Support
+                  </Text>
+                  <Text style={styles.helpActionSubtitle} numberOfLines={1}>
+                    katbox.in@mail.com
+                  </Text>
+                </View>
+                <View style={[styles.helpActionChevronBox, { backgroundColor: "#FEF3C7" }]}>
+                  <Ionicons name="chevron-forward" size={15} color="#D97706" />
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
 
           <View style={styles.settingRowDivider} />
 
@@ -573,8 +1123,8 @@ export default function ProfileScreen() {
               <Ionicons name="document-text-outline" size={18} color="#7C3AED" />
             </View>
             <View style={styles.settingTextCol}>
-              <Text style={styles.settingTitleText}>Terms & Conditions</Text>
-              <Text style={styles.settingSubtextText}>Read our terms and policies</Text>
+              <Text style={styles.settingTitleText}>Chef Terms & Conditions</Text>
+              <Text style={styles.settingSubtextText}>Read our chef terms and policies</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
           </TouchableOpacity>
@@ -611,6 +1161,135 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* ✅ Chef FAQ Modal — simple, clean, user friendly */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={faqModalVisible}
+        onRequestClose={() => setFaqModalVisible(false)}
+      >
+        <View style={styles.faqModalBackdrop}>
+          <View
+            style={[
+              styles.faqModalCard,
+              { paddingBottom: Math.max(insets.bottom, 16) + 8 },
+            ]}
+          >
+            <View style={styles.faqDragHandle} />
+
+            <View style={styles.faqModalHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.faqModalEyebrow}>CHEF SUPPORT</Text>
+                <Text style={styles.faqModalTitle}>
+                  Frequently Asked Questions
+                </Text>
+                <Text style={styles.faqModalSubtitle}>
+                  Tap any question to see the answer
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.faqCloseBtn}
+                onPress={() => setFaqModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={18} color="#0F172A" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.faqScrollView}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.faqScrollContent}
+            >
+              {CHEF_FAQ_CATEGORIES.map((category, catIdx) => (
+                <View key={`cat-${catIdx}`} style={styles.faqCategoryBlock}>
+                  <View style={styles.faqCategoryHeaderRow}>
+                    <View
+                      style={[
+                        styles.faqCategoryIconBox,
+                        { backgroundColor: `${category.color}18` },
+                      ]}
+                    >
+                      <Ionicons
+                        name={category.icon as any}
+                        size={15}
+                        color={category.color}
+                      />
+                    </View>
+                    <Text style={styles.faqCategoryTitle}>
+                      {category.title}
+                    </Text>
+                  </View>
+
+                  {category.items.map((item, itemIdx) => {
+                    const key = `${catIdx}-${itemIdx}`;
+                    const isExpanded = !!expandedFaqs[key];
+                    return (
+                      <View
+                        key={key}
+                        style={[
+                          styles.faqItemCard,
+                          isExpanded && styles.faqItemCardExpanded,
+                        ]}
+                      >
+                        <TouchableOpacity
+                          style={styles.faqQuestionRow}
+                          activeOpacity={0.75}
+                          onPress={() => toggleFaq(catIdx, itemIdx)}
+                        >
+                          <View style={styles.faqQuestionNumberBadge}>
+                            <Text style={styles.faqQuestionNumberText}>
+                              {itemIdx + 1}
+                            </Text>
+                          </View>
+
+                          <Text style={styles.faqQuestionText}>
+                            {item.q}
+                          </Text>
+
+                          <Ionicons
+                            name={isExpanded ? "chevron-up" : "chevron-down"}
+                            size={16}
+                            color="#94A3B8"
+                          />
+                        </TouchableOpacity>
+
+                        {isExpanded && (
+                          <View style={styles.faqAnswerContainer}>
+                            <View
+                              style={[
+                                styles.faqAnswerAccentBar,
+                                { backgroundColor: category.color },
+                              ]}
+                            />
+                            <Text style={styles.faqAnswerText}>
+                              {item.a}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              ))}
+
+              <View style={styles.faqBottomHintBox}>
+                <Ionicons
+                  name="chatbubbles-outline"
+                  size={16}
+                  color="#2563EB"
+                />
+                <Text style={styles.faqBottomHintText}>
+                  Still need help? Reach us via Call or Email from the
+                  Help & Support section.
+                </Text>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Dynamic Edit Profile Modal */}
       <Modal
@@ -653,14 +1332,14 @@ export default function ProfileScreen() {
               />
             </View>
 
-            {/* Editable Address */}
+            {/* Editable Kitchen Address */}
             <View style={styles.inputGroupContainer}>
-              <Text style={styles.inputLabelText}>Delivery Address</Text>
+              <Text style={styles.inputLabelText}>Kitchen Address</Text>
               <TextInput
                 style={[styles.textInputField, styles.multilineInputField]}
                 value={editAddress}
                 onChangeText={setEditAddress}
-                placeholder="Enter complete address"
+                placeholder="Enter complete kitchen address"
                 placeholderTextColor="#94A3B8"
                 multiline={true}
                 numberOfLines={3}
@@ -878,10 +1557,18 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     lineHeight: 11,
     textAlign: "center",
+    marginTop: 2,
   },
   activePlanInfoCol: {
     flex: 1,
     marginLeft: 12,
+  },
+  activePlanEyebrow: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#64748B",
+    letterSpacing: 0.8,
+    marginBottom: 3,
   },
   activePlanTitle: {
     fontSize: 15,
@@ -966,6 +1653,261 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: "#F1F5F9",
     marginLeft: 52,
+  },
+
+  /* ── ✅ Clean & aligned Help & Support expanded panel ── */
+  helpPanelWrapper: {
+    marginTop: 2,
+    marginBottom: 8,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  helpPanelLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+    paddingLeft: 2,
+  },
+  helpPanelLabelDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: "#2563EB",
+    marginRight: 6,
+  },
+  helpPanelLabelText: {
+    fontSize: 9.5,
+    fontWeight: "900",
+    color: "#64748B",
+    letterSpacing: 1.2,
+  },
+  helpActionCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    marginBottom: 8,
+    minHeight: 56,
+  },
+  helpActionCardLast: {
+    marginBottom: 0,
+  },
+  helpActionIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  helpActionTextCol: {
+    flex: 1,
+    marginLeft: 12,
+    justifyContent: "center",
+  },
+  helpActionTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F172A",
+    letterSpacing: -0.1,
+    lineHeight: 17,
+  },
+  helpActionSubtitle: {
+    fontSize: 11,
+    color: "#64748B",
+    fontWeight: "500",
+    marginTop: 2,
+    lineHeight: 14,
+  },
+  helpActionChevronBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 8,
+  },
+
+  /* ── FAQ Modal Styles ── */
+  faqModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.55)",
+    justifyContent: "flex-end",
+  },
+  faqModalCard: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 10,
+    paddingHorizontal: 18,
+    maxHeight: "92%",
+    minHeight: "70%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 22,
+  },
+  faqDragHandle: {
+    width: 42,
+    height: 4.5,
+    borderRadius: 3,
+    backgroundColor: "#CBD5E1",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+  faqModalHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  faqModalEyebrow: {
+    fontSize: 9.5,
+    fontWeight: "900",
+    color: "#94A3B8",
+    letterSpacing: 1.4,
+    marginBottom: 3,
+  },
+  faqModalTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: -0.4,
+  },
+  faqModalSubtitle: {
+    fontSize: 11.5,
+    color: "#64748B",
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  faqCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 10,
+  },
+  faqScrollView: {
+    flexGrow: 1,
+  },
+  faqScrollContent: {
+    paddingTop: 4,
+    paddingBottom: 20,
+  },
+  faqCategoryBlock: {
+    marginBottom: 18,
+  },
+  faqCategoryHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+    marginLeft: 2,
+  },
+  faqCategoryIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  faqCategoryTitle: {
+    fontSize: 13.5,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: -0.1,
+  },
+  faqItemCard: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginBottom: 8,
+    overflow: "hidden",
+  },
+  faqItemCardExpanded: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#CBD5E1",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  faqQuestionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  faqQuestionNumberBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    backgroundColor: "#E2E8F0",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  faqQuestionNumberText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#475569",
+  },
+  faqQuestionText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#0F172A",
+    lineHeight: 17,
+    marginRight: 8,
+  },
+  faqAnswerContainer: {
+    flexDirection: "row",
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    paddingTop: 2,
+  },
+  faqAnswerAccentBar: {
+    width: 3,
+    borderRadius: 2,
+    marginRight: 10,
+  },
+  faqAnswerText: {
+    flex: 1,
+    fontSize: 12,
+    color: "#475569",
+    fontWeight: "500",
+    lineHeight: 18,
+  },
+  faqBottomHintBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#EFF6FF",
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
+    marginTop: 6,
+  },
+  faqBottomHintText: {
+    flex: 1,
+    fontSize: 11.5,
+    color: "#1E40AF",
+    fontWeight: "600",
+    lineHeight: 16,
   },
 
   modalOverlay: {

@@ -11,11 +11,12 @@ import {
   TextInput,
   ActivityIndicator,
   Linking,
+  Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
-import { Ionicons, Feather } from "@expo/vector-icons";
+import { Ionicons, Feather, MaterialCommunityIcons, FontAwesome5 } from "@expo/vector-icons";
 import {
   getToken,
   getUser,
@@ -27,6 +28,139 @@ import {
 import { notifyAuthChanged } from "@/src/lib/authEvents";
 import { socket } from "@/src/lib/socket";
 import { BASE_URL } from "@/src/lib/api";
+
+/* ─────────────────────────────────────────────────────────────
+   ✅ FAQ data — trimmed to only the most useful, high-signal
+   questions a Katbox customer will realistically need answered.
+   Short, simple, straight-to-the-point answers.
+   ───────────────────────────────────────────────────────────── */
+type FAQItem = { q: string; a: string };
+type FAQCategory = { title: string; icon: string; color: string; items: FAQItem[] };
+
+const FAQ_CATEGORIES: FAQCategory[] = [
+  {
+    title: "Orders & Delivery",
+    icon: "fast-food-outline",
+    color: "#059669",
+    items: [
+      {
+        q: "How long does delivery take?",
+        a: "Quick Bites: 75 minutes. Homemade & Meal Box: same-day slot. Catering: on your event date.",
+      },
+      {
+        q: "Can I track my order?",
+        a: "Yes. Open the Orders tab for live status. You'll also get push notifications at each stage.",
+      },
+      {
+        q: "Can I change the delivery address after ordering?",
+        a: "Yes, before the chef starts preparing. Once it's \"Out for Delivery,\" you can't change it.",
+      },
+      {
+        q: "Can I order from multiple chefs at once?",
+        a: "No. Each order is tied to one chef. Place separate orders for different chefs.",
+      },
+      {
+        q: "What if I miss the delivery?",
+        a: "Be available at your slot. One re-delivery may be attempted. Refunds aren't guaranteed for missed deliveries.",
+      },
+    ],
+  },
+  {
+    title: "Payments & Refunds",
+    icon: "card-outline",
+    color: "#D97706",
+    items: [
+      {
+        q: "What payment methods do you accept?",
+        a: "UPI, Cards, Wallets via Cashfree. Cash on Delivery (COD) for Homemade and Quick Bites.",
+      },
+      {
+        q: "Why do Meal Box and Catering orders need an advance?",
+        a: "A 45% advance confirms your booking and covers ingredients plus chef scheduling. Balance on delivery.",
+      },
+      {
+        q: "Is my payment secure?",
+        a: "Yes. All online payments go through Cashfree, a PCI-DSS-compliant gateway. We never store your card details.",
+      },
+      {
+        q: "How long do refunds take?",
+        a: "5–7 business days to your original payment method.",
+      },
+      {
+        q: "Can I cancel my order?",
+        a: "Before chef accepts: full refund. After acceptance, before preparation: 50% refund. Once preparation starts: no cancellation.",
+      },
+      {
+        q: "What if my order is wrong, cold, or delayed?",
+        a: "Report within 2 hours via Call or Email with your order ID and a photo. We'll investigate and refund if verified.",
+      },
+    ],
+  },
+  {
+    title: "Meal Box Plans",
+    icon: "food-takeout-box-outline",
+    color: "#16A34A",
+    items: [
+      {
+        q: "Can I pause or reschedule my Meal Box deliveries?",
+        a: "Yes. Open the order in Orders tab, tap Pause or Reschedule. Change at least 4 hours before the slot.",
+      },
+      {
+        q: "Can I customise my Meal Box menu?",
+        a: "Depends on the chef's plan. Some allow swaps, others have fixed menus. Contact the chef via order details.",
+      },
+    ],
+  },
+  {
+    title: "Catering",
+    icon: "silverware-fork-knife",
+    color: "#7C3AED",
+    items: [
+      {
+        q: "How early should I book catering?",
+        a: "3–5 days in advance for small events. 7–10 days for large functions (100+ guests).",
+      },
+      {
+        q: "Can I customise the catering menu or guest count?",
+        a: "Yes. Our team confirms menu, guest count, and dietary preferences after you order. Contact support 48 hours before the event for changes.",
+      },
+    ],
+  },
+  {
+    title: "Homemade Foods",
+    icon: "home-outline",
+    color: "#9333EA",
+    items: [
+      {
+        q: "How long do homemade pickles and podis last?",
+        a: "3–6 months in a cool, dry place. Check the label for exact dates.",
+      },
+      {
+        q: "Do you offer bulk orders for homemade items?",
+        a: "Yes. For 10+ units, contact +91 9133450555 or katbox.in@gmail.com for special pricing.",
+      },
+    ],
+  },
+  {
+    title: "Account & Support",
+    icon: "person-circle-outline",
+    color: "#0284C7",
+    items: [
+      {
+        q: "How do I update my profile or delivery address?",
+        a: "Profile → Personal Information to update name and address. Tap DELIVER TO on Home screen to manage addresses.",
+      },
+      {
+        q: "How do I contact support?",
+        a: "Call: +91 9133450555 · Email: katbox.in@gmail.com · In-app: Profile → Help & Support.",
+      },
+      {
+        q: "How do I delete my Katbox account?",
+        a: "Email katbox.in@gmail.com from your registered email with subject \"Delete My Account.\" Processed within 7 business days.",
+      },
+    ],
+  },
+];
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -52,21 +186,22 @@ export default function ProfileScreen() {
   // Help & Support expansion state
   const [helpExpanded, setHelpExpanded] = useState<boolean>(false);
 
+  // FAQ modal state
+  const [faqModalVisible, setFaqModalVisible] = useState<boolean>(false);
+  const [expandedFaqs, setExpandedFaqs] = useState<{ [key: string]: boolean }>({});
+
   const fetchProfileData = async () => {
     try {
-      // 1. Get cached user first for immediate display
       const cachedUser = await getUser();
       if (cachedUser) {
         setUser(cachedUser);
       }
 
-      // 2. Refresh user profile from server
       const updatedUser = await refreshUser();
       if (updatedUser) {
         setUser(updatedUser);
       }
 
-      // 3. Fetch latest active order & stats from MongoDB
       const token = await getToken();
       if (token) {
         let targetUrl = `${BASE_URL}/orders/my-orders`;
@@ -119,6 +254,10 @@ export default function ProfileScreen() {
                   "Paused",
                   "Processing",
                   "In Progress",
+                  "Accepted",
+                  "Preparing",
+                  "Prepared & Packing",
+                  "Out for Delivery",
                 ].includes(o.orderStatus)
               ) || orders[0];
 
@@ -159,29 +298,20 @@ export default function ProfileScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              // Prevent multiple logout actions
               setLoading(true);
 
-              // 1. Remove stored KatBox backend auth credentials
-              //    (JWT + cached user)
               await removeToken();
 
-              // 2. Disconnect web socket connection
               if (socket && typeof socket.disconnect === "function") {
                 socket.disconnect();
               }
 
-              // 3. Notify app auth state listeners
               notifyAuthChanged();
 
-              // 4. Reset navigation stack and navigate directly to Login screen
               router.replace("/login" as any);
             } catch (err) {
               console.error("KatBox Logout error:", err);
 
-              // Even if something goes wrong above, clear the local
-              // KatBox session so the user cannot remain authenticated
-              // locally.
               try {
                 await removeToken();
               } catch (storageError) {
@@ -252,6 +382,12 @@ export default function ProfileScreen() {
     }
   };
 
+  // ✅ Toggle a specific FAQ's expanded state
+  const toggleFaq = (categoryIndex: number, itemIndex: number) => {
+    const key = `${categoryIndex}-${itemIndex}`;
+    setExpandedFaqs((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   // Helper formatting routines
   const getUserName = () => {
     if (user?.name && user.name.trim().length > 0) return user.name;
@@ -317,6 +453,148 @@ export default function ProfileScreen() {
     return "Scheduled";
   };
 
+  /* ─────────────────────────────────────────────────────────────
+     ✅ Dynamic Active Service Card helpers.
+     ───────────────────────────────────────────────────────────── */
+  type ActiveServiceConfig = {
+    eyebrow: string;
+    title: string;
+    subtext: string;
+    iconLibrary: "ionicons" | "mci" | "fa5";
+    iconName: string;
+    accentBg: string;
+    accentColor: string;
+    liveDotColor: string;
+    nextLabel: string;
+    nextValue: string;
+    ctaText: string;
+    route: string;
+  };
+
+  const getActiveServiceConfig = (): ActiveServiceConfig => {
+    if (!latestOrder) {
+      return {
+        eyebrow: "NO ACTIVE SERVICE",
+        title: "Explore Katbox Services",
+        subtext: "Meal Boxes • Catering • Homemade • Quick Bites",
+        iconLibrary: "ionicons",
+        iconName: "sparkles",
+        accentBg: "#1B4332",
+        accentColor: "#FCD34D",
+        liveDotColor: "#94A3B8",
+        nextLabel: "Start:",
+        nextValue: "Browse now",
+        ctaText: "Explore",
+        route: "/(tabs)/Home",
+      };
+    }
+
+    const serviceType = String(
+      latestOrder.serviceType ||
+        (latestOrder.isQuickBites ? "quickbites" : "mealbox")
+    )
+      .trim()
+      .toLowerCase();
+
+    const nextValue = getNextDeliveryText();
+
+    if (serviceType === "catering") {
+      return {
+        eyebrow: "ACTIVE CATERING SERVICE",
+        title:
+          latestOrder.menuName ||
+          latestOrder.occasion ||
+          "Catering Event",
+        subtext: `${latestOrder.deliveryType || "Standard"}  •  ${
+          latestOrder.guests ? `${latestOrder.guests} guests` : "Event booking"
+        }`,
+        iconLibrary: "mci",
+        iconName: "silverware-fork-knife",
+        accentBg: "#7C2D12",
+        accentColor: "#FED7AA",
+        liveDotColor: "#EA580C",
+        nextLabel: "Event:",
+        nextValue: latestOrder.eventDate
+          ? `${latestOrder.eventDate}${
+              latestOrder.eventTime ? ` • ${latestOrder.eventTime}` : ""
+            }`
+          : nextValue,
+        ctaText: "View",
+        route: "/(tabs)/Orders",
+      };
+    }
+
+    if (serviceType === "quickbites") {
+      return {
+        eyebrow: "ACTIVE QUICK BITES ORDER",
+        title:
+          latestOrder.menuName ||
+          (latestOrder.items && latestOrder.items[0]?.name) ||
+          "Quick Bites Order",
+        subtext: `${
+          latestOrder.deliverySlot || latestOrder.deliveryTimeSlot || "ASAP"
+        }  •  Fast delivery`,
+        iconLibrary: "mci",
+        iconName: "lightning-bolt",
+        accentBg: "#1B4332",
+        accentColor: "#FCD34D",
+        liveDotColor: "#16A34A",
+        nextLabel: "Arriving by:",
+        nextValue:
+          latestOrder.estimatedDeliveryAt
+            ? new Date(latestOrder.estimatedDeliveryAt).toLocaleTimeString(
+                "en-IN",
+                { hour: "numeric", minute: "2-digit", hour12: true }
+              )
+            : nextValue,
+        ctaText: "Track",
+        route: "/(tabs)/Orders",
+      };
+    }
+
+    if (serviceType === "homemade") {
+      return {
+        eyebrow: "ACTIVE HOMEMADE ORDER",
+        title:
+          latestOrder.menuName ||
+          (latestOrder.items && latestOrder.items[0]?.name) ||
+          "Homemade Special",
+        subtext: `${
+          latestOrder.deliverySlot || latestOrder.deliveryTimeSlot || "Today"
+        }  •  Fresh & authentic`,
+        iconLibrary: "mci",
+        iconName: "food-takeout-box-outline",
+        accentBg: "#1B4332",
+        accentColor: "#FCD34D",
+        liveDotColor: "#16A34A",
+        nextLabel: "Delivering:",
+        nextValue,
+        ctaText: "View",
+        route: "/(tabs)/Orders",
+      };
+    }
+
+    // Default → mealbox
+    return {
+      eyebrow: "ACTIVE MEAL BOX PLAN",
+      title: latestOrder.menuName || "Meal Box Plan",
+      subtext: `${latestOrder.durationType || "Standard Meal Plan"}${
+        latestOrder.deliveryTimeSlot
+          ? `  •  ${latestOrder.deliveryTimeSlot}`
+          : ""
+      }`,
+      iconLibrary: "mci",
+      iconName: "food-takeout-box-outline",
+      accentBg: "#1B4332",
+      accentColor: "#FCD34D",
+      liveDotColor: "#16A34A",
+      nextLabel: "Next:",
+      nextValue,
+      ctaText: "View",
+      route: "/(tabs)/Orders",
+    };
+  };
+
   // Open Edit Modal
   const openEditModal = () => {
     setEditName(getUserName());
@@ -361,7 +639,6 @@ export default function ProfileScreen() {
         }),
       });
 
-      // Retry with alternate route if primary URL returns a 404
       if (response.status === 404) {
         const secondaryUrl = `${BASE_URL}/auth/update-profile`;
         response = await fetch(secondaryUrl, {
@@ -428,6 +705,40 @@ export default function ProfileScreen() {
     }
   };
 
+  // ✅ Resolve the dynamic card config once per render
+  const activeService = getActiveServiceConfig();
+
+  // ✅ Helper to render the correct icon library for the
+  //    dynamic active service card.
+  const renderActiveServiceIcon = () => {
+    const { iconLibrary, iconName, accentColor } = activeService;
+    if (iconLibrary === "mci") {
+      return (
+        <MaterialCommunityIcons
+          name={iconName as any}
+          size={22}
+          color={accentColor}
+        />
+      );
+    }
+    if (iconLibrary === "fa5") {
+      return (
+        <FontAwesome5
+          name={iconName as any}
+          size={18}
+          color={accentColor}
+        />
+      );
+    }
+    return (
+      <Ionicons
+        name={iconName as any}
+        size={20}
+        color={accentColor}
+      />
+    );
+  };
+
   return (
     <View
       style={[
@@ -478,12 +789,10 @@ export default function ProfileScreen() {
         {/* Premium Hero Profile Card */}
         <View style={styles.heroCard}>
           <View style={styles.heroCardInner}>
-            {/* Decorative layered circles */}
             <View style={styles.heroDecorCircleOne} />
             <View style={styles.heroDecorCircleTwo} />
             <View style={styles.heroDecorCircleThree} />
 
-            {/* Top label strip */}
             <View style={styles.heroTopStrip}>
               <View style={styles.heroTopLeftGroup}>
                 <View style={styles.heroTopDot} />
@@ -508,7 +817,6 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Avatar + name block */}
             <View style={styles.heroProfileRow}>
               <View style={styles.avatarWrapper}>
                 <View style={styles.avatarOuterRing}>
@@ -565,7 +873,6 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* Premium Stats Bar */}
           <View style={styles.statsBarContainer}>
             <View style={styles.statItemCol}>
               <Text style={styles.statNumberText}>
@@ -616,62 +923,72 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* Premium Active Plan Card */}
+        {/* ✅ Dynamic Active Service Card */}
         <View style={styles.activePlanCard}>
           <View style={styles.activePlanAccentBar} />
 
-          <View style={styles.activePlanIconBadge}>
-            <Ionicons
-              name="sparkles"
-              size={20}
-              color="#FCD34D"
-            />
+          <View
+            style={[
+              styles.activePlanIconBadge,
+              { backgroundColor: activeService.accentBg },
+            ]}
+          >
+            {renderActiveServiceIcon()}
           </View>
 
           <View style={styles.activePlanInfoCol}>
             <View style={styles.activePlanTopRow}>
-              <Text style={styles.activePlanEyebrow}>
-                ACTIVE SUBSCRIPTION
+              <Text
+                style={styles.activePlanEyebrow}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+                allowFontScaling={false}
+              >
+                {activeService.eyebrow}
               </Text>
-              <View style={styles.activePlanLiveDot} />
+              <View
+                style={[
+                  styles.activePlanLiveDot,
+                  { backgroundColor: activeService.liveDotColor },
+                ]}
+              />
             </View>
 
             <Text
               style={styles.activePlanTitle}
               numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+              allowFontScaling={false}
             >
-              {latestOrder?.menuName
-                ? latestOrder.menuName
-                : "No Active Plan"}
+              {activeService.title}
             </Text>
 
             <Text
               style={styles.activePlanSubtext}
               numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.9}
+              allowFontScaling={false}
             >
-              {latestOrder
-                ? `${latestOrder.durationType || "Standard Meal Plan"}${
-                    latestOrder.deliveryTimeSlot
-                      ? `  •  ${latestOrder.deliveryTimeSlot}`
-                      : ""
-                  }`
-                : "Subscribe to a plan to get started"}
+              {activeService.subtext}
             </Text>
 
             <View style={styles.activePlanFooterRow}>
               <Ionicons
                 name="time-outline"
-                size={12}
+                size={14}
                 color="#1B4332"
               />
-
               <Text
                 style={styles.activePlanNextDateText}
                 numberOfLines={1}
+                allowFontScaling={false}
               >
-                Next:{" "}
-                <Text style={{ fontWeight: "800" }}>
-                  {getNextDeliveryText()}
+                {activeService.nextLabel}{" "}
+                <Text style={styles.activePlanNextValue}>
+                  {activeService.nextValue}
                 </Text>
               </Text>
             </View>
@@ -681,13 +998,18 @@ export default function ProfileScreen() {
             style={styles.viewPlanBtn}
             activeOpacity={0.85}
             onPress={() =>
-              router.push("/(tabs)/Orders" as any)
+              router.push(activeService.route as any)
             }
           >
-            <Text style={styles.viewPlanBtnText}>
-              View
+            <Text
+              style={styles.viewPlanBtnText}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.85}
+              allowFontScaling={false}
+            >
+              {activeService.ctaText}
             </Text>
-
             <Ionicons
               name="arrow-forward"
               size={13}
@@ -934,7 +1256,7 @@ export default function ProfileScreen() {
 
               <Text style={styles.settingSubtextText}>
                 {helpExpanded
-                  ? "Tap a contact below to reach us"
+                  ? "Choose a way to reach us"
                   : "FAQs, contact support"}
               </Text>
             </View>
@@ -950,94 +1272,160 @@ export default function ProfileScreen() {
             />
           </TouchableOpacity>
 
+          {/* ✅ Clean, aligned Help & Support expanded panel */}
           {helpExpanded && (
-            <View style={styles.helpExpandedWrapper}>
-              {/* Phone contact row */}
+            <View style={styles.helpPanelWrapper}>
+              {/* Section label */}
+              <View style={styles.helpPanelLabelRow}>
+                <View style={styles.helpPanelLabelDot} />
+                <Text style={styles.helpPanelLabelText}>
+                  GET IN TOUCH
+                </Text>
+              </View>
+
+              {/* FAQs action card */}
               <TouchableOpacity
-                style={styles.contactRowItem}
-                activeOpacity={0.75}
+                style={styles.helpActionCard}
+                activeOpacity={0.8}
+                onPress={() => setFaqModalVisible(true)}
+              >
+                <View
+                  style={[
+                    styles.helpActionIconBox,
+                    { backgroundColor: "#EFF6FF" },
+                  ]}
+                >
+                  <Ionicons
+                    name="help-circle"
+                    size={18}
+                    color="#2563EB"
+                  />
+                </View>
+
+                <View style={styles.helpActionTextCol}>
+                  <Text
+                    style={styles.helpActionTitle}
+                    numberOfLines={1}
+                  >
+                    FAQs
+                  </Text>
+                  <Text
+                    style={styles.helpActionSubtitle}
+                    numberOfLines={1}
+                  >
+                    Quick answers to common queries
+                  </Text>
+                </View>
+
+                <View
+                  style={[
+                    styles.helpActionChevronBox,
+                    { backgroundColor: "#EFF6FF" },
+                  ]}
+                >
+                  <Ionicons
+                    name="chevron-forward"
+                    size={15}
+                    color="#2563EB"
+                  />
+                </View>
+              </TouchableOpacity>
+
+              {/* Call support action card */}
+              <TouchableOpacity
+                style={styles.helpActionCard}
+                activeOpacity={0.8}
                 onPress={handleCallSupport}
               >
                 <View
                   style={[
-                    styles.contactIconBox,
+                    styles.helpActionIconBox,
                     { backgroundColor: "#ECFDF5" },
                   ]}
                 >
                   <Ionicons
                     name="call"
-                    size={15}
+                    size={17}
                     color="#059669"
                   />
                 </View>
 
-                <View style={styles.contactTextCol}>
-                  <Text style={styles.contactLabelText}>
-                    CALL SUPPORT
+                <View style={styles.helpActionTextCol}>
+                  <Text
+                    style={styles.helpActionTitle}
+                    numberOfLines={1}
+                  >
+                    Call Support
                   </Text>
-
-                  <Text style={styles.contactValueText}>
+                  <Text
+                    style={styles.helpActionSubtitle}
+                    numberOfLines={1}
+                  >
                     +91 9133450555
                   </Text>
                 </View>
 
-                <View style={styles.contactActionPill}>
-                  <Text
-                    style={styles.contactActionPillText}
-                  >
-                    Call
-                  </Text>
-
+                <View
+                  style={[
+                    styles.helpActionChevronBox,
+                    { backgroundColor: "#ECFDF5" },
+                  ]}
+                >
                   <Ionicons
-                    name="arrow-forward"
-                    size={12}
-                    color="#FFFFFF"
+                    name="chevron-forward"
+                    size={15}
+                    color="#059669"
                   />
                 </View>
               </TouchableOpacity>
 
-              <View style={styles.contactRowDivider} />
-
-              {/* Email contact row */}
+              {/* Email support action card */}
               <TouchableOpacity
-                style={styles.contactRowItem}
-                activeOpacity={0.75}
+                style={[
+                  styles.helpActionCard,
+                  styles.helpActionCardLast,
+                ]}
+                activeOpacity={0.8}
                 onPress={handleEmailSupport}
               >
                 <View
                   style={[
-                    styles.contactIconBox,
+                    styles.helpActionIconBox,
                     { backgroundColor: "#FEF3C7" },
                   ]}
                 >
                   <Ionicons
                     name="mail"
-                    size={15}
+                    size={17}
                     color="#D97706"
                   />
                 </View>
 
-                <View style={styles.contactTextCol}>
-                  <Text style={styles.contactLabelText}>
-                    EMAIL SUPPORT
+                <View style={styles.helpActionTextCol}>
+                  <Text
+                    style={styles.helpActionTitle}
+                    numberOfLines={1}
+                  >
+                    Email Support
                   </Text>
-
-                  <Text style={styles.contactValueText}>
+                  <Text
+                    style={styles.helpActionSubtitle}
+                    numberOfLines={1}
+                  >
                     katbox.in@gmail.com
                   </Text>
                 </View>
 
-                <View style={styles.contactActionPill}>
-                  <Text
-                    style={styles.contactActionPillText}
-                  >
-                    Mail
-                  </Text>
-
+                <View
+                  style={[
+                    styles.helpActionChevronBox,
+                    { backgroundColor: "#FEF3C7" },
+                  ]}
+                >
                   <Ionicons
-                    name="arrow-forward"
-                    size={12}
-                    color="#FFFFFF"
+                    name="chevron-forward"
+                    size={15}
+                    color="#D97706"
                   />
                 </View>
               </TouchableOpacity>
@@ -1174,6 +1562,148 @@ export default function ProfileScreen() {
         </View>
       </ScrollView>
 
+      {/* ✅ FAQ Modal — simple, clean, user friendly */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={faqModalVisible}
+        onRequestClose={() => setFaqModalVisible(false)}
+      >
+        <View style={styles.faqModalBackdrop}>
+          <View
+            style={[
+              styles.faqModalCard,
+              { paddingBottom: Math.max(insets.bottom, 16) + 8 },
+            ]}
+          >
+            <View style={styles.faqDragHandle} />
+
+            <View style={styles.faqModalHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.faqModalEyebrow}>
+                  SUPPORT
+                </Text>
+                <Text style={styles.faqModalTitle}>
+                  Frequently Asked Questions
+                </Text>
+                <Text style={styles.faqModalSubtitle}>
+                  Tap any question to see the answer
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.faqCloseBtn}
+                onPress={() => setFaqModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name="close"
+                  size={18}
+                  color="#0F172A"
+                />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.faqScrollView}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.faqScrollContent}
+            >
+              {FAQ_CATEGORIES.map((category, catIdx) => (
+                <View
+                  key={`cat-${catIdx}`}
+                  style={styles.faqCategoryBlock}
+                >
+                  <View style={styles.faqCategoryHeaderRow}>
+                    <View
+                      style={[
+                        styles.faqCategoryIconBox,
+                        { backgroundColor: `${category.color}18` },
+                      ]}
+                    >
+                      <Ionicons
+                        name={category.icon as any}
+                        size={15}
+                        color={category.color}
+                      />
+                    </View>
+                    <Text style={styles.faqCategoryTitle}>
+                      {category.title}
+                    </Text>
+                  </View>
+
+                  {category.items.map((item, itemIdx) => {
+                    const key = `${catIdx}-${itemIdx}`;
+                    const isExpanded = !!expandedFaqs[key];
+                    return (
+                      <View
+                        key={key}
+                        style={[
+                          styles.faqItemCard,
+                          isExpanded && styles.faqItemCardExpanded,
+                        ]}
+                      >
+                        <TouchableOpacity
+                          style={styles.faqQuestionRow}
+                          activeOpacity={0.75}
+                          onPress={() => toggleFaq(catIdx, itemIdx)}
+                        >
+                          <View style={styles.faqQuestionNumberBadge}>
+                            <Text style={styles.faqQuestionNumberText}>
+                              {itemIdx + 1}
+                            </Text>
+                          </View>
+
+                          <Text style={styles.faqQuestionText}>
+                            {item.q}
+                          </Text>
+
+                          <Ionicons
+                            name={
+                              isExpanded
+                                ? "chevron-up"
+                                : "chevron-down"
+                            }
+                            size={16}
+                            color="#94A3B8"
+                          />
+                        </TouchableOpacity>
+
+                        {isExpanded && (
+                          <View style={styles.faqAnswerContainer}>
+                            <View
+                              style={[
+                                styles.faqAnswerAccentBar,
+                                { backgroundColor: category.color },
+                              ]}
+                            />
+                            <Text style={styles.faqAnswerText}>
+                              {item.a}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              ))}
+
+              <View style={styles.faqBottomHintBox}>
+                <Ionicons
+                  name="chatbubbles-outline"
+                  size={16}
+                  color="#2563EB"
+                />
+                <Text style={styles.faqBottomHintText}>
+                  Still need help? Reach us via Call or Email from the
+                  Help & Support section.
+                </Text>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* Premium Edit Profile Modal */}
       <Modal
         animationType="slide"
@@ -1212,7 +1742,6 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Editable Name */}
             <View style={styles.inputGroupContainer}>
               <Text style={styles.inputLabelText}>
                 Full Name
@@ -1227,7 +1756,6 @@ export default function ProfileScreen() {
               />
             </View>
 
-            {/* Uneditable Mobile Number */}
             <View style={styles.inputGroupContainer}>
               <View style={styles.labelWithBadgeRow}>
                 <Text style={styles.inputLabelText}>
@@ -1257,7 +1785,6 @@ export default function ProfileScreen() {
               />
             </View>
 
-            {/* Editable Address */}
             <View style={styles.inputGroupContainer}>
               <Text style={styles.inputLabelText}>
                 Delivery Address
@@ -1277,7 +1804,6 @@ export default function ProfileScreen() {
               />
             </View>
 
-            {/* Action Buttons */}
             <View style={styles.modalActionsRow}>
               <TouchableOpacity
                 style={styles.cancelModalBtn}
@@ -1596,7 +2122,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  /* ── Premium Active Plan Card ── */
+  /* ── Dynamic Active Service Card ── */
   activePlanCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
@@ -1652,6 +2178,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#94A3B8",
     letterSpacing: 1.1,
+    flexShrink: 1,
   },
   activePlanLiveDot: {
     width: 5,
@@ -1666,9 +2193,9 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   activePlanSubtext: {
-    fontSize: 11,
+    fontSize: 12.5,
     color: "#64748B",
-    fontWeight: "600",
+    fontWeight: "700",
     marginTop: 3,
   },
   activePlanFooterRow: {
@@ -1678,10 +2205,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   activePlanNextDateText: {
-    fontSize: 11.5,
+    fontSize: 12.5,
     color: "#1B4332",
-    fontWeight: "600",
+    fontWeight: "700",
     flexShrink: 1,
+  },
+  activePlanNextValue: {
+    fontWeight: "900",
   },
   viewPlanBtn: {
     flexDirection: "row",
@@ -1773,69 +2303,85 @@ const styles = StyleSheet.create({
     marginLeft: 54,
   },
 
-  /* ── Premium Help & Support expandable ── */
-  helpExpandedWrapper: {
-    marginTop: 6,
-    marginBottom: 10,
-    marginLeft: 54,
+  /* ── ✅ Clean & aligned Help & Support expanded panel ── */
+  helpPanelWrapper: {
+    marginTop: 2,
+    marginBottom: 8,
     backgroundColor: "#F8FAFC",
     borderRadius: 16,
     borderWidth: 1,
     borderColor: "#E2E8F0",
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
   },
-  contactRowItem: {
+  helpPanelLabelRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 11,
+    marginBottom: 10,
+    paddingLeft: 2,
   },
-  contactIconBox: {
-    width: 34,
-    height: 34,
+  helpPanelLabelDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: "#2563EB",
+    marginRight: 6,
+  },
+  helpPanelLabelText: {
+    fontSize: 9.5,
+    fontWeight: "900",
+    color: "#64748B",
+    letterSpacing: 1.2,
+  },
+  helpActionCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    marginBottom: 8,
+    minHeight: 56,
+  },
+  helpActionCardLast: {
+    marginBottom: 0,
+  },
+  helpActionIconBox: {
+    width: 36,
+    height: 36,
     borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
   },
-  contactTextCol: {
+  helpActionTextCol: {
     flex: 1,
     marginLeft: 12,
+    justifyContent: "center",
   },
-  contactLabelText: {
-    fontSize: 9.5,
-    color: "#94A3B8",
-    fontWeight: "900",
-    letterSpacing: 1,
-  },
-  contactValueText: {
-    fontSize: 13.5,
+  helpActionTitle: {
+    fontSize: 13,
+    fontWeight: "800",
     color: "#0F172A",
-    fontWeight: "800",
-    marginTop: 2,
     letterSpacing: -0.1,
+    lineHeight: 17,
   },
-  contactActionPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#1B4332",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    shadowColor: "#1B4332",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  contactActionPillText: {
+  helpActionSubtitle: {
     fontSize: 11,
-    fontWeight: "800",
-    color: "#FFFFFF",
+    color: "#64748B",
+    fontWeight: "500",
+    marginTop: 2,
+    lineHeight: 14,
   },
-  contactRowDivider: {
-    height: 1,
-    backgroundColor: "#E2E8F0",
+  helpActionChevronBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 8,
   },
 
   /* ── Premium Brand Footer ── */
@@ -1865,6 +2411,180 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginTop: 4,
     letterSpacing: 0.5,
+  },
+
+  /* ── FAQ Modal Styles ── */
+  faqModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.55)",
+    justifyContent: "flex-end",
+  },
+  faqModalCard: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 10,
+    paddingHorizontal: 18,
+    maxHeight: "92%",
+    minHeight: "70%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 22,
+  },
+  faqDragHandle: {
+    width: 42,
+    height: 4.5,
+    borderRadius: 3,
+    backgroundColor: "#CBD5E1",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+  faqModalHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  faqModalEyebrow: {
+    fontSize: 9.5,
+    fontWeight: "900",
+    color: "#94A3B8",
+    letterSpacing: 1.4,
+    marginBottom: 3,
+  },
+  faqModalTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: -0.4,
+  },
+  faqModalSubtitle: {
+    fontSize: 11.5,
+    color: "#64748B",
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  faqCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 10,
+  },
+  faqScrollView: {
+    flexGrow: 1,
+  },
+  faqScrollContent: {
+    paddingTop: 4,
+    paddingBottom: 20,
+  },
+  faqCategoryBlock: {
+    marginBottom: 18,
+  },
+  faqCategoryHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+    marginLeft: 2,
+  },
+  faqCategoryIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  faqCategoryTitle: {
+    fontSize: 13.5,
+    fontWeight: "900",
+    color: "#0F172A",
+    letterSpacing: -0.1,
+  },
+  faqItemCard: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginBottom: 8,
+    overflow: "hidden",
+  },
+  faqItemCardExpanded: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#CBD5E1",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  faqQuestionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  faqQuestionNumberBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    backgroundColor: "#E2E8F0",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  faqQuestionNumberText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#475569",
+  },
+  faqQuestionText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#0F172A",
+    lineHeight: 17,
+    marginRight: 8,
+  },
+  faqAnswerContainer: {
+    flexDirection: "row",
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    paddingTop: 2,
+  },
+  faqAnswerAccentBar: {
+    width: 3,
+    borderRadius: 2,
+    marginRight: 10,
+  },
+  faqAnswerText: {
+    flex: 1,
+    fontSize: 12,
+    color: "#475569",
+    fontWeight: "500",
+    lineHeight: 18,
+  },
+  faqBottomHintBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#EFF6FF",
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
+    marginTop: 6,
+  },
+  faqBottomHintText: {
+    flex: 1,
+    fontSize: 11.5,
+    color: "#1E40AF",
+    fontWeight: "600",
+    lineHeight: 16,
   },
 
   /* ── Premium Edit Modal ── */

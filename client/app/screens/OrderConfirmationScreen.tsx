@@ -568,13 +568,38 @@ export default function OrderConfirmationScreen() {
               ? "Homemade Order Confirmed!"
               : "Order Confirmed!"}
           </Text>
-          <Text style={styles.orderConfirmedSubtitle}>
-            {isCod
-              ? (hasAdvancePaid
-                  ? `Advance (₹${advancePaidAmount}) paid successfully.\nPlease keep ₹${balanceAmountToCollect} ready for delivery.`
-                  : `Pay ₹${balanceAmountToCollect} in cash upon delivery.\nNo online payment required right now.`)
-              : `Yay! Your payment was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
-          </Text>
+
+          {/* ==================================================================
+              ✅ UPDATED HEADER SUBTITLE — Catering & Mealbox flows now show
+              a clear 3-line breakdown so the customer always knows the
+              advance already paid and the balance still due after delivery,
+              plus a short note that the balance can be paid online or in
+              cash. Homemade/QuickBites and COD flows keep their existing
+              single-line messages.
+              ================================================================== */}
+          {isCateringFlow || isMealBoxFlow ? (
+            <View style={styles.headerAdvanceBalanceBlock}>
+              <Text style={styles.headerAdvanceLine}>
+                ✓ Advance collected:{" "}
+                <Text style={styles.headerAdvanceValue}>₹{advancePaidAmount}</Text>
+              </Text>
+              <Text style={styles.headerBalanceLine}>
+                Balance payable on delivery:{" "}
+                <Text style={styles.headerBalanceValue}>₹{balanceAmountToCollect}</Text>
+              </Text>
+              <Text style={styles.headerPaymentNote}>
+                You can pay the balance on delivery via UPI or cash.
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.orderConfirmedSubtitle}>
+              {isCod
+                ? (hasAdvancePaid
+                    ? `Advance (₹${advancePaidAmount}) paid successfully.\nPlease keep ₹${balanceAmountToCollect} ready for delivery.`
+                    : `Pay ₹${balanceAmountToCollect} in cash upon delivery.\nNo online payment required right now.`)
+                : `Yay! Your payment was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
+            </Text>
+          )}
 
           {/* Order ID & UTR Pill */}
           <View style={styles.orderIdBadgePill}>
@@ -1447,7 +1472,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#FAF8F5",
     letterSpacing: -0.4,
-    marginBottom: 6,
+    marginBottom: 10,
     textAlign: "center",
     width: "100%",
     alignSelf: "center",
@@ -1459,6 +1484,50 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: "500",
     marginBottom: 18,
+  },
+  /* ✅ NEW: Advance / Balance header block used only for Catering & Mealbox */
+  headerAdvanceBalanceBlock: {
+    alignItems: "center",
+    marginBottom: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: "rgba(250, 248, 245, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(250, 248, 245, 0.15)",
+    alignSelf: "stretch",
+  },
+  headerAdvanceLine: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#A7F3D0",
+    textAlign: "center",
+    marginBottom: 4,
+  },
+  headerAdvanceValue: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+  headerBalanceLine: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FDE68A",
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  headerBalanceValue: {
+    color: "#FFFFFF",
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+  headerPaymentNote: {
+    fontSize: 11.5,
+    color: "#D1FAE5",
+    fontWeight: "500",
+    textAlign: "center",
+    lineHeight: 15,
+    fontStyle: "italic",
   },
   orderIdBadgePill: {
     flexDirection: "row",

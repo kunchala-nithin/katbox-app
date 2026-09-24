@@ -190,9 +190,9 @@ export default function ChefOrderReviewScreen() {
   };
 
   // ────────────────────────────────────────────────
-  // 14-HOUR MINIMUM LEAD TIME LOGIC (PREMIUM)
+  // 16-HOUR MINIMUM LEAD TIME LOGIC (PREMIUM)
   // ────────────────────────────────────────────────
-  const MIN_LEAD_HOURS = 14;
+  const MIN_LEAD_HOURS = 16;
   const earliestAllowed = new Date(Date.now() + MIN_LEAD_HOURS * 60 * 60 * 1000);
 
   // Human-readable earliest time (e.g. "2 Sep, 7:30 AM")
@@ -227,7 +227,7 @@ export default function ChefOrderReviewScreen() {
     return d;
   };
 
-  // Is this date+slot allowed under the 14-hour rule?
+  // Is this date+slot allowed under the 16-hour rule?
   const isSlotAllowed = (date: Date, slot: string): boolean => {
     return getSlotDateTime(date, slot).getTime() >= earliestAllowed.getTime();
   };
@@ -242,7 +242,7 @@ export default function ChefOrderReviewScreen() {
 
   // Simple and understandable instruction text for Date modal
   const getDateModalInstruction = () => {
-    return `Orders need 14 hours advance notice. Earliest available: ${earliestAllowedDisplay}.`;
+    return `Orders need 16 hours advance notice. Earliest available: ${earliestAllowedDisplay}.`;
   };
 
   // Simple and understandable instruction text for Time modal
@@ -251,7 +251,7 @@ export default function ChefOrderReviewScreen() {
       return "Please select a date first.";
     }
     if (isEarliestDay(selectedDate)) {
-      return `For ${dateDisplay}, only slots after ${earliestAllowedDisplay.split(", ")[1]} are available due to our 14-hour prep time.`;
+      return `For ${dateDisplay}, only slots after ${earliestAllowedDisplay.split(", ")[1]} are available due to our 16-hour prep time.`;
     }
     return `All time slots are available for ${dateDisplay}.`;
   };

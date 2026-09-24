@@ -49,6 +49,15 @@ const MONTHS_MAP: { [key: string]: number } = {
   JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11
 };
 
+// ✅ NEW HELPER — Normalizes the service type so QuickBites is treated
+// as a sibling of Homemade everywhere in this screen. This mirrors the
+// backend behaviour where both serviceTypes share the same schema but
+// use different discriminators.
+const isHomemadeService = (sType?: string): boolean => {
+  const t = String(sType || "").toLowerCase();
+  return t === "homemade" || t === "quickbites";
+};
+
 const getOccasionIcon = (occasionName: string): keyof typeof Ionicons.glyphMap => {
   if (!occasionName) return "sparkles-outline";
   const occ = occasionName.toLowerCase();
@@ -117,7 +126,8 @@ const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
   }
 
   const sType = (order.serviceType || "").toLowerCase();
-  if (sType === "homemade" && order.createdAt) {
+  // ✅ Also treat quickbites as homemade for the estimated-time fallback.
+  if ((sType === "homemade" || sType === "quickbites") && order.createdAt) {
     const windowMin = Number(order.deliveryWindowMinutes) || 55;
     const createdMs = new Date(order.createdAt).getTime();
     if (Number.isFinite(createdMs)) {
@@ -679,7 +689,8 @@ export default function MyOrdersScreen() {
         fetchedOrders.forEach((ord: any) => {
           const sType = (ord.serviceType || "").toLowerCase();
           const isCatering = sType === "catering";
-          const isHomemade = sType === "homemade";
+          // ✅ Use the normalized helper so QuickBites is treated as homemade.
+          const isHomemade = isHomemadeService(sType);
           const defaultEventDate = ord.eventDate || ord.deliveryDate || (isHomemade ? "Today" : "Mon, 17 Jun");
 
           const sortedUpcoming = (isCatering || isHomemade)
@@ -1078,7 +1089,8 @@ export default function MyOrdersScreen() {
 
     const sType = (order?.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    const isHomemade = sType === "homemade";
+    // ✅ Use the normalized helper so QuickBites behaves like Homemade.
+    const isHomemade = isHomemadeService(sType);
     const activeDateToUse = defaultDate || selectedDatesPerOrder[order.orderId] || order.eventDate || order.deliveryDate;
 
     if (!isCatering && !isHomemade && order?.selections && typeof order.selections === "object" && !Array.isArray(order.selections)) {
@@ -1115,7 +1127,8 @@ export default function MyOrdersScreen() {
   const openOrderDetails = (order: any, activeDate?: string) => {
     const sType = (order?.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    const isHomemade = sType === "homemade";
+    // ✅ Use the normalized helper so QuickBites behaves like Homemade.
+    const isHomemade = isHomemadeService(sType);
     const dateToInspect = activeDate || selectedDatesPerOrder[order.orderId] || order.eventDate || order.deliveryDate;
 
     setSelectedOrderDetails({
@@ -1178,7 +1191,7 @@ export default function MyOrdersScreen() {
     try {
       const sType = (selectedOrderDetails.serviceType || "").toLowerCase();
       const isCatering = sType === "catering";
-      const isHomemade = sType === "homemade";
+      const isHomemade = isHomemadeService(sType);
       const orderId = selectedOrderDetails.orderId || "DW12345678";
       const chefName = selectedOrderDetails.chefName || selectedOrderDetails.restaurantName || "Partner Chef";
       const menuName = selectedOrderDetails.menuName || (isCatering ? "Royal Catering Platter" : (isHomemade ? "Homemade Dishes" : "Classic Lunch"));
@@ -1279,7 +1292,7 @@ export default function MyOrdersScreen() {
   if (isInvoiceScreenOpen && selectedOrderDetails) {
     const sType = (selectedOrderDetails.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    const isHomemade = sType === "homemade";
+    const isHomemade = isHomemadeService(sType);
     const invOrderId = selectedOrderDetails.orderId || "DW12345678";
     const invMenuName = selectedOrderDetails.menuName || (isCatering ? "Royal Catering Platter" : (isHomemade ? "Homemade Dishes Order" : "Classic Lunch"));
     const invChefName = selectedOrderDetails.chefName || selectedOrderDetails.restaurantName || "Partner Chef";
@@ -1503,14 +1516,15 @@ export default function MyOrdersScreen() {
   if (isDetailScreenOpen && selectedOrderDetails) {
     const sType = (selectedOrderDetails.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    const isHomemade = sType === "homemade";
+    // ✅ Use the normalized helper so QuickBites behaves like Homemade.
+    const isHomemade = isHomemadeService(sType);
     const isMealBox = !isCatering && !isHomemade;
     const detailOrderId = selectedOrderDetails.orderId || "DW12345678";
     const detailChefName = selectedOrderDetails.chefName || selectedOrderDetails.restaurantName || "Expert Chef";
     const detailMenuName = selectedOrderDetails.menuName || (isCatering ? "Catering Platter" : (isHomemade ? "Homemade Dishes Order" : "Classic Lunch"));
     const detailMenuImage = selectedOrderDetails.menuImage || selectedOrderDetails.restaurantImage || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400";
     const detailTotal = selectedOrderDetails.totalAmount || 1014;
-    
+
     const activeDateTarget = selectedOrderDetails.selectedDeliveryDate || selectedDatesPerOrder[selectedOrderDetails.orderId] || selectedOrderDetails.deliveryDate || "Today";
     const matchedSchedule = isMealBox
       ? (selectedOrderDetails.deliverySchedules || []).find((s: any) => s.date === activeDateTarget)
@@ -2002,7 +2016,8 @@ export default function MyOrdersScreen() {
   }
 
   const isPreviewCatering = (previewOrder?.serviceType || "").toLowerCase() === "catering";
-  const isPreviewHomemade = (previewOrder?.serviceType || "").toLowerCase() === "homemade";
+  // ✅ Use the normalized helper so QuickBites uses the homemade preview layout.
+  const isPreviewHomemade = isHomemadeService(previewOrder?.serviceType);
 
   return (
     <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
@@ -2098,7 +2113,8 @@ export default function MyOrdersScreen() {
           filteredOrders.map((order, orderIndex) => {
             const sType = (order.serviceType || "").toLowerCase();
             const isCatering = sType === "catering";
-            const isHomemade = sType === "homemade";
+            // ✅ Use the normalized helper so QuickBites uses the homemade card layout.
+            const isHomemade = isHomemadeService(sType);
             const orderId = order.orderId;
             const isNotLastOrder = orderIndex < filteredOrders.length - 1;
             const orderStatusString = order.orderStatus || "Placed";

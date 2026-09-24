@@ -477,6 +477,24 @@ export default function CateringMenuItemScreen() {
     });
   };
 
+  // ✅ NEW: Toggle handler for the simple Add / Remove button on the addon rows.
+  //    First tap → adds the addon price to the base, flips the button to Remove.
+  //    Second tap → subtracts the price, flips the button back to Add.
+  const toggleAddonOnce = (addonId: string, price: number) => {
+    const safeItemPrice = safeParsePrice(price);
+    setExtraItemsCount((prev) => {
+      const currentVal = prev[addonId as any] || 0;
+      const isCurrentlyAdded = currentVal > 0;
+      const newVal = isCurrentlyAdded ? 0 : 1;
+      if (!isCurrentlyAdded) {
+        setTotalExtraPrice((p) => safeParsePrice(p) + safeItemPrice);
+      } else {
+        setTotalExtraPrice((p) => Math.max(0, safeParsePrice(p) - safeItemPrice));
+      }
+      return { ...prev, [addonId as any]: newVal };
+    });
+  };
+
   const scrollToTop = () => {
     productScrollRef.current?.scrollTo({ y: 0, animated: true });
   };
@@ -947,69 +965,76 @@ export default function CateringMenuItemScreen() {
             );
           })}
 
-          {/* DYNAMIC ADD-ONS SECTION */}
-          {(daawathAddons || []).map((addon: any, aIdx: number) => {
-            const addonId = addon._id || addon.id || `addon-${aIdx}`;
-            const addonPrice = safeParsePrice(addon.price);
-            const currentCount = extraItemsCount[addonId as any] || 0;
-            const isEditing = editingAddonId === addonId;
-
-            return (
-              <View key={addonId} style={styles.categoryCardBlock}>
-                <View style={styles.categoryHeaderRow}>
-                  <View style={styles.titleWithBadgeGroup}>
-                    <View style={styles.addonIconCircle}>
-                      <Feather name="plus" size={13} color="#FAF8F5" />
-                    </View>
-                    <View style={styles.labelSubTextContainer}>
-                      <Text style={styles.categoryHeaderTitleText}>{addon.name || "Addon"}</Text>
-                      <Text style={styles.chooseTextLabel}>Optional add-ons for your platter</Text>
-                    </View>
+          {/* ✅ NEW SINGLE ADD-ONS CARD
+              — One heading: "Add-Ons"
+              — Below it, ALL dynamic addons render as rows with simple
+                Add / Remove toggle buttons.
+              — This replaces the previous two-card layout (Vanilla Ice Cream
+                and Water Bottles sections). */}
+          {daawathAddons.length > 0 && (
+            <View style={styles.categoryCardBlock}>
+              <View style={styles.categoryHeaderRow}>
+                <View style={styles.titleWithBadgeGroup}>
+                  <View style={styles.addonIconCircle}>
+                    <Feather name="plus" size={13} color="#FAF8F5" />
                   </View>
-                </View>
-                <View style={styles.itemListGroup}>
-                  <View style={styles.itemRowWrapper}>
-                    <Image source={{ uri: addon.imageUrl || "https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=100" }} style={styles.itemThumbImage} />
-                    <View style={styles.itemMetaMiddle}>
-                      <Text style={styles.rowItemNameTitle}>{addon.name}</Text>
-                      {addonPrice > 0 ? (
-                        <Text style={styles.rowItemPriceText}>+₹{addonPrice} / Plate</Text>
-                      ) : null}
-                    </View>
-                    <View style={styles.counterActionControlBox}>
-                      <TouchableOpacity onPress={() => handleAddonClick(addonId, 'dec', addonPrice)} style={styles.controlBoxBtn}>
-                        <Feather name="minus" size={13} color="#0F382A" />
-                      </TouchableOpacity>
-                      
-                      {isEditing ? (
-                        <TextInput
-                          keyboardType="numeric"
-                          defaultValue={String(currentCount)}
-                          autoFocus
-                          onBlur={() => setEditingAddonId(null)}
-                          onChangeText={(txt) => handleAddonDirectCountChange(addonId, txt, addonPrice)}
-                          style={styles.controlBoxInput}
-                          selectTextOnFocus
-                        />
-                      ) : (
-                        <TouchableOpacity
-                          activeOpacity={0.7}
-                          onPress={() => setEditingAddonId(addonId)}
-                          style={styles.controlBoxValueTouchable}
-                        >
-                          <Text style={styles.controlBoxValueText}>{currentCount}</Text>
-                        </TouchableOpacity>
-                      )}
-
-                      <TouchableOpacity onPress={() => handleAddonClick(addonId, 'inc', addonPrice)} style={styles.controlBoxBtn}>
-                        <Feather name="plus" size={13} color="#0F382A" />
-                      </TouchableOpacity>
-                    </View>
+                  <View style={styles.labelSubTextContainer}>
+                    <Text style={styles.categoryHeaderTitleText}>Add-Ons</Text>
+                    <Text style={styles.chooseTextLabel}>Optional add-ons for your platter</Text>
                   </View>
                 </View>
               </View>
-            );
-          })}
+
+              <View style={styles.itemListGroup}>
+                {daawathAddons.map((addon: any, aIdx: number) => {
+                  const addonId = addon._id || addon.id || `addon-${aIdx}`;
+                  const addonPrice = safeParsePrice(addon.price);
+                  const currentCount = extraItemsCount[addonId as any] || 0;
+                  const isAdded = currentCount > 0;
+
+                  return (
+                    <View key={addonId} style={styles.itemRowWrapper}>
+                      <Image
+                        source={{ uri: addon.imageUrl || "https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=100" }}
+                        style={styles.itemThumbImage}
+                      />
+                      <View style={styles.itemMetaMiddle}>
+                        <Text style={styles.rowItemNameTitle}>{addon.name}</Text>
+                        {addonPrice > 0 ? (
+                          <Text style={styles.rowItemPriceText}>+₹{addonPrice} / Plate</Text>
+                        ) : null}
+                      </View>
+
+                      {/* ✅ Simple Add / Remove toggle button */}
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => toggleAddonOnce(addonId, addonPrice)}
+                        style={[
+                          styles.simpleAddToggleBtn,
+                          isAdded && styles.simpleAddToggleBtnAdded,
+                        ]}
+                      >
+                        <Feather
+                          name={isAdded ? "check" : "plus"}
+                          size={14}
+                          color={isAdded ? "#FAF8F5" : "#166538"}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text
+                          style={[
+                            styles.simpleAddToggleText,
+                            isAdded && styles.simpleAddToggleTextAdded,
+                          ]}
+                        >
+                          {isAdded ? "Remove" : "Add"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          )}
         </View>
       </ScrollView>
 
@@ -1289,10 +1314,12 @@ export default function CateringMenuItemScreen() {
               <Text style={styles.popoverValue}>₹{platePrice}</Text>
             </View>
 
-            {/* Extra Items Breakdown */}
-            {detailedExtraItems.length > 0 && (
+            {/* ✅ MERGED: Extra course dishes AND addons are now shown together
+                under one section so every paid extra is named in detail. */}
+            {(detailedExtraItems.length > 0 || detailedAddons.length > 0) && (
               <View style={styles.breakdownSectionGroup}>
-                <Text style={styles.breakdownSectionTitle}>Extra Course Dishes</Text>
+                <Text style={styles.breakdownSectionTitle}>Extra Items & Add-Ons</Text>
+
                 {detailedExtraItems.map((item, idx) => (
                   <View key={`extra-breakdown-${idx}`} style={styles.popoverRow}>
                     <View style={styles.popoverLabelCol}>
@@ -1302,18 +1329,16 @@ export default function CateringMenuItemScreen() {
                     <Text style={styles.popoverExtraValue}>+₹{item.price}</Text>
                   </View>
                 ))}
-              </View>
-            )}
 
-            {/* Addons Breakdown */}
-            {detailedAddons.length > 0 && (
-              <View style={styles.breakdownSectionGroup}>
-                <Text style={styles.breakdownSectionTitle}>Optional Add-ons</Text>
                 {detailedAddons.map((addon, aIdx) => (
                   <View key={`addon-breakdown-${aIdx}`} style={styles.popoverRow}>
                     <View style={styles.popoverLabelCol}>
-                      <Text style={styles.popoverItemName}>{addon.name} × {addon.count}</Text>
-                      <Text style={styles.popoverSubDetail}>₹{addon.price} each</Text>
+                      <Text style={styles.popoverItemName}>
+                        {addon.name}{addon.count > 1 ? ` × ${addon.count}` : ""}
+                      </Text>
+                      <Text style={styles.popoverSubDetail}>
+                        {addon.count > 1 ? `₹${addon.price} each` : "Add-on"}
+                      </Text>
                     </View>
                     <Text style={styles.popoverExtraValue}>+₹{addon.price * addon.count}</Text>
                   </View>
@@ -1848,6 +1873,32 @@ const styles = StyleSheet.create({
     minWidth: 28,
     textAlign: "center",
     paddingVertical: 2,
+  },
+  /* ✅ NEW: Simple Add / Remove toggle button used by the Add-Ons section */
+  simpleAddToggleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(22, 101, 56, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(22, 101, 56, 0.25)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginLeft: 10,
+  },
+  simpleAddToggleBtnAdded: {
+    backgroundColor: "#166538",
+    borderColor: "#166538",
+  },
+  simpleAddToggleText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#166538",
+    letterSpacing: 0.2,
+  },
+  simpleAddToggleTextAdded: {
+    color: "#FAF8F5",
   },
   bottomPriceDetailsPopover: {
     position: "absolute",

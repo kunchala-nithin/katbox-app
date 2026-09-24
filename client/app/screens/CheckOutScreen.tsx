@@ -887,7 +887,7 @@ export default function CheckOutScreen() {
                 }}
                 activeOpacity={0.85}
               >
-                <Text style={styles.modernViewItemsText}>Inspect Platter Menu & Addons</Text>
+                <Text style={styles.modernViewItemsText}>Preview Platter Menu & Addons</Text>
                 <Ionicons name="arrow-forward" size={14} color="#FAF8F5" style={{ marginLeft: 6 }} />
               </TouchableOpacity>
             )}
