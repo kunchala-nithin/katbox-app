@@ -350,29 +350,8 @@ const formatCoordLabel = (lat: any, lng: any): string => {
 
 // ==================================================================
 // ✅ NEW SHARED HELPER — Determine whether an order is TRULY fully
-// settled (i.e., the FULL amount has been collected — not just the
-// 45% advance). Mirrors the exact same helper in admin/all-orders.tsx
-// so both screens stay perfectly in sync.
-//
-// Business rules enforced here:
-//   • Mealbox / Catering (advance-based):
-//       isFullySettled = TRUE only when the balance has been collected
-//       (balanceAmountToCollect <= 0) AND paymentStatus reflects full
-//       settlement ("Fully Paid" / "Balance Collected") OR orderStatus
-//       is Completed / Cash Collected / Delivered.
-//       A VERIFIED ADVANCE ALONE MUST NOT FLIP THIS TO TRUE.
-//
-//   • Homemade / QuickBites:
-//       - ONLINE (Cashfree): full amount was captured at placement
-//         → advancePaidAmount === totalAmount AND balance === 0
-//         → isFullySettled = TRUE immediately.
-//       - COD: settled only when status is Delivered / Completed /
-//         Cash Collected.
-//
-// Used by:
-//   • The active-order `isCashCollected` memo
-//   • The pill color logic in the header strip
-//   • The status dropdown lock
+// settled. Mirrors the exact same helper in admin/all-orders.tsx so
+// both screens stay perfectly in sync.
 // ==================================================================
 const computeIsFullySettled = (order: any): boolean => {
   if (!order) return false;
@@ -389,7 +368,6 @@ const computeIsFullySettled = (order: any): boolean => {
   const isAdvanceBased =
     serviceType === 'catering' || serviceType === 'mealbox';
 
-  // ---- Explicit full-settlement markers written by the backend ----
   const isFullyPaidStatus =
     pStatus.includes('fully paid') ||
     pStatus.includes('balance collected');
@@ -400,15 +378,12 @@ const computeIsFullySettled = (order: any): boolean => {
     oStatus.includes('amount collected') ||
     oStatus === 'delivered';
 
-  // ---- Homemade/QuickBites ONLINE: full amount captured at placement ----
   const isHomemadeOnlineFullyPaid =
     isHomemadeLike &&
     advAmt > 0 &&
     balAmt <= 0 &&
     Math.abs(advAmt - total) < 0.01;
 
-  // ---- Mealbox/Catering: settled ONLY when balance is cleared AND
-  //      paymentStatus explicitly confirms full settlement ----
   const isBalanceCleared =
     isAdvanceBased &&
     balAmt <= 0 &&
@@ -420,6 +395,49 @@ const computeIsFullySettled = (order: any): boolean => {
     isHomemadeOnlineFullyPaid ||
     isBalanceCleared
   );
+};
+
+// ==================================================================
+// ✅ NEW HELPER — Compute the payment badge text + theme for the
+// chef delivery card. Shows ONLY payment state, never order status.
+// Mirrors the same helper in admin/all-orders.tsx.
+// ==================================================================
+const computePaymentBadge = (
+  order: any
+): { text: string; isSettled: boolean } => {
+  if (!order) return { text: '', isSettled: false };
+
+  const paymentMethod = String(order.paymentMethod || '').toLowerCase();
+  const orderStatus = String(order.orderStatus || '').toLowerCase();
+  const paymentStatus = String(order.paymentStatus || '').toLowerCase();
+  const serviceType = String(order.serviceType || '').toLowerCase();
+
+  const total = Number(order.totalAmount || 0);
+  const advance = Number(order.advancePaidAmount || 0);
+  const balance = Number(order.balanceAmountToCollect || 0);
+
+  const isAdvanceBased =
+    serviceType === 'catering' || serviceType === 'mealbox';
+
+  const isDelivered =
+    orderStatus === 'delivered' ||
+    orderStatus === 'completed' ||
+    orderStatus === 'cash collected' ||
+    paymentStatus.includes('fully paid') ||
+    paymentStatus.includes('collected');
+
+  if (paymentMethod === 'cod') {
+    if (isDelivered) {
+      return { text: `Cash Collected ₹${total}`, isSettled: true };
+    }
+    return { text: `COD ₹${total}`, isSettled: false };
+  }
+
+  if (isAdvanceBased && balance > 0) {
+    return { text: `Advance Paid ₹${advance}`, isSettled: false };
+  }
+
+  return { text: 'Payment Settled', isSettled: true };
 };
 
 // ─── DeliverySlotCountdownWidget ──────────────────────────────────
@@ -638,8 +656,6 @@ export default function AllOrdersScreen() {
   const sheetAnim = useRef(new Animated.Value(400)).current;
 
   // ✅ Alarm snooze-cycle interval ref.
-  //    Sound + vibration + 10s auto-stop are now fully owned by the
-  //    shared singleton `client/src/lib/orderAlarm.ts`.
   const alarmIntervalRef = useRef<any>(null);
 
   useEffect(() => {
@@ -693,17 +709,7 @@ export default function AllOrdersScreen() {
   };
 
   /* ─────────────────────────────────────────────────────────
-     ✅ UPDATED: These now delegate to the shared singleton
-     alarm controller (`client/src/lib/orderAlarm.ts`).
-
-     Why: the layout-mounted `useOrderNotifier('chef')` hook can
-     ALSO trigger the alarm (on socket event OR foreground push).
-     Without a singleton, the same order would ring twice — one
-     from the hook, one from this screen.
-
-     The singleton is idempotent, manages its own 10s auto-stop
-     timer, plays the bundled `assets/sounds/alarm.mp3`, applies
-     the correct audio mode, and drives the repeating vibration.
+     ✅ Delegates to the shared singleton alarm controller.
      ───────────────────────────────────────────────────────── */
   const startOrderAlarmSound = async () => {
     await startOrderAlarm();
@@ -753,25 +759,10 @@ export default function AllOrdersScreen() {
     try {
       const res = await api.get('/api/orders/chef-orders');
       if (res.data && res.data.success) {
-        // ✅ The backend `/api/orders/chef-orders` already filters to
-        //    only return orders where `adminAcceptedAt` is set. Those
-        //    are either:
-        //      • Auto-accepted online orders (Cashfree success) — the
-        //        chef is notified by the backend the moment payment is
-        //        verified.
-        //      • Admin-accepted COD orders.
-        //    We retain the defensive filter on `isAdvanceVerified` to
-        //    be compatible with any legacy orders that may predate the
-        //    auto-accept rollout.
         const allFetched = res.data.orders || [];
         const fetched = allFetched.filter((o: any) => o.isAdvanceVerified === true);
         setOrders(fetched);
 
-        // ✅ UPDATED: Only alarm for COD orders that still await an
-        //    admin/chef response (status "Placed" AND payment "cod").
-        //    Auto-accepted online orders do NOT need a local alarm —
-        //    the backend already pushed the chef alarm the moment
-        //    Cashfree confirmed the payment.
         const hasPendingOrder = fetched.find((o: any) => {
           const status = String(o.orderStatus || 'Placed').toLowerCase();
           const payment = String(o.paymentMethod || '').toLowerCase();
@@ -860,10 +851,6 @@ export default function AllOrdersScreen() {
             return [newOrder, ...prev];
           });
 
-          // ✅ UPDATED: Only ring the local alarm for COD orders that
-          //    still need an admin/chef decision. Auto-accepted online
-          //    orders are already ringing via the backend push — the
-          //    socket is just to update the list UI.
           const status = String(newOrder.orderStatus || 'Placed').toLowerCase();
           const payment = String(newOrder.paymentMethod || '').toLowerCase();
           if (status === 'placed' && payment === 'cod') {
@@ -894,7 +881,8 @@ export default function AllOrdersScreen() {
 
   const activeOrder = orders[selectedOrderIndex] || null;
 
-  const orderTimeFormatted = activeOrder?.createdAt    ? new Date(activeOrder.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const orderTimeFormatted = activeOrder?.createdAt
+    ? new Date(activeOrder.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'Today, 09:41 AM';
 
   const parsedSelections = useMemo(() => {
@@ -1033,30 +1021,7 @@ export default function AllOrdersScreen() {
   const isCurrentOrderDelivered = currentStatus.toLowerCase() === 'delivered';
 
   // ==================================================================
-  // ✅ FIX #1 — CRITICAL: Refined "Cash Collected" determination
-  //
-  // The previous logic incorrectly marked Mealbox/Catering orders as
-  // "Cash Collected" the moment the 45% advance was verified, because
-  // paymentStatus became "Advance Paid (Verified)" and the string
-  // checks were too loose. This caused the chef to see a locked
-  // status dropdown ("Payment Settled • Cash Collected") and lose
-  // the ability to update delivery status while a 55% balance was
-  // still outstanding.
-  //
-  // ✅ Correct behaviour (now delegated to computeIsFullySettled):
-  //   • For Mealbox/Catering (advance-based flows):
-  //       - isCashCollected = TRUE only when the FULL total has been
-  //         collected (paymentStatus contains "Fully Paid"/"Balance
-  //         Collected" AND balanceAmountToCollect <= 0).
-  //       - A verified advance MUST NOT lock the status dropdown.
-  //   • For Homemade/QuickBites:
-  //       - COD orders: isCashCollected = TRUE only after delivery
-  //         status flips to "Cash Collected"/"Delivered".
-  //       - Online-paid orders: isCashCollected = TRUE because the
-  //         full amount was already captured by Cashfree at placement.
-  //
-  // The shared helper `computeIsFullySettled` enforces this rule for
-  // BOTH the active order view AND the pill color logic below.
+  // ✅ FIX: Use the shared helper for the active order
   // ==================================================================
   const isCashCollected = useMemo(
     () => computeIsFullySettled(activeOrder),
@@ -1071,17 +1036,26 @@ export default function AllOrdersScreen() {
   );
 
   // ==================================================================
-  // ✅ FIX #2 — Derived balance amount that the chef should see as
-  // the amount still owed by the customer. For Mealbox/Catering this
-  // equals the 55% balance (totalAmount - advancePaidAmount) until
-  // the balance is collected. For Homemade/QuickBites COD this
-  // equals the full total. For Homemade/QuickBites online this is 0.
+  // ✅ NEW: Payment badge for the active order
   // ==================================================================
+  const activePaymentBadge = useMemo(
+    () => computePaymentBadge(activeOrder),
+    [
+      activeOrder?.paymentMethod,
+      activeOrder?.orderStatus,
+      activeOrder?.paymentStatus,
+      activeOrder?.serviceType,
+      activeOrder?.totalAmount,
+      activeOrder?.advancePaidAmount,
+      activeOrder?.balanceAmountToCollect,
+    ]
+  );
+
+  // ✅ Derived balance amount that the chef should see
   const displayedBalanceAmount = useMemo(() => {
     const bal = Number(activeOrder?.balanceAmountToCollect || 0);
     if (isCashCollected) return 0;
     if (bal > 0) return bal;
-    // Fallback: if backend didn't persist balance, compute from advance
     const total = Number(activeOrder?.totalAmount || 0);
     const adv = Number(activeOrder?.advancePaidAmount || 0);
     return Math.max(0, Math.round((total - adv) * 100) / 100);
@@ -1108,7 +1082,6 @@ export default function AllOrdersScreen() {
     const upcomingList = Array.isArray(activeOrder.upcomingDeliveries) ? activeOrder.upcomingDeliveries : [];
     const pausedList = Array.isArray(activeOrder.pausedDates) ? activeOrder.pausedDates : [];
 
-    // Form combined list preserving all dates
     const dateKeys = Array.from(new Set([
       ...explicitSchedules.map((s: any) => s.date),
       ...upcomingList,
@@ -1121,7 +1094,6 @@ export default function AllOrdersScreen() {
       const timeSlot = match?.timeSlot || activeOrder.deliveryTimeSlot || '7:00 PM - 9:00 PM';
       const address = match?.address || activeOrder.addressDetails || activeOrder.deliveryAddress || customerAddress;
 
-      // ✅ Prefer per-schedule coords, fall back to order-level coords.
       const sLat = match?.latitude ?? activeOrder?.latitude;
       const sLng = match?.longitude ?? activeOrder?.longitude;
 
@@ -1149,14 +1121,12 @@ export default function AllOrdersScreen() {
 
   const stepperActiveIndex = useMemo(() => {
     const s = currentStatus.toLowerCase();
-    const p = (activeOrder?.paymentStatus || '').toLowerCase();
-    if (p === 'collected' || p === 'paid' || s.includes('amount collected')) return 4;
-    if (s === 'delivered' || s === 'completed') return 4;
+    if (s === 'delivered' || s === 'completed' || s.includes('cash collected') || s.includes('amount collected')) return 4;
     if (s.includes('out') || s.includes('delivery')) return 3;
     if (s.includes('pack') || s.includes('prepared & packing') || s.includes('prepared and packing')) return 2;
     if (s.includes('prep') || s.includes('preparing')) return 1;
     return 0;
-  }, [currentStatus, activeOrder?.paymentStatus]);
+  }, [currentStatus]);
 
   useEffect(() => {
     const pulse = Animated.loop(
@@ -1198,9 +1168,6 @@ export default function AllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
-  // ✅ QuickBites detection — robust: true if either the flag is set OR
-  //    the order carries a persisted estimatedDeliveryAt timestamp.
-  //    Only applies to homemade orders.
   const isQuickBitesFlow = useMemo(() => {
     if (!activeOrder) return false;
     if (!isHomemadeFlow) return false;
@@ -1211,14 +1178,11 @@ export default function AllOrdersScreen() {
     return flagSet || hasEstimated;
   }, [activeOrder, isHomemadeFlow]);
 
-  // ✅ QuickBites window in minutes — defaults to 75
   const quickBitesWindowMinutes = useMemo(() => {
     const w = Number(activeOrder?.deliveryWindowMinutes);
     return Number.isFinite(w) && w > 0 ? w : 75;
   }, [activeOrder?.deliveryWindowMinutes]);
 
-  // ✅ Compute dynamic QuickBites date/time from MongoDB's `estimatedDeliveryAt`
-  //    For QuickBites the delivery date is ALWAYS "Today" (same-day).
   const quickBitesDateTime = useMemo(() => {
     if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
     const d = new Date(activeOrder.estimatedDeliveryAt);
@@ -1228,7 +1192,6 @@ export default function AllOrdersScreen() {
     const dayNum = d.getDate();
     const monthShort = d.toLocaleDateString('en-US', { month: 'short' });
 
-    // ✅ QuickBites: force same-day "Today" label
     const displayDate = `Today, ${dayNum} ${monthShort}`;
     const timerDate = `Today, ${dayNum} ${monthShort}`;
 
@@ -1238,21 +1201,16 @@ export default function AllOrdersScreen() {
       hour12: true,
     });
 
-    // Remaining minutes until estimated delivery
     const diffMs = d.getTime() - now.getTime();
     const remainingMin = Math.max(0, Math.round(diffMs / (60 * 1000)));
 
     return { displayDate, timerDate, timeStr, remainingMin };
   }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
 
-  // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
-  //    • For QuickBites: computed live from `estimatedDeliveryAt` (same day).
-  //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
-  //      falls back to legacy `deliveryTimeSlot`.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
-      return quickBitesDateTime.timerDate; // parse-friendly for timer widget
+      return quickBitesDateTime.timerDate;
     }
     return String(activeOrder?.deliveryDate || '').trim();
   }, [
@@ -1280,8 +1238,6 @@ export default function AllOrdersScreen() {
     quickBitesDateTime,
   ]);
 
-  // ✅ Human-friendly display date specifically for headers/cards.
-  //    For QuickBites it is ALWAYS "Today, <day> <month>".
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
@@ -1300,9 +1256,6 @@ export default function AllOrdersScreen() {
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today, 09:41 AM',
-    // ✅ For homemade QuickBites: always "Today, ..." (same-day).
-    //    For non-QuickBites homemade: use the persisted value.
-    //    For mealbox/catering: keep original behaviour.
     deliveryDate: isHomemadeFlow
       ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
       : (activeOrder?.deliveryDate || (isCateringFlow ? (activeOrder?.eventDate || '18 March') : 'Mon, 17 Jun 2024')),
@@ -1386,7 +1339,6 @@ export default function AllOrdersScreen() {
       .catch((err) => Alert.alert('Error', err.message));
   };
 
-  // ✅ Customer numbers are hidden — actions route through the static Customer Support number
   const handleCallCustomer = () => {
     triggerCall(CUSTOMER_SUPPORT_PHONE);
   };
@@ -1395,8 +1347,6 @@ export default function AllOrdersScreen() {
     triggerSMS(CUSTOMER_SUPPORT_PHONE);
   };
 
-  // ✅ Prefers coordinates for exact pin placement, falls back to address.
-  //    Works for every flow — catering, mealbox, quickbite, homemade.
   const handleOpenMap = (
     addressOverride?: string,
     latOverride?: any,
@@ -1618,6 +1568,18 @@ export default function AllOrdersScreen() {
     { label: 'Completed', icon: 'sparkles-outline', type: 'ionicons' },
   ];
 
+  // ==================================================================
+  // ✅ REVISED: Chef status dropdown shows ONLY the 5 delivery statuses.
+  // "Cash on Delivery Amount Collected" removed — cash collection is
+  // now implicit when order is marked "Delivered".
+  // ==================================================================
+  const chefStatusDropdownOptions = [
+    { label: 'Preparing', value: 'Preparing', icon: 'flame-outline' },
+    { label: 'Prepared & Packing', value: 'Prepared & Packing', icon: 'cube-outline' },
+    { label: 'Out for Delivery', value: 'Out for Delivery', icon: 'bicycle-outline' },
+    { label: 'Delivered', value: 'Delivered', icon: 'checkmark-circle-outline' },
+  ];
+
   if (loading) {
     return (
       <View style={[styles.root, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -1643,7 +1605,7 @@ export default function AllOrdersScreen() {
         <SafeAreaView edges={["top"]}>
           <View style={styles.headerInner}>
             <View style={styles.headerTopRow}>
-              
+
               <View style={styles.headerBrandCol}>
                 <View style={styles.eyebrowRow}>
                   <View style={styles.liveDot} />
@@ -1671,35 +1633,20 @@ export default function AllOrdersScreen() {
                   const isSelected = selectedOrderIndex === idx;
                   const status = (o.orderStatus || 'Placed').toLowerCase();
 
-                  // ==================================================================
-                  // ✅ FIX #2 — Pill colour now reflects the TRUE fulfilment state
-                  // of the order, NOT merely whether the advance was paid.
-                  //
-                  // Green ("Delivered") is reserved for orders whose FULL balance
-                  // has been settled or whose status is genuinely Delivered/
-                  // Completed. A mere verified advance on a Mealbox/Catering
-                  // order keeps the pill RED (awaiting chef action) until the
-                  // chef accepts, then YELLOW (in progress), and only turns
-                  // GREEN once the balance is collected.
-                  //
-                  // We use the shared `computeIsFullySettled` helper (defined at
-                  // the top of this file) so the pill logic and the active-order
-                  // UI stay perfectly in sync.
-                  // ==================================================================
                   const isOrderFullySettled = computeIsFullySettled(o);
                   const isPendingUnaccepted = status === 'placed' && !isOrderFullySettled;
                   const isCancelled = status === 'cancelled';
 
-                  let pillStyle = styles.orderTabPillPending; // Red
+                  let pillStyle = styles.orderTabPillPending;
                   let dotStyle = styles.tabIndicatorDotPending;
                   let textStyle = styles.orderTabPillTextPending;
 
                   if (isOrderFullySettled) {
-                    pillStyle = styles.orderTabPillDelivered; // Green — completed
+                    pillStyle = styles.orderTabPillDelivered;
                     dotStyle = styles.tabIndicatorDotDelivered;
                     textStyle = styles.orderTabPillTextDelivered;
                   } else if (!isPendingUnaccepted && !isCancelled) {
-                    pillStyle = styles.orderTabPillAccepted; // Yellow — in progress
+                    pillStyle = styles.orderTabPillAccepted;
                     dotStyle = styles.tabIndicatorDotAccepted;
                     textStyle = styles.orderTabPillTextAccepted;
                   } else if (isCancelled) {
@@ -1784,11 +1731,11 @@ export default function AllOrdersScreen() {
                   {!isMealBoxFlow && (
                     <View style={styles.chefStatusSelectorBox}>
                       <Text style={styles.chefSelectorTitle}>Live Order Status:</Text>
-                      
+
                       {isCashCollected ? (
                         <View style={styles.cashCollectedLockedCard}>
                           <Ionicons name="lock-closed" size={18} color="#166348" style={{ marginRight: 8 }} />
-                          <Text style={styles.cashCollectedLockedText}>Payment Settled • Cash Collected</Text>
+                          <Text style={styles.cashCollectedLockedText}>Payment Settled • Order Completed</Text>
                         </View>
                       ) : (
                         <>
@@ -1810,13 +1757,7 @@ export default function AllOrdersScreen() {
 
                           {showStatusDropdown && (
                             <View style={styles.dropdownMenuCard}>
-                              {[
-                                { label: 'Preparing', value: 'Preparing', icon: 'flame-outline' },
-                                { label: 'Prepared & Packing', value: 'Prepared & Packing', icon: 'cube-outline' },
-                                { label: 'Out for Delivery', value: 'Out for Delivery', icon: 'bicycle-outline' },
-                                { label: 'Delivered', value: 'Delivered', icon: 'checkmark-circle-outline' },
-                                { label: 'Cash on Delivery Amount Collected', value: 'Cash Collected', icon: 'cash-outline' },
-                              ].map((item) => (
+                              {chefStatusDropdownOptions.map((item) => (
                                 <TouchableOpacity
                                   key={item.label}
                                   style={[
@@ -1927,8 +1868,43 @@ export default function AllOrdersScreen() {
                 />
               )}
 
-              {/* 1. ORDER IDENTIFIER CARD */}
+              {/* ==================================================================
+                  ✅ REVISED: MAIN ORDER CARD — Top-right badge now shows
+                  ONLY the payment state. Order status moved to inline pill.
+                  ================================================================== */}
               <View style={styles.card}>
+                <View
+                  style={[
+                    styles.paymentBadgeTopRight,
+                    activePaymentBadge.isSettled
+                      ? styles.paymentBadgeTopRightSettled
+                      : styles.paymentBadgeTopRightPending,
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      activePaymentBadge.isSettled
+                        ? 'checkmark-circle'
+                        : isPaymentCod
+                        ? 'cash-outline'
+                        : 'time-outline'
+                    }
+                    size={12}
+                    color={activePaymentBadge.isSettled ? '#166348' : '#92400E'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.paymentBadgeTopRightText,
+                      activePaymentBadge.isSettled
+                        ? styles.paymentBadgeTopRightTextSettled
+                        : styles.paymentBadgeTopRightTextPending,
+                    ]}
+                  >
+                    {activePaymentBadge.text}
+                  </Text>
+                </View>
+
                 <View style={styles.orderIdTopRow}>
                   <View style={{ flex: 1, paddingRight: 8 }}>
                     <Text style={styles.smallSectionLabel}>ORDER IDENTIFIER</Text>
@@ -1944,24 +1920,23 @@ export default function AllOrdersScreen() {
                     </View>
                   </View>
 
-                  <View style={[
-                    styles.statusBadgePill,
-                    isCurrentOrderAccepted && { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' },
-                    orderData.status === 'Cancelled' && { backgroundColor: '#FEF2F2', borderColor: '#FEE2E2' },
-                    !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && { backgroundColor: '#FFFBEB', borderColor: '#FEF3C7' },
-                  ]}>
-                    <Ionicons
-                      name={isCurrentOrderAccepted ? 'checkmark-circle' : orderData.status === 'Cancelled' ? 'close-circle' : 'time-outline'}
-                      size={12}
-                      color={isCurrentOrderAccepted ? '#166348' : orderData.status === 'Cancelled' ? '#DC2626' : '#D97706'}
-                      style={{ marginRight: 4 }}
-                    />
-                    <Text style={[
-                      styles.statusBadgeText,
-                      isCurrentOrderAccepted && { color: '#166348' },
-                      orderData.status === 'Cancelled' && { color: '#DC2626' },
-                      !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && { color: '#D97706' },
-                    ]}>
+                  {/* ✅ CHANGED: Order status is now a small inline pill */}
+                  <View
+                    style={[
+                      styles.inlineOrderStatusPill,
+                      isCurrentOrderAccepted && styles.inlineOrderStatusPillAccepted,
+                      orderData.status === 'Cancelled' && styles.inlineOrderStatusPillCancelled,
+                      !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && styles.inlineOrderStatusPillPending,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.inlineOrderStatusPillText,
+                        isCurrentOrderAccepted && styles.inlineOrderStatusPillTextAccepted,
+                        orderData.status === 'Cancelled' && styles.inlineOrderStatusPillTextCancelled,
+                        !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && styles.inlineOrderStatusPillTextPending,
+                      ]}
+                    >
                       {orderData.status}
                     </Text>
                   </View>
@@ -1972,7 +1947,6 @@ export default function AllOrdersScreen() {
                 <View style={styles.orderMetaGridRow}>
                   <View style={styles.orderMetaColumn}>
                     <View style={styles.metaLabelRow}>
-                      {/* Calendar/time icons removed */}
                       <Text style={styles.metaLabelText}>ORDER TIME</Text>
                     </View>
                     <Text style={styles.metaValueText}>{orderData.orderTime}</Text>
@@ -1982,7 +1956,6 @@ export default function AllOrdersScreen() {
 
                   <View style={[styles.orderMetaColumn, { paddingLeft: 12 }]}>
                     <View style={styles.metaLabelRow}>
-                      {/* Calendar/time icons removed */}
                       <Text style={styles.metaLabelText}>SCHEDULED SLOT</Text>
                     </View>
                     <Text style={styles.metaValueTextBold}>{orderData.deliveryDate}</Text>
@@ -2049,7 +2022,6 @@ export default function AllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
-                {/* ✅ Dynamic Delivery Date & Slot Strip (Chef) — calendar/time icons removed */}
                 <View style={styles.deliveryInfoStripContainer}>
                   <View style={styles.deliveryInfoCell}>
                     <View style={{ flex: 1 }}>
@@ -2192,7 +2164,6 @@ export default function AllOrdersScreen() {
                         <View key={`sched-${scheduleItem.date}-${sIdx}`} style={styles.scheduleCardBlock}>
                           <View style={styles.scheduleTopRow}>
                             <View style={styles.scheduleDateBadge}>
-                              {/* Calendar icon removed */}
                               <Text style={styles.scheduleDateBadgeText}>{scheduleItem.date}</Text>
                             </View>
 
@@ -2213,7 +2184,6 @@ export default function AllOrdersScreen() {
                             </View>
                           </View>
 
-                          {/* Dynamic Location and Map Button on Every Delivery Card */}
                           <View style={styles.scheduleAddressRow}>
                             <Ionicons name="location-sharp" size={14} color="#166348" style={{ marginTop: 2 }} />
                             <View style={{ flex: 1, paddingRight: 6 }}>
@@ -2251,7 +2221,6 @@ export default function AllOrdersScreen() {
                             </TouchableOpacity>
                           </View>
 
-                          {/* Menu Preview Button for Chef */}
                           <View style={styles.schedulePreviewRow}>
                             <TouchableOpacity
                               style={styles.schedulePreviewBtn}
@@ -2264,7 +2233,6 @@ export default function AllOrdersScreen() {
                             </TouchableOpacity>
                           </View>
 
-                          {/* Individual Live Status Dropdown Trigger for Chef */}
                           {isCurrentOrderAccepted && !isItemPaused && !isCashCollected && (
                             <View style={{ marginTop: 10 }}>
                               <TouchableOpacity
@@ -2881,7 +2849,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  // ✅ QuickBites banner styles (chef green theme)
   quickBitesBannerCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3300,7 +3267,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     lineHeight: 16,
   },
-  // ✅ coordinate label style (green theme)
   scheduleCoordText: {
     fontSize: 10.5,
     color: '#166348',
@@ -3308,7 +3274,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
     letterSpacing: 0.2,
   },
-  // ✅ primary-address coordinate label style (green theme)
   addressCoordText: {
     fontSize: 11,
     color: '#166348',
@@ -3463,6 +3428,84 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
   },
+
+  // ✅ NEW: payment badge top-right
+  paymentBadgeTopRight: {
+    position: 'absolute',
+    top: -1,
+    right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderTopWidth: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    borderWidth: 1,
+    zIndex: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  paymentBadgeTopRightSettled: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  paymentBadgeTopRightPending: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  paymentBadgeTopRightText: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  paymentBadgeTopRightTextSettled: {
+    color: '#166348',
+  },
+  paymentBadgeTopRightTextPending: {
+    color: '#92400E',
+  },
+
+  // ✅ NEW: inline order status pill
+  inlineOrderStatusPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  inlineOrderStatusPillAccepted: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#DCFCE7',
+  },
+  inlineOrderStatusPillPending: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FEF3C7',
+  },
+  inlineOrderStatusPillCancelled: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FEE2E2',
+  },
+  inlineOrderStatusPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  inlineOrderStatusPillTextAccepted: {
+    color: '#166348',
+  },
+  inlineOrderStatusPillTextPending: {
+    color: '#D97706',
+  },
+  inlineOrderStatusPillTextCancelled: {
+    color: '#DC2626',
+  },
+
   orderIdTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3696,7 +3739,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  /* ✅ Dynamic Delivery Date & Slot Strip (Chef Green Theme) */
   deliveryInfoStripContainer: {
     flexDirection: 'row',
     alignItems: 'center',

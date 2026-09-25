@@ -395,6 +395,64 @@ export default function OrderConfirmationScreen() {
     currentPaymentStatus.toLowerCase().includes("fully paid") ||
     currentOrderStatus.toLowerCase() === "completed";
 
+  // ==================================================================
+  // ✅ PAYMENT BADGE — single source of truth for the top-right badge
+  // displayed on the summary card. Shows ONLY the payment state, never
+  // the order status.
+  //
+  //   • Online + fully paid (HomeMade/QuickBites) → "Payment Settled"
+  //   • Online + advance paid (Catering/Mealbox)  → "Advance Paid ₹X"
+  //   • COD + before delivered                    → "COD ₹X"
+  //   • COD + after delivered                     → "Cash Collected ₹X"
+  // ==================================================================
+  const paymentBadgeText = useMemo(() => {
+    const paymentLower = String(paymentMethod).toLowerCase();
+    const statusLower = currentOrderStatus.toLowerCase();
+
+    if (paymentLower === "cod") {
+      const isDelivered =
+        statusLower === "delivered" ||
+        statusLower === "completed" ||
+        statusLower === "cash collected" ||
+        currentPaymentStatus.toLowerCase().includes("fully paid") ||
+        currentPaymentStatus.toLowerCase().includes("collected");
+      if (isDelivered) {
+        return `Cash Collected ₹${numericTotal}`;
+      }
+      return `COD ₹${numericTotal}`;
+    }
+
+    // Online payment
+    if (isAdvanceBasedFlow && Number(balanceAmountToCollect) > 0) {
+      return `Advance Paid ₹${advancePaidAmount}`;
+    }
+    return "Payment Settled";
+  }, [
+    paymentMethod,
+    currentOrderStatus,
+    currentPaymentStatus,
+    isAdvanceBasedFlow,
+    balanceAmountToCollect,
+    advancePaidAmount,
+    numericTotal,
+  ]);
+
+  // ✅ Determines the badge theme colour (green = settled, amber = pending)
+  const paymentBadgeIsSettled = useMemo(() => {
+    const paymentLower = String(paymentMethod).toLowerCase();
+    const statusLower = currentOrderStatus.toLowerCase();
+    if (paymentLower === "cod") {
+      return (
+        statusLower === "delivered" ||
+        statusLower === "completed" ||
+        statusLower === "cash collected" ||
+        currentPaymentStatus.toLowerCase().includes("fully paid") ||
+        currentPaymentStatus.toLowerCase().includes("collected")
+      );
+    }
+    return true;
+  }, [paymentMethod, currentOrderStatus, currentPaymentStatus]);
+
   // Dynamic Date Display Resolvers
   const confirmedFirstDeliveryDate = isCateringFlow
     ? `${eventDate} • ${eventTime}`
@@ -578,13 +636,7 @@ export default function OrderConfirmationScreen() {
           </Text>
 
           {/* ==================================================================
-              ✅ REVISED HEADER SUBTITLE
-              
-              Two distinct states:
-               • Cashfree-paid orders → immediately ACCEPTED (auto). No admin
-                 gating. The header reflects "Order Accepted & Preparing".
-               • COD orders → wait for admin acceptance. The header reflects
-                 "Awaiting Admin Acceptance".
+              ✅ HEADER SUBTITLE — Auto-accept aware
               ================================================================== */}
           {isAdvanceBasedFlow ? (
             <View style={styles.headerAdvanceBalanceBlock}>
@@ -638,8 +690,6 @@ export default function OrderConfirmationScreen() {
               </View>
             </TouchableOpacity>
           </View>
-
-          {/* UTR Reference pill — COMMENTED OUT for Cashfree flow */}
         </View>
       </View>
 
@@ -652,9 +702,47 @@ export default function OrderConfirmationScreen() {
         ]}
       >
         <View>
-          {/* 1. DYNAMIC ORDER SUMMARY CARD */}
+          {/* ==================================================================
+              1. DYNAMIC ORDER SUMMARY CARD
+              ✅ REVISED: Payment badge is now rendered on the TOP-RIGHT
+              of the primary summary card (Option A). The badge shows
+              ONLY the payment state (Payment Settled / COD ₹X / Cash
+              Collected ₹X / Advance Paid ₹X) — never the order status.
+              ================================================================== */}
           {isHomemadeFlow ? (
             <View style={styles.cateringMainSummaryCard}>
+              <View
+                style={[
+                  styles.paymentBadgeTopRight,
+                  paymentBadgeIsSettled
+                    ? styles.paymentBadgeTopRightSettled
+                    : styles.paymentBadgeTopRightPending,
+                ]}
+              >
+                <Ionicons
+                  name={
+                    paymentBadgeIsSettled
+                      ? "checkmark-circle"
+                      : String(paymentMethod).toLowerCase() === "cod"
+                      ? "cash-outline"
+                      : "time-outline"
+                  }
+                  size={12}
+                  color={paymentBadgeIsSettled ? "#166348" : "#92400E"}
+                  style={{ marginRight: 4 }}
+                />
+                <Text
+                  style={[
+                    styles.paymentBadgeTopRightText,
+                    paymentBadgeIsSettled
+                      ? styles.paymentBadgeTopRightTextSettled
+                      : styles.paymentBadgeTopRightTextPending,
+                  ]}
+                >
+                  {paymentBadgeText}
+                </Text>
+              </View>
+
               <View style={[styles.cateringOccasionTopStrip, { backgroundColor: "rgba(22, 99, 72, 0.08)", borderColor: "rgba(22, 99, 72, 0.16)" }]}>
                 <Ionicons name="restaurant" size={15} color="#166348" style={{ marginRight: 6 }} />
                 <Text style={[styles.cateringOccasionText, { color: "#166348" }]}>
@@ -807,6 +895,36 @@ export default function OrderConfirmationScreen() {
             </View>
           ) : isCateringFlow ? (
             <View style={styles.cateringMainSummaryCard}>
+              <View
+                style={[
+                  styles.paymentBadgeTopRight,
+                  paymentBadgeIsSettled
+                    ? styles.paymentBadgeTopRightSettled
+                    : styles.paymentBadgeTopRightPending,
+                ]}
+              >
+                <Ionicons
+                  name={
+                    paymentBadgeIsSettled
+                      ? "checkmark-circle"
+                      : "time-outline"
+                  }
+                  size={12}
+                  color={paymentBadgeIsSettled ? "#166348" : "#92400E"}
+                  style={{ marginRight: 4 }}
+                />
+                <Text
+                  style={[
+                    styles.paymentBadgeTopRightText,
+                    paymentBadgeIsSettled
+                      ? styles.paymentBadgeTopRightTextSettled
+                      : styles.paymentBadgeTopRightTextPending,
+                  ]}
+                >
+                  {paymentBadgeText}
+                </Text>
+              </View>
+
               <View style={styles.cateringOccasionTopStrip}>
                 <Text style={styles.cateringOccasionEmoji}>{getOccasionEmoji(occasion)}</Text>
                 <Text style={styles.cateringOccasionText}>{occasion} Catering</Text>
@@ -906,6 +1024,36 @@ export default function OrderConfirmationScreen() {
             </View>
           ) : (
             <View style={styles.summaryCard}>
+              <View
+                style={[
+                  styles.paymentBadgeTopRight,
+                  paymentBadgeIsSettled
+                    ? styles.paymentBadgeTopRightSettled
+                    : styles.paymentBadgeTopRightPending,
+                ]}
+              >
+                <Ionicons
+                  name={
+                    paymentBadgeIsSettled
+                      ? "checkmark-circle"
+                      : "time-outline"
+                  }
+                  size={12}
+                  color={paymentBadgeIsSettled ? "#166348" : "#92400E"}
+                  style={{ marginRight: 4 }}
+                />
+                <Text
+                  style={[
+                    styles.paymentBadgeTopRightText,
+                    paymentBadgeIsSettled
+                      ? styles.paymentBadgeTopRightTextSettled
+                      : styles.paymentBadgeTopRightTextPending,
+                  ]}
+                >
+                  {paymentBadgeText}
+                </Text>
+              </View>
+
               <Text style={styles.cardHeaderTitle}>Order Summary</Text>
 
               <View style={styles.itemRowContainer}>
@@ -1023,10 +1171,19 @@ export default function OrderConfirmationScreen() {
             </View>
           )}
 
-          {/* 3. What's Next Tracker Card
-              ✅ REVISED: For Cashfree-paid orders (auto-accepted), the
-              first step is "Order Accepted". For COD orders, the first
-              step is "Awaiting Admin Acceptance". */}
+          {/* ==================================================================
+              3. What's Next Tracker Card
+              ✅ REVISED (Q6): The timeline is now exactly 5 delivery steps:
+                 1. Accepted
+                 2. Preparing
+                 3. Prepared & Packing
+                 4. Out for Delivery
+                 5. Delivered
+              The previous "Balance Collection & Feast" / "Payment Settled"
+              step has been REMOVED from the delivery flow. Payment state
+              is communicated ONLY through the top-right badge on the
+              summary card.
+              ================================================================== */}
           <View style={styles.whatsNextCard}>
             <View style={styles.whatsNextHeaderRow}>
               <Text style={styles.cardHeaderTitle}>What's Next?</Text>
@@ -1042,36 +1199,7 @@ export default function OrderConfirmationScreen() {
             </View>
 
             <View style={styles.timelineContainer}>
-              {/* STEP 1 — Order Placed & Payment Status */}
-              <View style={styles.timelineStepRow}>
-                <View style={styles.timelineLeftColumn}>
-                  <View style={styles.completedStepCircle}>
-                    <Ionicons name="checkmark" size={13} color="#FAF8F5" />
-                  </View>
-                  <View style={styles.activeTimelineLine} />
-                </View>
-                <View style={styles.timelineContentRight}>
-                  <Text style={styles.activeStepTitle}>
-                    {isAdvanceBasedFlow
-                      ? "Order Placed & Advance Paid"
-                      : isFullAmountPaidOnline
-                      ? "Order Placed & Full Amount Paid"
-                      : "Order Placed"}
-                  </Text>
-                  <Text style={styles.stepTimestampText}>
-                    {isAdvanceBasedFlow
-                      ? `Advance ₹${advancePaidAmount} received • Balance ₹${balanceAmountToCollect} due on delivery`
-                      : isFullAmountPaidOnline
-                      ? `Full amount ₹${totalAmount} received`
-                      : `Pay ₹${balanceAmountToCollect} on delivery`}
-                  </Text>
-                </View>
-              </View>
-
-              {/* STEP 2 — Admin Acceptance / Auto-Acceptance
-                  ✅ REVISED:
-                    • Cashfree orders → step is auto-completed (isAdminAccepted is true)
-                    • COD orders → step is current/pending until admin accepts */}
+              {/* STEP 1 — Accepted */}
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={isAdminAccepted ? styles.completedStepCircle : styles.currentStepCircle}>
@@ -1085,23 +1213,21 @@ export default function OrderConfirmationScreen() {
                 </View>
                 <View style={styles.timelineContentRight}>
                   <Text style={isAdminAccepted ? styles.activeStepTitle : styles.currentStepTitle}>
-                    {isAdminAccepted
-                      ? (String(paymentMethod).toLowerCase() === "online"
-                          ? "Order Auto-Accepted (Payment Confirmed)"
-                          : "Order Accepted by Admin")
-                      : "Awaiting Admin Acceptance"}
+                    {isAdminAccepted ? "Accepted" : "Awaiting Acceptance"}
                   </Text>
                   <Text style={styles.stepSubtitleText}>
                     {isAdminAccepted
-                      ? (String(paymentMethod).toLowerCase() === "online"
-                          ? "Your payment was verified instantly and the order has been forwarded to the kitchen."
-                          : "Our team has accepted your order and forwarded it to the kitchen.")
-                      : "Our team is reviewing your COD order. You'll be notified as soon as it's accepted."}
+                      ? (isAdvanceBasedFlow
+                          ? `Advance ₹${advancePaidAmount} received • Balance ₹${balanceAmountToCollect} due on delivery`
+                          : isFullAmountPaidOnline
+                          ? `Full amount ₹${totalAmount} received — order confirmed and forwarded to the kitchen.`
+                          : `Order accepted and forwarded to the kitchen.`)
+                      : "Our team is reviewing your order. You'll be notified as soon as it's accepted."}
                   </Text>
                 </View>
               </View>
 
-              {/* STEP 3 — Kitchen Preparation */}
+              {/* STEP 2 — Preparing */}
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.inactiveStepCircle}>
@@ -1111,19 +1237,35 @@ export default function OrderConfirmationScreen() {
                 </View>
                 <View style={styles.timelineContentRight}>
                   <Text style={styles.inactiveStepTitle}>
-                    {isCateringFlow
-                      ? "Platter Preparation by Catering Chefs"
-                      : (isHomemadeFlow ? `Cooking by Chef ${chefName}` : "Preparing by Chef")}
+                    Preparing
                   </Text>
                   <Text style={styles.stepSubtitleText}>
                     {isCateringFlow
                       ? "Fresh ingredients are sourced and kitchen staff prepares dishes right on schedule."
-                      : (isHomemadeFlow ? "The home chef has received your order and started freshly preparing your meals." : "We will notify you once your meals are being prepared.")}
+                      : (isHomemadeFlow ? `Chef ${chefName} will freshly prepare your dishes.` : "We will notify you once your meals are being prepared.")}
                   </Text>
                 </View>
               </View>
 
-              {/* STEP 4 — Delivery */}
+              {/* STEP 3 — Prepared & Packing */}
+              <View style={styles.timelineStepRow}>
+                <View style={styles.timelineLeftColumn}>
+                  <View style={styles.inactiveStepCircle}>
+                    <Ionicons name="cube-outline" size={16} color="#9EA8A3" />
+                  </View>
+                  <View style={styles.inactiveTimelineLine} />
+                </View>
+                <View style={styles.timelineContentRight}>
+                  <Text style={styles.inactiveStepTitle}>
+                    Prepared & Packing
+                  </Text>
+                  <Text style={styles.stepSubtitleText}>
+                    Your meal will be hygienically packed and sealed for delivery.
+                  </Text>
+                </View>
+              </View>
+
+              {/* STEP 4 — Out for Delivery */}
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.inactiveStepCircle}>
@@ -1133,7 +1275,7 @@ export default function OrderConfirmationScreen() {
                 </View>
                 <View style={styles.timelineContentRight}>
                   <Text style={styles.inactiveStepTitle}>
-                    {isCateringFlow ? "Transport & Venue Buffet Setup" : "Out for Delivery"}
+                    {isCateringFlow ? "Transport & Venue Setup" : "Out for Delivery"}
                   </Text>
                   <Text style={styles.stepSubtitleText}>
                     {isCateringFlow
@@ -1143,27 +1285,19 @@ export default function OrderConfirmationScreen() {
                 </View>
               </View>
 
-              {/* STEP 5 — Balance Collection / Final Handoff */}
+              {/* STEP 5 — Delivered */}
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.inactiveStepCircle}>
-                    <Ionicons name="sparkles-outline" size={16} color="#9EA8A3" />
+                    <Ionicons name="checkmark-done-outline" size={16} color="#9EA8A3" />
                   </View>
                 </View>
                 <View style={styles.timelineContentRight}>
                   <Text style={styles.inactiveStepTitle}>
-                    {isAdvanceBasedFlow
-                      ? "Balance Collection & Feast"
-                      : isFullAmountPaidOnline
-                      ? "Delivery Handover"
-                      : "Balance Collection & Delivery"}
+                    Delivered
                   </Text>
                   <Text style={styles.stepSubtitleText}>
-                    {isAdvanceBasedFlow
-                      ? `Pay balance ₹${balanceAmountToCollect} upon delivery and enjoy your fresh meal!`
-                      : isFullAmountPaidOnline
-                      ? "Nothing to pay on delivery — your order is fully paid. Enjoy your meal!"
-                      : `Pay ₹${balanceAmountToCollect} upon delivery and enjoy your fresh meal!`}
+                    Your order will be safely handed over. Enjoy your fresh meal!
                   </Text>
                 </View>
               </View>
@@ -1666,11 +1800,54 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
 
+  /* ✅ PAYMENT BADGE — Merged on the top-right of the summary card */
+  paymentBadgeTopRight: {
+    position: "absolute",
+    top: -1,
+    right: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderTopWidth: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    borderWidth: 1,
+    zIndex: 15,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  paymentBadgeTopRightSettled: {
+    backgroundColor: "#DCFCE7",
+    borderColor: "#86EFAC",
+  },
+  paymentBadgeTopRightPending: {
+    backgroundColor: "#FEF3C7",
+    borderColor: "#FDE68A",
+  },
+  paymentBadgeTopRightText: {
+    fontSize: 10.5,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+  paymentBadgeTopRightTextSettled: {
+    color: "#166348",
+  },
+  paymentBadgeTopRightTextPending: {
+    color: "#92400E",
+  },
+
   /* Dedicated Premium Catering Card Styling */
   cateringMainSummaryCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
     padding: 18,
+    paddingTop: 26,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
@@ -1679,6 +1856,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 14,
     elevation: 4,
+    position: "relative",
+    overflow: "hidden",
   },
   cateringOccasionTopStrip: {
     flexDirection: "row",
@@ -1966,6 +2145,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
     padding: 20,
+    paddingTop: 26,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
@@ -1974,6 +2154,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 12,
     elevation: 3,
+    position: "relative",
+    overflow: "hidden",
   },
   cardHeaderTitle: {
     fontSize: 16,

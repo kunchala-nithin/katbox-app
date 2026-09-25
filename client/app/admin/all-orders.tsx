@@ -112,9 +112,9 @@ const formatCoordLabel = (lat: any, lng: any): string => {
 // Business rules enforced here:
 //   • Mealbox / Catering (advance-based):
 //       isFullySettled = TRUE only when the balance has been collected
-//       (balanceAmountToCollect <= 0) AND paymentStatus reflects
-//       full settlement ("Fully Paid" / "Balance Collected") OR the
-//       orderStatus is Completed / Cash Collected.
+//       (balanceAmountToCollect <= 0) AND paymentStatus reflects full
+//       settlement ("Fully Paid" / "Balance Collected") OR the
+//       orderStatus is Completed / Cash Collected / Delivered.
 //       A VERIFIED ADVANCE ALONE MUST NOT FLIP THIS TO TRUE.
 //
 //   • Homemade / QuickBites:
@@ -129,6 +129,7 @@ const formatCoordLabel = (lat: any, lng: any): string => {
 //   • The pill color logic in the header strip
 //   • The status dropdown lock
 //   • The advance payment verification box
+//   • The new payment badge on the delivery card
 // ==================================================================
 const computeIsFullySettled = (order: any): boolean => {
   if (!order) return false;
@@ -176,6 +177,57 @@ const computeIsFullySettled = (order: any): boolean => {
     isHomemadeOnlineFullyPaid ||
     isBalanceCleared
   );
+};
+
+// ==================================================================
+// ✅ NEW HELPER — Compute the payment badge text and theme for the
+// admin delivery card. Shows ONLY the payment state, never the
+// order status.
+//
+//   • Online + fully paid       → "Payment Settled" (green)
+//   • Online + advance paid     → "Advance Paid ₹X" (amber)
+//   • COD + before delivered    → "COD ₹X" (amber)
+//   • COD + after delivered     → "Cash Collected ₹X" (green)
+// ==================================================================
+const computePaymentBadge = (
+  order: any
+): { text: string; isSettled: boolean } => {
+  if (!order) return { text: '', isSettled: false };
+
+  const paymentMethod = String(order.paymentMethod || '').toLowerCase();
+  const orderStatus = String(order.orderStatus || '').toLowerCase();
+  const paymentStatus = String(order.paymentStatus || '').toLowerCase();
+  const serviceType = String(order.serviceType || '').toLowerCase();
+
+  const total = Number(order.totalAmount || 0);
+  const advance = Number(order.advancePaidAmount || 0);
+  const balance = Number(order.balanceAmountToCollect || 0);
+
+  const isAdvanceBased =
+    serviceType === 'catering' || serviceType === 'mealbox';
+
+  const isDelivered =
+    orderStatus === 'delivered' ||
+    orderStatus === 'completed' ||
+    orderStatus === 'cash collected' ||
+    paymentStatus.includes('fully paid') ||
+    paymentStatus.includes('collected');
+
+  // COD
+  if (paymentMethod === 'cod') {
+    if (isDelivered) {
+      return { text: `Cash Collected ₹${total}`, isSettled: true };
+    }
+    return { text: `COD ₹${total}`, isSettled: false };
+  }
+
+  // Online — advance-based services (Catering/Mealbox) with pending balance
+  if (isAdvanceBased && balance > 0) {
+    return { text: `Advance Paid ₹${advance}`, isSettled: false };
+  }
+
+  // Online — fully settled
+  return { text: 'Payment Settled', isSettled: true };
 };
 
 /* ─── COUNTDOWN TIMER WIDGET (ADMIN BLUE THEME) ─── */
@@ -422,15 +474,6 @@ export default function AdminAllOrdersScreen() {
   /* ─────────────────────────────────────────────────────────
      ✅ UPDATED: These now delegate to the shared singleton
      alarm controller (`client/src/lib/orderAlarm.ts`).
-
-     Why: the layout-mounted `useOrderNotifier('admin')` hook can
-     ALSO trigger the alarm (on socket event OR foreground push).
-     Without a singleton, the same order would ring twice — one
-     from the hook, one from this screen.
-
-     The singleton is idempotent, manages its own 10s auto-stop
-     timer, plays the bundled `assets/sounds/alarm.mp3`, applies
-     the correct audio mode, and drives the repeating vibration.
      ───────────────────────────────────────────────────────── */
   const startOrderAlarmSound = async () => {
     await startOrderAlarm();
@@ -480,13 +523,10 @@ export default function AdminAllOrdersScreen() {
 
         // ✅ UPDATED: Only alarm for orders that are GENUINELY awaiting
         //    admin action — i.e. COD orders still in "Placed" status.
-        //    Online-paid orders are auto-accepted by the backend and
-        //    do NOT need an admin tap, so we skip the alarm for them.
         const hasPending = fetched.find((o: any) => {
           const status = String(o.orderStatus || 'Placed').toLowerCase();
           const payment = String(o.paymentMethod || '').toLowerCase();
           const fullySettled = computeIsFullySettled(o);
-          // Alarm only for COD orders waiting on admin accept.
           return status === 'placed' && payment === 'cod' && !fullySettled;
         });
 
@@ -511,7 +551,6 @@ export default function AdminAllOrdersScreen() {
     const handleNewOrder = (newOrder: any) => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setOrders((prev) => {
-        // Replace if the same orderId already exists (e.g. socket fired twice)
         const exists = prev.some((o) => o.orderId === newOrder.orderId);
         if (exists) {
           return prev.map((o) => (o.orderId === newOrder.orderId ? { ...o, ...newOrder } : o));
@@ -520,9 +559,7 @@ export default function AdminAllOrdersScreen() {
       });
 
       // ✅ UPDATED: Only trigger the alarm for COD orders that need
-      //    admin action. Auto-accepted online orders do NOT ring the
-      //    admin's alarm — the chef has already been notified by the
-      //    backend.
+      //    admin action.
       const status = String(newOrder.orderStatus || 'Placed').toLowerCase();
       const payment = String(newOrder.paymentMethod || '').toLowerCase();
       if (status === 'placed' && payment === 'cod') {
@@ -597,9 +634,6 @@ export default function AdminAllOrdersScreen() {
   }, []);
 
   // ─── Filtered orders ───
-  // ✅ UPDATED: Now applies BOTH the status filter AND the search query.
-  //    Search matches against orderId, customer name, chef name,
-  //    restaurant name, user/chef phone numbers and menu name.
   const filteredOrders = useMemo(() => {
     let list = orders;
 
@@ -793,29 +827,7 @@ export default function AdminAllOrdersScreen() {
   const isCurrentOrderDelivered = currentStatus.toLowerCase() === 'delivered';
 
   // ==================================================================
-  // ✅ FIX #1 — CRITICAL: Refined "Cash Collected" determination
-  //
-  // The previous logic incorrectly marked Mealbox/Catering orders as
-  // "Cash Collected" the moment the 45% advance was verified, because
-  // paymentStatus became "Advance Paid (Verified)" and the string
-  // check `pStatus === 'paid'` was too loose (or because the UI
-  // interpreted "advance verified" as "fully settled").
-  //
-  // ✅ Correct behaviour (now delegated to computeIsFullySettled):
-  //   • For Mealbox/Catering (advance-based flows):
-  //       - isCashCollected = TRUE only when the FULL total has been
-  //         collected (paymentStatus contains "Fully Paid" or the
-  //         orderStatus is "Completed"/"Cash Collected").
-  //       - A verified advance MUST NOT lock the status dropdown nor
-  //         hide the balance amount.
-  //   • For Homemade/QuickBites:
-  //       - COD orders: isCashCollected = TRUE only after delivery
-  //         status flips to "Cash Collected"/"Delivered".
-  //       - Online-paid orders: isCashCollected = TRUE because the
-  //         full amount was already captured by Cashfree at placement.
-  //
-  // The shared helper `computeIsFullySettled` enforces this rule for
-  // BOTH the active order view AND the pill color logic below.
+  // ✅ FIX: Use the shared helper for the active order
   // ==================================================================
   const isCashCollected = useMemo(
     () => computeIsFullySettled(activeOrder),
@@ -830,21 +842,30 @@ export default function AdminAllOrdersScreen() {
   );
 
   // ==================================================================
-  // ✅ FIX #2 — Derived balance amount that the UI should display for
-  // Mealbox/Catering orders. This is what the admin needs to see as
-  // the amount still owed by the customer (NOT the advance amount).
-  //
-  // For Homemade/QuickBites COD orders, this equals the full total.
-  // For Homemade/QuickBites online orders, this is 0.
-  // For Mealbox/Catering orders, this equals 55% of the total
-  // (i.e. totalAmount - advancePaidAmount) until the balance is
-  // collected, at which point it becomes 0.
+  // ✅ NEW: Payment badge for the active order — used on the delivery
+  // card's top-right corner.
+  // ==================================================================
+  const activePaymentBadge = useMemo(
+    () => computePaymentBadge(activeOrder),
+    [
+      activeOrder?.paymentMethod,
+      activeOrder?.orderStatus,
+      activeOrder?.paymentStatus,
+      activeOrder?.serviceType,
+      activeOrder?.totalAmount,
+      activeOrder?.advancePaidAmount,
+      activeOrder?.balanceAmountToCollect,
+    ]
+  );
+
+  // ==================================================================
+  // ✅ FIX: Derived balance amount that the UI should display for
+  // Mealbox/Catering orders.
   // ==================================================================
   const displayedBalanceAmount = useMemo(() => {
     const bal = Number(activeOrder?.balanceAmountToCollect || 0);
     if (isCashCollected) return 0;
     if (bal > 0) return bal;
-    // Fallback: if backend didn't persist balance, compute from advance
     const total = Number(activeOrder?.totalAmount || 0);
     const adv = Number(activeOrder?.advancePaidAmount || 0);
     return Math.max(0, Math.round((total - adv) * 100) / 100);
@@ -854,6 +875,17 @@ export default function AdminAllOrdersScreen() {
     activeOrder?.advancePaidAmount,
     isCashCollected,
   ]);
+
+  // ==================================================================
+  // ✅ FIX (Flow A): Determine whether the delivery status dropdown
+  // should be visible. Per Flow A, the dropdown only appears after
+  // the order has been accepted (adminAcceptedAt is set).
+  //
+  // For online orders, the backend auto-accepts, so adminAcceptedAt
+  // is set immediately. For COD orders, the admin must click the
+  // "Accept Order" button first.
+  // ==================================================================
+  const isOrderAcceptedForAdmin = Boolean(activeOrder?.adminAcceptedAt);
 
   const allMealboxSchedules: Array<{
     date: string;
@@ -882,7 +914,6 @@ export default function AdminAllOrdersScreen() {
       const timeSlot = match?.timeSlot || activeOrder.deliveryTimeSlot || '7:00 PM - 9:00 PM';
       const address = match?.address || activeOrder.addressDetails || activeOrder.deliveryAddress || customerAddress;
 
-      // ✅ NEW: Prefer per-schedule coords, fall back to order-level coords.
       const sLat = match?.latitude ?? activeOrder?.latitude;
       const sLng = match?.longitude ?? activeOrder?.longitude;
 
@@ -908,14 +939,12 @@ export default function AdminAllOrdersScreen() {
 
   const stepperActiveIndex = useMemo(() => {
     const s = currentStatus.toLowerCase();
-    const p = (activeOrder?.paymentStatus || '').toLowerCase();
-    if (p === 'collected' || p === 'paid' || s.includes('amount collected')) return 4;
-    if (s === 'delivered' || s === 'completed') return 4;
+    if (s === 'delivered' || s === 'completed' || s.includes('cash collected') || s.includes('amount collected')) return 4;
     if (s.includes('out') || s.includes('delivery')) return 3;
     if (s.includes('pack') || s.includes('prepared & packing') || s.includes('prepared and packing')) return 2;
     if (s.includes('prep') || s.includes('preparing')) return 1;
     return 0;
-  }, [currentStatus, activeOrder?.paymentStatus]);
+  }, [currentStatus]);
 
   const defaultDishImage =
     parsedItems[0]?.image ||
@@ -923,20 +952,16 @@ export default function AdminAllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
-  // ✅ QuickBites detection — robust: true if either the flag is set OR
-  //    the order carries a persisted estimatedDeliveryAt timestamp.
   const isQuickBitesFlow = useMemo(() => {
     if (!activeOrder) return false;
     const flagSet =
       activeOrder?.isQuickBites === true ||
       String(activeOrder?.isQuickBites).toLowerCase() === 'true';
     const hasEstimated = !!activeOrder?.estimatedDeliveryAt;
-    // QuickBites only applies to homemade orders
     if (!isHomemadeFlow) return false;
     return flagSet || hasEstimated;
   }, [activeOrder, isHomemadeFlow]);
 
-  // ✅ Compute dynamic QuickBites date/time from MongoDB's `estimatedDeliveryAt`
   const quickBitesDateTime = useMemo(() => {
     if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
     const d = new Date(activeOrder.estimatedDeliveryAt);
@@ -963,10 +988,6 @@ export default function AdminAllOrdersScreen() {
     return { displayDate, timerDate, timeStr };
   }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
 
-  // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
-  //    • For QuickBites: computed live from `estimatedDeliveryAt`.
-  //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
-  //      falls back to legacy `deliveryTimeSlot`.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
@@ -998,7 +1019,6 @@ export default function AdminAllOrdersScreen() {
     quickBitesDateTime,
   ]);
 
-  // ✅ NEW: Human-friendly display date specifically for headers/cards.
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
@@ -1017,8 +1037,6 @@ export default function AdminAllOrdersScreen() {
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today',
-    // ✅ For homemade QuickBites: use the live-computed display date.
-    //    For non-QuickBites homemade: use the persisted value.
     deliveryDate:
       isHomemadeFlow
         ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
@@ -1185,8 +1203,6 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  // ✅ UPDATED: Prefers coordinates for exact pin placement, falls back to address.
-  //    Works for every flow — catering, mealbox, quickbite, homemade.
   const handleOpenMap = (
     addressOverride?: string,
     latOverride?: any,
@@ -1273,7 +1289,32 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  // ─── ADMIN VERIFY ADVANCE / PAYMENT RECEIVED ACTION ───
+  // ==================================================================
+  // ✅ NEW: Admin taps "Accept Order" for a pending (COD) order.
+  // This calls the backend `/admin-accept` endpoint which notifies
+  // the chef and sets adminAcceptedAt.
+  // ==================================================================
+  const handleAdminAcceptOrder = async () => {
+    if (!activeOrder) return;
+
+    try {
+      setActionLoading(true);
+      const res = await api.patch(`/api/orders/${activeOrder.orderId}/admin-accept`);
+
+      if (res.data && res.data.success) {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setOrders((prev) =>
+          prev.map((o) => (o.orderId === activeOrder.orderId ? { ...o, ...res.data.order } : o))
+        );
+        Alert.alert('Order Accepted', 'The chef has been notified and can now prepare the order.');
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.message || 'Failed to accept order.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleVerifyAdvancePayment = async () => {
     if (!activeOrder) return;
 
@@ -1353,6 +1394,22 @@ export default function AdminAllOrdersScreen() {
     'All', 'Placed', 'Accepted', 'Preparing', 'Delivered', 'Cancelled',
   ];
 
+  // ==================================================================
+  // ✅ REVISED (Q7 - Flow A): Admin status dropdown now shows ONLY
+  // the 5 delivery statuses. The "Cash on Delivery Amount Collected"
+  // item has been REMOVED — COD cash collection is now handled
+  // implicitly when the order is marked "Delivered" and the badge
+  // updates accordingly.
+  // ==================================================================
+  const adminStatusDropdownOptions = [
+    { label: 'Accepted', value: 'Accepted', icon: 'checkmark-circle-outline' },
+    { label: 'Preparing', value: 'Preparing', icon: 'flame-outline' },
+    { label: 'Prepared & Packing', value: 'Prepared & Packing', icon: 'cube-outline' },
+    { label: 'Out for Delivery', value: 'Out for Delivery', icon: 'bicycle-outline' },
+    { label: 'Delivered', value: 'Delivered', icon: 'checkmark-done-outline' },
+    { label: 'Cancelled', value: 'Cancelled', icon: 'close-circle-outline' },
+  ];
+
   if (loading) {
     return (
       <View style={[styles.root, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -1397,9 +1454,7 @@ export default function AdminAllOrdersScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* ✅ NEW: SEARCH BAR — filters orders live by order ID, customer,
-                chef, phone numbers and menu name. Works in harmony with the
-                status filter tabs below. */}
+            {/* ✅ SEARCH BAR */}
             <View style={styles.searchBarWrapper}>
               <View style={styles.searchBarContainer}>
                 <Ionicons name="search" size={16} color="#60A5FA" />
@@ -1462,35 +1517,24 @@ export default function AdminAllOrdersScreen() {
                   const isSelected = selectedOrderIndex === idx;
                   const status = (o.orderStatus || 'Placed').toLowerCase();
 
-                  // ==================================================================
-                  // ✅ FIX #2 — Pill colour now reflects the TRUE fulfilment state
-                  // of the order, NOT merely whether the advance was paid.
-                  //
-                  // Blue (delivered) is reserved for orders whose FULL balance has
-                  // been settled or whose status is Delivered/Completed.
-                  //
-                  // We use the shared `computeIsFullySettled` helper (defined at
-                  // the top of this file) so the pill logic and the active-order
-                  // UI stay perfectly in sync.
-                  // ==================================================================
                   const isOrderFullySettled = computeIsFullySettled(o);
                   const isCancelled = status === 'cancelled';
                   const isPendingUnaccepted = status === 'placed' && !isOrderFullySettled;
 
-                  let pillStyle = styles.orderTabPillPending; // Red — awaiting action
+                  let pillStyle = styles.orderTabPillPending;
                   let dotStyle = styles.tabIndicatorDotPending;
                   let textStyle = styles.orderTabPillTextPending;
 
                   if (isOrderFullySettled) {
-                    pillStyle = styles.orderTabPillDelivered; // Blue — completed
+                    pillStyle = styles.orderTabPillDelivered;
                     dotStyle = styles.tabIndicatorDotDelivered;
                     textStyle = styles.orderTabPillTextDelivered;
                   } else if (isCancelled) {
-                    pillStyle = styles.orderTabPillCancelled; // Grey
+                    pillStyle = styles.orderTabPillCancelled;
                     dotStyle = styles.tabIndicatorDotCancelled;
                     textStyle = styles.orderTabPillTextCancelled;
                   } else if (!isPendingUnaccepted) {
-                    pillStyle = styles.orderTabPillAccepted; // Yellow — in progress
+                    pillStyle = styles.orderTabPillAccepted;
                     dotStyle = styles.tabIndicatorDotAccepted;
                     textStyle = styles.orderTabPillTextAccepted;
                   }
@@ -1563,16 +1607,7 @@ export default function AdminAllOrdersScreen() {
             </View>
           ) : (
             <>
-              {/* ─── ADVANCE PAYMENT VERIFICATION BANNER ───
-                  ✅ UPDATED: Only rendered for Mealbox/Catering orders.
-                  Homemade/QuickBites orders either paid in full online
-                  (Cashfree already verified it server-side) or chose COD
-                  (no advance exists). The banner has no purpose for them.
-
-                  ✅ NEW: When the advance is verified but the balance
-                  is still outstanding, the banner now correctly displays
-                  BOTH the advance amount AND the balance still due —
-                  it no longer misleadingly reads as "amount collected". */}
+              {/* ─── ADVANCE PAYMENT VERIFICATION BANNER ─── */}
               {activeOrder &&
                 activeOrder.serviceType !== 'homemade' &&
                 activeOrder.serviceType !== 'quickbites' && (
@@ -1591,9 +1626,6 @@ export default function AdminAllOrdersScreen() {
                               Math.round(totalAmountNum * 0.45)}
                         </Text>
 
-                        {/* ✅ NEW: Always show the outstanding balance when
-                            it is greater than zero — this is the amount
-                            the admin/customer must still settle. */}
                         {!isCashCollected && displayedBalanceAmount > 0 && (
                           <Text style={styles.advanceBalanceText}>
                             Balance to collect:{' '}
@@ -1639,6 +1671,41 @@ export default function AdminAllOrdersScreen() {
                   </View>
                 )}
 
+              {/* ==================================================================
+                  ✅ FLOW A GATING — If the order is placed (COD awaiting
+                  admin acceptance), show ONLY the "Accept Order" button.
+                  No status dropdown, no delivery stepper visible yet.
+                  ================================================================== */}
+              {activeOrder && !isOrderAcceptedForAdmin && currentStatus.toLowerCase() === 'placed' && (
+                <View style={styles.acceptOrderHeroCard}>
+                  <View style={styles.acceptOrderIconCircle}>
+                    <Ionicons name="shield-checkmark-outline" size={32} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.acceptOrderTitle}>Order Awaiting Acceptance</Text>
+                  <Text style={styles.acceptOrderSubtitle}>
+                    {isPaymentCod
+                      ? `COD order — please confirm to notify the chef and begin preparation. Cash ₹${totalAmountNum} to be collected on delivery.`
+                      : `Online order — please confirm to notify the chef and begin preparation.`}
+                  </Text>
+
+                  <TouchableOpacity
+                    style={[styles.acceptOrderPrimaryBtn, actionLoading && { opacity: 0.7 }]}
+                    activeOpacity={0.9}
+                    onPress={handleAdminAcceptOrder}
+                    disabled={actionLoading}
+                  >
+                    {actionLoading ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                        <Text style={styles.acceptOrderPrimaryBtnText}>Accept Order</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {/* ─── STEPPER HERO (if accepted) ─── */}
               {isCurrentOrderAccepted && (
                 <View style={styles.successHeroCard}>
@@ -1653,13 +1720,14 @@ export default function AdminAllOrdersScreen() {
                     Order <Text style={styles.successHeroOrderId}>{orderData.orderId}</Text> is currently under live platform fulfillment.
                   </Text>
 
-                  {/* Admin Status Override Dropdown */}
+                  {/* ✅ FLOW A: Admin Status Override Dropdown
+                      Shows ONLY the 5 delivery statuses (no Cash Collected). */}
                   <View style={styles.adminStatusSelectorBox}>
                     <Text style={styles.adminSelectorTitle}>Admin Status Override:</Text>
                     {isCashCollected ? (
                       <View style={styles.cashCollectedLockedCard}>
                         <Ionicons name="lock-closed" size={18} color="#2563EB" style={{ marginRight: 8 }} />
-                        <Text style={styles.cashCollectedLockedText}>Payment Settled • Cash Collected</Text>
+                        <Text style={styles.cashCollectedLockedText}>Payment Settled • Order Completed</Text>
                       </View>
                     ) : (
                       <>
@@ -1681,15 +1749,7 @@ export default function AdminAllOrdersScreen() {
 
                         {showStatusDropdown && (
                           <View style={styles.dropdownMenuCard}>
-                            {[
-                              { label: 'Accepted', value: 'Accepted', icon: 'checkmark-circle-outline' },
-                              { label: 'Preparing', value: 'Preparing', icon: 'flame-outline' },
-                              { label: 'Prepared & Packing', value: 'Prepared & Packing', icon: 'cube-outline' },
-                              { label: 'Out for Delivery', value: 'Out for Delivery', icon: 'bicycle-outline' },
-                              { label: 'Delivered', value: 'Delivered', icon: 'checkmark-done-outline' },
-                              { label: 'Cash on Delivery Amount Collected', value: 'Cash Collected', icon: 'cash-outline' },
-                              { label: 'Cancelled', value: 'Cancelled', icon: 'close-circle-outline' },
-                            ].map((item) => (
+                            {adminStatusDropdownOptions.map((item) => (
                               <TouchableOpacity
                                 key={item.label}
                                 style={[
@@ -1781,8 +1841,45 @@ export default function AdminAllOrdersScreen() {
                 />
               )}
 
-              {/* 1. ORDER IDENTIFIER */}
+              {/* ==================================================================
+                  ✅ REVISED: MAIN ORDER CARD — Top-right badge now shows
+                  ONLY the payment state (Payment Settled / Advance Paid ₹X /
+                  COD ₹X / Cash Collected ₹X). Order status moved into a
+                  separate inline pill.
+                  ================================================================== */}
               <View style={styles.card}>
+                <View
+                  style={[
+                    styles.paymentBadgeTopRight,
+                    activePaymentBadge.isSettled
+                      ? styles.paymentBadgeTopRightSettled
+                      : styles.paymentBadgeTopRightPending,
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      activePaymentBadge.isSettled
+                        ? 'checkmark-circle'
+                        : isPaymentCod
+                        ? 'cash-outline'
+                        : 'time-outline'
+                    }
+                    size={12}
+                    color={activePaymentBadge.isSettled ? '#166348' : '#92400E'}
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text
+                    style={[
+                      styles.paymentBadgeTopRightText,
+                      activePaymentBadge.isSettled
+                        ? styles.paymentBadgeTopRightTextSettled
+                        : styles.paymentBadgeTopRightTextPending,
+                    ]}
+                  >
+                    {activePaymentBadge.text}
+                  </Text>
+                </View>
+
                 <View style={styles.orderIdTopRow}>
                   <View style={{ flex: 1, paddingRight: 8 }}>
                     <Text style={styles.smallSectionLabel}>ADMIN ORDER IDENTIFIER</Text>
@@ -1794,38 +1891,21 @@ export default function AdminAllOrdersScreen() {
                     </View>
                   </View>
 
+                  {/* ✅ CHANGED: Status badge is now a small inline pill */}
                   <View
                     style={[
-                      styles.statusBadgePill,
-                      isCurrentOrderAccepted && { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
-                      orderData.status === 'Cancelled' && { backgroundColor: '#FEF2F2', borderColor: '#FEE2E2' },
-                      !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && { backgroundColor: '#FFFBEB', borderColor: '#FEF3C7' },
+                      styles.inlineOrderStatusPill,
+                      isCurrentOrderAccepted && styles.inlineOrderStatusPillAccepted,
+                      orderData.status === 'Cancelled' && styles.inlineOrderStatusPillCancelled,
+                      !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && styles.inlineOrderStatusPillPending,
                     ]}
                   >
-                    <Ionicons
-                      name={
-                        isCurrentOrderAccepted
-                          ? 'checkmark-circle'
-                          : orderData.status === 'Cancelled'
-                          ? 'close-circle'
-                          : 'time-outline'
-                      }
-                      size={12}
-                      color={
-                        isCurrentOrderAccepted
-                          ? '#2563EB'
-                          : orderData.status === 'Cancelled'
-                          ? '#DC2626'
-                          : '#D97706'
-                      }
-                      style={{ marginRight: 4 }}
-                    />
                     <Text
                       style={[
-                        styles.statusBadgeText,
-                        isCurrentOrderAccepted && { color: '#2563EB' },
-                        orderData.status === 'Cancelled' && { color: '#DC2626' },
-                        !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && { color: '#D97706' },
+                        styles.inlineOrderStatusPillText,
+                        isCurrentOrderAccepted && styles.inlineOrderStatusPillTextAccepted,
+                        orderData.status === 'Cancelled' && styles.inlineOrderStatusPillTextCancelled,
+                        !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && styles.inlineOrderStatusPillTextPending,
                       ]}
                     >
                       {orderData.status}
@@ -1956,10 +2036,6 @@ export default function AdminAllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
-                {/* ✅ NEW: Dynamic Delivery Date & Slot Strip (Admin Blue Theme)
-                    — Mirrors the chef screen exactly, values come from the
-                    same orderData.deliveryDate / orderData.deliveryTimeSlot
-                    already computed dynamically from the order.ts document. */}
                 <View style={styles.deliveryInfoStripContainer}>
                   <View style={styles.deliveryInfoCell}>
                     <View style={{ flex: 1 }}>
@@ -2073,10 +2149,6 @@ export default function AdminAllOrdersScreen() {
                             isPaymentCod && !isCashCollected ? styles.paymentCodPillText : styles.paymentOnlinePillText,
                           ]}
                         >
-                          {/* ✅ UPDATED: Removed the outdated "(40% Advance)"
-                              suffix — it was misleading for both Mealbox/
-                              Catering (advance is 45% now) and for Homemade/
-                              QuickBites (no advance; full on delivery). */}
                           {isCashCollected
                             ? 'Cash Collected (Paid)'
                             : isPaymentCod
@@ -2188,7 +2260,7 @@ export default function AdminAllOrdersScreen() {
                             </TouchableOpacity>
                           </View>
 
-                          {!isItemPaused && !isCashCollected && (
+                          {!isItemPaused && !isCashCollected && isOrderAcceptedForAdmin && (
                             <View style={{ marginTop: 10 }}>
                               <TouchableOpacity
                                 style={styles.individualStatusTrigger}
@@ -2290,10 +2362,10 @@ export default function AdminAllOrdersScreen() {
                   </View>
                   <View style={styles.timerTextContainer}>
                     <Text style={styles.timerMainHeading}>
-                      Awaiting chef acceptance from{' '}
-                      <Text style={styles.timerHighlightBold}>{orderData.chef.name}</Text>
+                      Awaiting admin acceptance — chef{' '}
+                      <Text style={styles.timerHighlightBold}>{orderData.chef.name}</Text> will be notified after you accept.
                     </Text>
-                    <Text style={styles.timerSubHeading}>Admin can override status using the dropdown above.</Text>
+                    <Text style={styles.timerSubHeading}>Tap the Accept Order button above to begin fulfillment.</Text>
                   </View>
                 </View>
               )}
@@ -2611,7 +2683,7 @@ const styles = StyleSheet.create({
   },
   notificationBadgeText: { color: '#FFFFFF', fontSize: 8.5, fontWeight: '900' },
 
-  /* ─── ✅ NEW: SEARCH BAR (Admin Blue Theme) ─── */
+  /* ✅ SEARCH BAR */
   searchBarWrapper: {
     marginBottom: 12,
   },
@@ -2666,7 +2738,6 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
   emptySubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center', fontWeight: '500', lineHeight: 18 },
 
-  /* ✅ NEW: Empty-state "clear search" CTA button */
   emptyClearSearchBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2696,13 +2767,158 @@ const styles = StyleSheet.create({
     position: 'relative', overflow: 'hidden',
   },
 
+  // ✅ NEW: payment badge positioned on the top-right of the main order card
+  paymentBadgeTopRight: {
+    position: 'absolute',
+    top: -1,
+    right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderTopWidth: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    borderWidth: 1,
+    zIndex: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  paymentBadgeTopRightSettled: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  paymentBadgeTopRightPending: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  paymentBadgeTopRightText: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  paymentBadgeTopRightTextSettled: {
+    color: '#166348',
+  },
+  paymentBadgeTopRightTextPending: {
+    color: '#92400E',
+  },
+
+  // ✅ NEW: inline order status pill (companion to the payment badge)
+  inlineOrderStatusPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  inlineOrderStatusPillAccepted: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  inlineOrderStatusPillPending: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FEF3C7',
+  },
+  inlineOrderStatusPillCancelled: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FEE2E2',
+  },
+  inlineOrderStatusPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  inlineOrderStatusPillTextAccepted: {
+    color: '#2563EB',
+  },
+  inlineOrderStatusPillTextPending: {
+    color: '#D97706',
+  },
+  inlineOrderStatusPillTextCancelled: {
+    color: '#DC2626',
+  },
+
+  // ✅ NEW: "Accept Order" hero card — displayed for placed COD orders (Flow A)
+  acceptOrderHeroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 20,
+    alignItems: 'center',
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  acceptOrderIconCircle: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#D97706',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+    borderWidth: 4,
+    borderColor: 'rgba(217, 119, 6, 0.12)',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  acceptOrderTitle: {
+    fontSize: 19,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginBottom: 6,
+    letterSpacing: -0.3,
+    textAlign: 'center',
+  },
+  acceptOrderSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 19,
+    paddingHorizontal: 10,
+    fontWeight: '500',
+    marginBottom: 16,
+  },
+  acceptOrderPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#166534',
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 16,
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  acceptOrderPrimaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+
   advancePaymentBox: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#F8FAFC', borderRadius: 16, padding: 12, borderWidth: 1, borderColor: '#E2E8F0'
   },
   advanceLabelText: { fontSize: 11.5, fontWeight: '600', color: '#64748B' },
   advanceAmountText: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginVertical: 2 },
-  // ✅ NEW: Balance-due line inside the advance payment box
   advanceBalanceText: {
     fontSize: 12,
     color: '#64748B',
@@ -2825,7 +3041,6 @@ const styles = StyleSheet.create({
   simplePlanDaysText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
   simplePlanDetailsText: { fontSize: 12, color: '#64748B', fontWeight: '500', marginTop: 2 },
 
-  /* ✅ NEW: Dynamic Delivery Date & Slot Strip (Admin Blue Theme) */
   deliveryInfoStripContainer: {
     flexDirection: 'row',
     alignItems: 'center',
