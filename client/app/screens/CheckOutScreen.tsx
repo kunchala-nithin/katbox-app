@@ -887,7 +887,7 @@ export default function CheckOutScreen() {
                 }}
                 activeOpacity={0.85}
               >
-                <Text style={styles.modernViewItemsText}>Preview Platter Menu & Addons</Text>
+                <Text style={styles.modernViewItemsText}>Inspect Platter Menu & Addons</Text>
                 <Ionicons name="arrow-forward" size={14} color="#FAF8F5" style={{ marginLeft: 6 }} />
               </TouchableOpacity>
             )}
@@ -1278,6 +1278,8 @@ export default function CheckOutScreen() {
             activeOpacity={0.8}
             style={{ flexDirection: "row", alignItems: "center" }}
           >
+            {/* ✅ FIX: Use bottomBarAmount (payLaterAmount for COD) instead of payNowAmount
+                so the bar shows the actual due amount — ₹total for COD, ₹payNow otherwise. */}
             <Text style={styles.bottomAmountValue}>₹{bottomBarAmount}</Text>
             <View style={styles.viewDetailsBadgeContainer}>
               <Text style={styles.viewDetailsBadgeText}>View Details</Text>
