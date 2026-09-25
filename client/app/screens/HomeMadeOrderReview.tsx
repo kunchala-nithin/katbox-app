@@ -143,6 +143,17 @@ const formatTodayShort = (d: Date): string => {
   }
 };
 
+// ✅ NEW HELPER — Given a raw tag string ("less", "medium", "very", "noonion"),
+//    return the human-readable label used across the app.
+const resolveInstructionLabel = (rawTag: string): string => {
+  const t = String(rawTag || "").toLowerCase().trim();
+  if (t === "less") return "Less spicy";
+  if (t === "medium") return "Medium spicy";
+  if (t === "very") return "Very spicy";
+  if (t === "noonion") return "No onion & garlic";
+  return "";
+};
+
 const HomeMadeOrderReview = () => {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -532,6 +543,13 @@ const HomeMadeOrderReview = () => {
         finalDeliverySlot = formatTimeShort(deadline);
       }
 
+      // ✅ NEW: Build the special-instruction payload ONCE.
+      //     `selectedInstructionTag` is the raw tag ("less", "medium", "very", "noonion")
+      //     `resolveInstructionLabel` maps it to the human-readable label.
+      const specialInstructionTag = String(selectedInstructionTag || '').trim();
+      const specialInstructionLabel = resolveInstructionLabel(selectedInstructionTag);
+      const specialInstructionText = String(chefNotesText || '').trim();
+
       const payload = {
         // ✅ NEW: use the effective service type so Quick Bites persists as
         // "quickbites" on the Cart document and later on the Order document.
@@ -556,6 +574,17 @@ const HomeMadeOrderReview = () => {
         // persist them directly. The slot is just "4:30 PM" for QuickBites.
         deliveryDate: finalDeliveryDate,
         deliverySlot: finalDeliverySlot,
+
+        // ✅ NEW: Top-level special-instruction block (picked up by cart.controller.ts)
+        specialInstruction: {
+          tag: specialInstructionTag,
+          label: specialInstructionLabel,
+          text: specialInstructionText,
+        },
+        specialInstructionTag,
+        specialInstructionLabel,
+        specialInstructionText,
+
         orderDetails: {
           contactPhone: contactPhoneNumber,
           alternatePhone: alternatePhoneNumber,
@@ -577,6 +606,16 @@ const HomeMadeOrderReview = () => {
           deliverySlot: finalDeliverySlot,
           deliveryTimeSlot: finalDeliverySlot,
           isQuickBites: isQuickBites ? 'true' : 'false',
+
+          // ✅ NEW: Nested special-instruction block (backup for cart.controller.ts)
+          specialInstruction: {
+            tag: specialInstructionTag,
+            label: specialInstructionLabel,
+            text: specialInstructionText,
+          },
+          specialInstructionTag,
+          specialInstructionLabel,
+          specialInstructionText,
         },
       };
 

@@ -1,3 +1,4 @@
+// screens/CateringOrderReview.tsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
@@ -59,6 +60,17 @@ const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefi
     return `${addr.houseDetails}, ${addr.fullAddress}`;
   }
   return addr.fullAddress || "";
+};
+
+// ✅ NEW HELPER — Given a raw tag string ("less", "medium", "very", "noonion"),
+//    return the human-readable label used across the app.
+const resolveInstructionLabel = (rawTag: string): string => {
+  const t = String(rawTag || "").toLowerCase().trim();
+  if (t === "less") return "Less spicy";
+  if (t === "medium") return "Medium spicy";
+  if (t === "very") return "Very spicy";
+  if (t === "noonion") return "No onion & garlic";
+  return "";
 };
 
 // Updated Stepper with Real Titles - Made Clickable
@@ -503,17 +515,12 @@ export default function ChefOrderReviewScreen() {
   const isAddressComplete = !!address && address.trim().length > 0;
   const isDeliveryComplete = !!delivery;
 
-  // ✅ NEW: Special instructions are considered "selected" when the user has
+  // ✅ Special instructions are considered "selected" when the user has
   //     chosen a spice level OR toggled the "No onion & garlic" option.
-  //     The free-text description / notes field is OPTIONAL — it does NOT
-  //     affect this flag, and it does NOT block the Add to cart / Review order buttons.
   const isSpecialInstructionsComplete = !!selectedSpice || noOnionsGarlic;
 
   const shouldShowPhoneTick = isAddressComplete && isPhoneValid;
 
-  // ✅ UPDATED: The form is now considered complete ONLY when the user has
-  //    also picked a delivery service AND a special instruction (spice level
-  //    OR no-onion-garlic toggle). The optional notes text is not required.
   const isFormComplete =
     isOccasionComplete &&
     isDateComplete &&
@@ -947,6 +954,13 @@ export default function ChefOrderReviewScreen() {
       0
     );
 
+    // ✅ NEW: Build the special-instruction payload block ONCE so we
+    //     can attach it in both `orderDetails` (legacy) and top-level.
+    const resolvedInstructionLabel = resolveInstructionLabel(selectedSpice);
+    const specialInstructionTag = String(selectedSpice || "").trim();
+    const specialInstructionLabel = resolvedInstructionLabel;
+    const specialInstructionText = String(notes || "").trim();
+
     const orderDetailsPayload = {
       occasion,
       date: dateDisplay,
@@ -960,6 +974,17 @@ export default function ChefOrderReviewScreen() {
       selectedSpice,
       noOnionsGarlic,
       notes,
+
+      // ✅ NEW: Nested special instruction block for downstream parsing
+      specialInstruction: {
+        tag: specialInstructionTag,
+        label: specialInstructionLabel,
+        text: specialInstructionText,
+      },
+      // ✅ NEW: Flat mirrors (backup keys)
+      specialInstructionTag,
+      specialInstructionLabel,
+      specialInstructionText,
     };
 
     const cartPayload = {
@@ -986,6 +1011,17 @@ export default function ChefOrderReviewScreen() {
       finalPrice: finalPlatePrice,
       deliveryPrice: deliveryPriceCalc,
       extraItems,
+
+      // ✅ NEW: Top-level special instruction block (also picked up by cart.controller.ts)
+      specialInstruction: {
+        tag: specialInstructionTag,
+        label: specialInstructionLabel,
+        text: specialInstructionText,
+      },
+      specialInstructionTag,
+      specialInstructionLabel,
+      specialInstructionText,
+
       type:
         params.type ||
         (updatedSelections?.some((cat: any) =>
@@ -1248,7 +1284,6 @@ export default function ChefOrderReviewScreen() {
               </View>
               <View>
                 <Text style={styles.notesTitle}>Special instructions</Text>
-                {/* ✅ NEW: clearer hint — spice level is required, description is optional */}
                 <Text style={styles.optionalFieldSubLabel}>
                   Select a spice level (required) • Description is optional
                 </Text>
@@ -1375,6 +1410,12 @@ export default function ChefOrderReviewScreen() {
                 0
               );
 
+              // ✅ NEW: Build the special-instruction payload once
+              const resolvedInstructionLabel = resolveInstructionLabel(selectedSpice);
+              const specialInstructionTag = String(selectedSpice || "").trim();
+              const specialInstructionLabel = resolvedInstructionLabel;
+              const specialInstructionText = String(notes || "").trim();
+
               const orderDetailsPayload = {
                 occasion,
                 date: dateDisplay,
@@ -1388,6 +1429,16 @@ export default function ChefOrderReviewScreen() {
                 selectedSpice,
                 noOnionsGarlic,
                 notes,
+
+                // ✅ NEW: Nested special instruction block
+                specialInstruction: {
+                  tag: specialInstructionTag,
+                  label: specialInstructionLabel,
+                  text: specialInstructionText,
+                },
+                specialInstructionTag,
+                specialInstructionLabel,
+                specialInstructionText,
               };
 
               const cartPayload = {
@@ -1414,6 +1465,17 @@ export default function ChefOrderReviewScreen() {
                 finalPrice: finalPlatePrice,
                 deliveryPrice: deliveryPriceCalc,
                 extraItems,
+
+                // ✅ NEW: Top-level special instruction block
+                specialInstruction: {
+                  tag: specialInstructionTag,
+                  label: specialInstructionLabel,
+                  text: specialInstructionText,
+                },
+                specialInstructionTag,
+                specialInstructionLabel,
+                specialInstructionText,
+
                 type: params.type || "veg",
               };
 

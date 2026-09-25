@@ -27,6 +27,15 @@ export interface IOrderFeedback {
   submittedAt?: Date;
 }
 
+// ✅ NEW: Special-instruction sub-interface
+// Carries the raw tag (e.g. "less"), human-readable label (e.g. "Less spicy"),
+// and free-text chef notes for ANY service type.
+export interface ISpecialInstruction {
+  tag: string;
+  label: string;
+  text: string;
+}
+
 // Base Interface for Shared Order Properties
 export interface IBaseOrder extends Document {
   orderId: string;
@@ -88,22 +97,27 @@ export interface IBaseOrder extends Document {
   paidAt?: Date;
 
   // ==================================================================
-  // ✅ NEW FIELDS (Production Upgrade) — Admin-Gated Order Flow
-  //    and Advance-Paid / Full-Amount-Paid status tracking.
-  //
-  //    These fields drive the new status flow:
-  //      • Catering/Mealbox + Cashfree success  → orderStatus = "Advance Paid"
-  //      • Homemade/QuickBites + Cashfree success → orderStatus = "Full Amount Paid"
-  //      • Homemade/QuickBites + COD → orderStatus = "Placed" (unchanged)
-  //
-  //    Additionally, the admin must explicitly ACCEPT the order before
-  //    it becomes visible to the chef. This is tracked by
-  //    adminAcceptedAt (null/undefined = not yet accepted by admin).
+  // ✅ FIELDS (Production Upgrade) — Admin-Gated Order Flow
   // ==================================================================
-  statusAdvancedPaidAt?: Date;      // when Cashfree advance payment succeeded
-  fullPaymentPaidAt?: Date;         // when Cashfree full payment succeeded (homemade/quickbites online)
-  adminAcceptedAt?: Date;           // when admin clicked "Accept Order"
-  adminAcceptedBy?: string;         // admin user id who accepted (audit)
+  statusAdvancedPaidAt?: Date;
+  fullPaymentPaidAt?: Date;
+  adminAcceptedAt?: Date;
+  adminAcceptedBy?: string;
+
+  // ==================================================================
+  // ✅ FIELDS — Chef-Acceptance Gate.
+  // ==================================================================
+  chefAcceptedAt?: Date;
+  chefAcceptedBy?: string;
+  // ==================================================================
+
+  // ==================================================================
+  // ✅ NEW FIELD — Special instructions captured on the review screen.
+  //    Persisted for ALL service types. Displayed in the Admin / Chef
+  //    order detail views (with "N/A" fallback) AND in the customer
+  //    Bill Summary modal.
+  // ==================================================================
+  specialInstruction?: ISpecialInstruction;
   // ==================================================================
 
   createdAt: Date;
@@ -111,7 +125,6 @@ export interface IBaseOrder extends Document {
 }
 
 // 1. Separate Dedicated Interface for Homemade Orders ONLY.
-// ✅ Also reused by QuickBites orders (which share the same schema).
 export interface IHomemadeOrderItem {
   id: string;
   name: string;
@@ -123,15 +136,12 @@ export interface IHomemadeOrderItem {
 }
 
 export interface IHomemadeOrder extends IBaseOrder {
-  // ✅ QuickBites shares the homemade shape; only the discriminator differs.
   serviceType: "homemade" | "quickbites";
   items: IHomemadeOrderItem[];
   deliveryAddress: string;
   deliveryTimeSlot?: string;
-  // ✅ New top-level delivery slot label for homemade orders (e.g. "9:00 AM - 11:00 AM")
   deliverySlot?: string;
   deliveryDate?: string;
-  // ✅ QuickBites flag (persisted for downstream screens to render "arriving by X")
   isQuickBites?: boolean;
 }
 
@@ -167,7 +177,6 @@ const DeliveryScheduleSchema = new Schema(
     status: { type: String, required: true, default: "Scheduled" },
     timeSlot: { type: String, default: "7:00 PM - 9:00 PM" },
     address: { type: String, default: "" },
-    // ✅ coordinates per scheduled delivery slot
     latitude: { type: Number },
     longitude: { type: Number },
     actualDeliveredAt: { type: Date },
@@ -201,6 +210,18 @@ const FeedbackSchema = new Schema(
     },
     isSubmitted: { type: Boolean, default: false },
     submittedAt: { type: Date },
+  },
+  { _id: false }
+);
+
+// ✅ NEW: Special Instruction Sub-Schema
+// Shared by every service type. All fields default to empty strings so
+// downstream UI can safely fall back to "N/A".
+const SpecialInstructionSchema = new Schema(
+  {
+    tag: { type: String, default: "" },
+    label: { type: String, default: "" },
+    text: { type: String, default: "" },
   },
   { _id: false }
 );
@@ -252,11 +273,9 @@ const BaseOrderSchema: Schema = new Schema(
     actualDeliveredAt: { type: Date },
     deliveredOnTime: { type: Boolean, default: true },
     gracePeriodMinutes: { type: Number, default: 0 },
-    // ✅ absolute timestamps computed at order placement time
     orderPlacedAt: { type: Date },
     estimatedDeliveryAt: { type: Date },
     deliveryWindowMinutes: { type: Number, default: 0 },
-    // ✅ Geo coordinates for accurate map pinning
     latitude: { type: Number },
     longitude: { type: Number },
 
@@ -275,15 +294,29 @@ const BaseOrderSchema: Schema = new Schema(
     paidAt: { type: Date },
 
     // ==================================================================
-    // ✅ NEW FIELDS (Production Upgrade)
-    //    Advance-paid / full-payment-paid timestamps and the
-    //    admin-acceptance gate that keeps orders invisible to the chef
-    //    until the admin explicitly accepts them.
+    // ✅ FIELDS (Production Upgrade)
     // ==================================================================
     statusAdvancedPaidAt: { type: Date, default: null },
     fullPaymentPaidAt: { type: Date, default: null },
     adminAcceptedAt: { type: Date, default: null },
     adminAcceptedBy: { type: String, default: "" },
+
+    // ==================================================================
+    // ✅ NEW FIELDS — Chef-Acceptance Gate.
+    // ==================================================================
+    chefAcceptedAt: { type: Date, default: null },
+    chefAcceptedBy: { type: String, default: "" },
+    // ==================================================================
+
+    // ==================================================================
+    // ✅ NEW FIELD — Special instruction from the review screen.
+    //    Persisted for all service types. Empty strings default so UI
+    //    can fall back to "N/A" gracefully.
+    // ==================================================================
+    specialInstruction: {
+      type: SpecialInstructionSchema,
+      default: { tag: "", label: "", text: "" },
+    },
     // ==================================================================
   },
   {
@@ -313,10 +346,8 @@ const HomemadeOrderSchema = new Schema({
   items: { type: [HomemadeItemSubSchema], required: true, default: [] },
   deliveryAddress: { type: String, required: true, default: "" },
   deliveryTimeSlot: { type: String, default: "30–45 min" },
-  // ✅ Human-readable delivery slot label selected by user on the review screen
   deliverySlot: { type: String, default: "" },
   deliveryDate: { type: String, default: "Today" },
-  // ✅ Persist the QuickBites flag so downstream UIs can render the live "arriving by X" banner
   isQuickBites: { type: Boolean, default: false },
 });
 
@@ -349,9 +380,6 @@ export const HomemadeOrderModel =
     ? (Order.discriminators["homemade"] as Model<IHomemadeOrder>)
     : Order.discriminator<IHomemadeOrder>("homemade", HomemadeOrderSchema);
 
-// ✅ QuickBites is a dedicated discriminator reusing the homemade schema,
-// so quickbites orders are stored with serviceType = "quickbites" on the
-// SAME collection, keeping the data model unified.
 export const QuickBitesOrderModel =
   Order.discriminators && Order.discriminators["quickbites"]
     ? (Order.discriminators["quickbites"] as Model<IHomemadeOrder>)

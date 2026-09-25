@@ -14,6 +14,13 @@ interface ICart extends Document {
     noOnionsGarlic: boolean;
     notes: string;
   };
+  // ✅ NEW: Single nested field containing the raw tag+label+text picked on the review screen.
+  //    Populated for ALL service types (catering, mealbox, homemade, quickbites).
+  specialInstruction: {
+    tag: string;
+    label: string;
+    text: string;
+  };
   totalItems: number;
   totalPrice: number;
   extraItems: number; // ✅ NEW
@@ -59,6 +66,14 @@ const CartSchema = new Schema<ICart>(
       spice: { type: String, default: '' },
       noOnionsGarlic: { type: Boolean, default: false },
       notes: { type: String, default: '' },
+    },
+
+    // ✅ NEW: Nested special instruction object with tag + human-readable label + free-text
+    //    Populated for ALL service types.
+    specialInstruction: {
+      tag: { type: String, default: '' },
+      label: { type: String, default: '' },
+      text: { type: String, default: '' },
     },
 
     totalItems: { type: Number, required: true },

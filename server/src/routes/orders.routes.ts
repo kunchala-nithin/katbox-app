@@ -1,3 +1,4 @@
+// orders.routes.ts
 import { Router } from "express";
 import multer from "multer";
 import {
@@ -16,6 +17,8 @@ import {
   verifyAdvancePayment,
   // ✅ NEW: Admin-gated acceptance endpoint
   acceptOrderByAdmin,
+  // ✅ NEW: Chef-gated acceptance endpoint
+  chefAcceptOrder,
 } from "../controllers/orders.controller";
 import { protect } from "../middleware/auth.middleware";
 
@@ -35,10 +38,14 @@ router.patch("/:orderId/unpause", protect, unpauseOrderDelivery);
 router.patch("/:orderId/reschedule", protect, rescheduleOrderDelivery);
 router.patch("/:orderId/verify-advance", protect, verifyAdvancePayment);
 
-// ✅ NEW: Admin clicks "Accept Order" — only this notifies the chef.
+// ✅ Admin clicks "Accept Order" — for COD orders.
 // Must be registered BEFORE the generic `/:orderId` GET route below
 // so Express does not accidentally treat "admin-accept" as an order id.
 router.patch("/:orderId/admin-accept", protect, acceptOrderByAdmin);
+
+// ✅ NEW: Chef clicks "Accept Order" — for QuickBites/Homemade ONLINE orders.
+// Must be registered BEFORE the generic `/:orderId` GET route below.
+router.patch("/:orderId/chef-accept", protect, chefAcceptOrder);
 
 router.post("/:orderId/feedback", protect, upload.array("images", 5), submitOrderFeedback);
 router.get("/:orderId", getOrderById);

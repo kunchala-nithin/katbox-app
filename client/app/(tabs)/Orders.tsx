@@ -50,9 +50,7 @@ const MONTHS_MAP: { [key: string]: number } = {
 };
 
 // ✅ NEW HELPER — Normalizes the service type so QuickBites is treated
-// as a sibling of Homemade everywhere in this screen. This mirrors the
-// backend behaviour where both serviceTypes share the same schema but
-// use different discriminators.
+// as a sibling of Homemade everywhere in this screen.
 const isHomemadeService = (sType?: string): boolean => {
   const t = String(sType || "").toLowerCase();
   return t === "homemade" || t === "quickbites";
@@ -136,6 +134,125 @@ const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
   }
 
   return undefined;
+};
+
+// ==================================================================
+// ✅ NEW SHARED HELPER — Determine whether an order is TRULY fully
+// settled (i.e., the FULL amount has been collected — not just the
+// 45% advance).
+// ==================================================================
+const computeIsFullySettled = (order: any): boolean => {
+  if (!order) return false;
+
+  const pStatus = String(order.paymentStatus || "").toLowerCase().trim();
+  const oStatus = String(order.orderStatus || "").toLowerCase().trim();
+  const serviceType = String(order.serviceType || "").toLowerCase();
+  const advAmt = Number(order.advancePaidAmount || 0);
+  const balAmt = Number(order.balanceAmountToCollect || 0);
+  const total = Number(order.totalAmount || 0);
+
+  const isHomemadeLike =
+    serviceType === "homemade" || serviceType === "quickbites";
+  const isAdvanceBased =
+    serviceType === "catering" || serviceType === "mealbox";
+
+  const isFullyPaidStatus =
+    pStatus.includes("fully paid") ||
+    pStatus.includes("balance collected");
+
+  const isFullyPaidOrderStatus =
+    oStatus === "completed" ||
+    oStatus.includes("cash collected") ||
+    oStatus.includes("amount collected") ||
+    oStatus === "delivered";
+
+  const isHomemadeOnlineFullyPaid =
+    isHomemadeLike &&
+    advAmt > 0 &&
+    balAmt <= 0 &&
+    Math.abs(advAmt - total) < 0.01;
+
+  const isBalanceCleared =
+    isAdvanceBased &&
+    balAmt <= 0 &&
+    (pStatus.includes("fully paid") || pStatus.includes("balance collected"));
+
+  return (
+    isFullyPaidStatus ||
+    isFullyPaidOrderStatus ||
+    isHomemadeOnlineFullyPaid ||
+    isBalanceCleared
+  );
+};
+
+// ==================================================================
+// ✅ NEW HELPER — Compute the payment badge text + theme for the
+// customer order card. Shows ONLY the payment state.
+// ==================================================================
+const computePaymentBadge = (
+  order: any
+): { text: string; isSettled: boolean } => {
+  if (!order) return { text: "", isSettled: false };
+
+  const paymentMethod = String(order.paymentMethod || "").toLowerCase();
+  const orderStatus = String(order.orderStatus || "").toLowerCase();
+  const paymentStatus = String(order.paymentStatus || "").toLowerCase();
+  const serviceType = String(order.serviceType || "").toLowerCase();
+
+  const total = Number(order.totalAmount || 0);
+  const advance = Number(order.advancePaidAmount || 0);
+  const balance = Number(order.balanceAmountToCollect || 0);
+
+  const isAdvanceBased =
+    serviceType === "catering" || serviceType === "mealbox";
+
+  const isDelivered =
+    orderStatus === "delivered" ||
+    orderStatus === "completed" ||
+    orderStatus === "cash collected" ||
+    paymentStatus.includes("fully paid") ||
+    paymentStatus.includes("collected");
+
+  if (paymentMethod === "cod") {
+    if (isDelivered) {
+      return { text: `Cash Collected ₹${total}`, isSettled: true };
+    }
+    return { text: `COD ₹${total}`, isSettled: false };
+  }
+
+  if (isAdvanceBased && balance > 0) {
+    return { text: `Advance Paid ₹${advance}`, isSettled: false };
+  }
+
+  return { text: `Payment Settled ₹${total}`, isSettled: true };
+};
+
+// ==================================================================
+// ✅ NEW HELPER — Resolve the special instruction display data for
+// the customer order. Returns { hasContent, tag, label, text,
+// displayLabel, displayText } where:
+//   • displayLabel falls back to "N/A" when nothing is set
+//   • displayText  falls back to "N/A" when nothing is set
+//   • hasContent is true only when at least one field is non-empty
+// ==================================================================
+const resolveOrderSpecialInstruction = (order: any) => {
+  const si = order?.specialInstruction || {};
+  const rawLabel = String(si?.label || '').trim();
+  const rawText = String(si?.text || '').trim();
+  const rawTag = String(si?.tag || '').trim();
+
+  const hasLabel = rawLabel.length > 0;
+  const hasText = rawText.length > 0;
+  const hasAny = hasLabel || hasText;
+
+  return {
+    hasContent: hasAny,
+    tag: rawTag,
+    label: rawLabel,
+    text: rawText,
+    displayLabel: hasLabel ? rawLabel : 'N/A',
+    displayText: hasText ? rawText : 'N/A',
+  };
 };
 
 function DeliverySlotCountdownWidget({
@@ -318,6 +435,20 @@ function DeliverySlotCountdownWidget({
   );
 }
 
+// ==================================================================
+// ✅ REVISED — WhatsNextStepperCard
+//
+// Only 5 delivery steps are shown:
+//   0. Accepted
+//   1. Preparing
+//   2. Prepared & Packing
+//   3. Out for Delivery
+//   4. Delivered
+//
+// ✅ NEW: For QuickBites/Homemade ONLINE orders, if the chef has not
+// yet accepted (chefAcceptedAt is null), we show "Pending Chef
+// Acceptance" as the current step — no "Accepted" green check.
+// ==================================================================
 function WhatsNextStepperCard({
   order,
   targetStatus,
@@ -326,19 +457,31 @@ function WhatsNextStepperCard({
   targetStatus?: string;
 }) {
   const resolvedStatus = (targetStatus || order?.orderStatus || "Placed").toLowerCase();
-  const paymentStatus = (order?.paymentStatus || "").toLowerCase();
+  const serviceTypeLower = String(order?.serviceType || "").toLowerCase();
+  const paymentMethodLower = String(order?.paymentMethod || "").toLowerCase();
 
+  const isChefGatedService =
+    serviceTypeLower === "quickbites" || serviceTypeLower === "homemade";
+  const isChefGateRequired =
+    isChefGatedService && paymentMethodLower !== "cod";
+  const chefHasAccepted = Boolean(order?.chefAcceptedAt);
+  const isWaitingForChef = isChefGateRequired && !chefHasAccepted;
+
+  const isAdminAccepted = Boolean(order?.adminAcceptedAt) ||
+    (resolvedStatus !== "placed" && resolvedStatus !== "cancelled");
+
+  // Compute which step index is currently active based on the status.
   let activeStep = 0;
-  if (paymentStatus === "collected" || paymentStatus === "paid" || resolvedStatus.includes("amount collected") || resolvedStatus.includes("cash collected")) {
-    activeStep = 4;
-  } else if (resolvedStatus === "delivered" || resolvedStatus === "completed") {
-    activeStep = 3;
-  } else if (resolvedStatus.includes("out") || resolvedStatus.includes("delivery") || resolvedStatus.includes("out for delivery")) {
-    activeStep = 2;
-  } else if (resolvedStatus.includes("pack") || resolvedStatus.includes("prepared & packing") || resolvedStatus.includes("prepared and packing")) {
-    activeStep = 1;
-  } else if (resolvedStatus.includes("prep") || resolvedStatus.includes("preparing")) {
+  if (!isAdminAccepted || isWaitingForChef) {
     activeStep = 0;
+  } else if (resolvedStatus === "delivered" || resolvedStatus === "completed" || resolvedStatus.includes("cash collected")) {
+    activeStep = 4;
+  } else if (resolvedStatus.includes("out") || resolvedStatus.includes("delivery") || resolvedStatus.includes("out for delivery") || resolvedStatus.includes("dispatched")) {
+    activeStep = 3;
+  } else if (resolvedStatus.includes("pack") || resolvedStatus.includes("prepared & packing") || resolvedStatus.includes("prepared and packing") || resolvedStatus.includes("packed")) {
+    activeStep = 2;
+  } else if (resolvedStatus.includes("prep") || resolvedStatus.includes("preparing")) {
+    activeStep = 1;
   } else {
     activeStep = 0;
   }
@@ -380,24 +523,37 @@ function WhatsNextStepperCard({
   }, [activeStep]);
 
   const firstDeliveryDate = order?.deliveryDate || order?.eventDate || "Today";
-  const codAmount = order?.totalAmount || 0;
-  const isCod = String(order?.paymentMethod || "cod").toLowerCase() === "cod";
   const dynamicChefName = order?.chefName || order?.restaurantName || "Kitchen Team";
 
   const stepsConfig = [
     {
       index: 0,
+      title: isWaitingForChef ? "Pending Chef Acceptance" : "Accepted",
+      iconName: isWaitingForChef ? "time-outline" : "checkmark-circle-outline",
+      iconType: "ionicons",
+      getDescription: (isPast: boolean, isCurrent: boolean) => {
+        if (isWaitingForChef) {
+          if (isCurrent) return "Waiting for the chef to accept your order.";
+          return "Order will be accepted by the chef shortly.";
+        }
+        if (isPast) return "Order was accepted and forwarded to the kitchen.";
+        if (isCurrent) return "Order accepted. Awaiting kitchen start.";
+        return "Awaiting order acceptance.";
+      },
+    },
+    {
+      index: 1,
       title: `Preparing by Chef ${dynamicChefName}`,
       iconName: "restaurant-outline",
       iconType: "ionicons",
       getDescription: (isPast: boolean, isCurrent: boolean) => {
         if (isPast) return `Chef ${dynamicChefName} has finished cooking your authentic dish.`;
         if (isCurrent) return `Chef ${dynamicChefName} is actively preparing your fresh meal.`;
-        return `Order confirmed. Meal preparation starts for ${firstDeliveryDate}.`;
+        return `Meal preparation starts for ${firstDeliveryDate}.`;
       },
     },
     {
-      index: 1,
+      index: 2,
       title: "Prepared & Packing",
       iconName: "cube-outline",
       iconType: "ionicons",
@@ -408,7 +564,7 @@ function WhatsNextStepperCard({
       },
     },
     {
-      index: 2,
+      index: 3,
       title: "Out for Delivery",
       iconName: "bicycle-outline",
       iconType: "ionicons",
@@ -419,23 +575,13 @@ function WhatsNextStepperCard({
       },
     },
     {
-      index: 3,
+      index: 4,
       title: "Delivered",
       iconName: "checkmark-circle-outline",
       iconType: "ionicons",
       getDescription: (isPast: boolean, isCurrent: boolean) => {
         if (isPast || isCurrent) return "Order safely delivered. Enjoy your hot, fresh meal!";
         return "Dishes will be handed over at your doorstep.";
-      },
-    },
-    {
-      index: 4,
-      title: isCod ? "Cash Amount Collected" : "Payment Settled",
-      iconName: "cash-outline",
-      iconType: "ionicons",
-      getDescription: (isPast: boolean, isCurrent: boolean) => {
-        if (isPast || isCurrent) return `Payment of ₹${codAmount} collected and bill settled. Thank you!`;
-        return isCod ? `Please keep ₹${codAmount} in cash ready upon delivery.` : "Paid online via UPI/Card.";
       },
     },
   ];
@@ -470,7 +616,9 @@ function WhatsNextStepperCard({
                   <Animated.View
                     style={[
                       styles.stepCircle,
-                      styles.stepCircleActivePulse,
+                      isWaitingForChef && step.index === 0
+                        ? styles.stepCirclePendingAmber
+                        : styles.stepCircleActivePulse,
                       { transform: [{ scale: heartbeatAnim }] },
                     ]}
                   >
@@ -501,8 +649,20 @@ function WhatsNextStepperCard({
                     {step.title}
                   </Text>
                   {isCurrent && (
-                    <View style={styles.liveActiveIndicatorPill}>
-                      <Text style={styles.liveActiveIndicatorPillText}>IN PROGRESS</Text>
+                    <View
+                      style={[
+                        styles.liveActiveIndicatorPill,
+                        isWaitingForChef && step.index === 0 && styles.liveActiveIndicatorPillAmber,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.liveActiveIndicatorPillText,
+                          isWaitingForChef && step.index === 0 && styles.liveActiveIndicatorPillTextAmber,
+                        ]}
+                      >
+                        {isWaitingForChef && step.index === 0 ? "WAITING" : "IN PROGRESS"}
+                      </Text>
                     </View>
                   )}
                 </View>
@@ -563,6 +723,10 @@ export default function MyOrdersScreen() {
   const [reschedulingLoading, setReschedulingLoading] = useState(false);
 
   const [pausedDates, setPausedDates] = useState<{ [key: string]: boolean }>({});
+
+  // ✅ NEW: Special-instruction expandable row state (inside the detail Bill Summary)
+  const [isDetailSpecialInstructionExpanded, setIsDetailSpecialInstructionExpanded] = useState<boolean>(false);
+  const detailSpecialInstructionChevronAnim = useRef(new Animated.Value(0)).current;
 
   const previewSheetAnim = useRef(new Animated.Value(400)).current;
   const rescheduleSheetAnim = useRef(new Animated.Value(400)).current;
@@ -676,6 +840,23 @@ export default function MyOrdersScreen() {
     }));
   };
 
+  // ✅ NEW: Toggle for the detail-screen special-instruction expandable
+  const toggleDetailSpecialInstruction = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const toValue = isDetailSpecialInstructionExpanded ? 0 : 1;
+    Animated.timing(detailSpecialInstructionChevronAnim, {
+      toValue,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+    setIsDetailSpecialInstructionExpanded(!isDetailSpecialInstructionExpanded);
+  };
+
+  const detailSpecialInstructionChevronRotation = detailSpecialInstructionChevronAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+
   const fetchMyOrders = async (isMounted = true) => {
     try {
       const res = await api.get("/api/orders/my-orders");
@@ -689,7 +870,6 @@ export default function MyOrdersScreen() {
         fetchedOrders.forEach((ord: any) => {
           const sType = (ord.serviceType || "").toLowerCase();
           const isCatering = sType === "catering";
-          // ✅ Use the normalized helper so QuickBites is treated as homemade.
           const isHomemade = isHomemadeService(sType);
           const defaultEventDate = ord.eventDate || ord.deliveryDate || (isHomemade ? "Today" : "Mon, 17 Jun");
 
@@ -747,9 +927,13 @@ export default function MyOrdersScreen() {
 
     const handleOrderUpdated = (updatedOrder: any) => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setUserOrders((prev) =>
-        prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
-      );
+      setUserOrders((prev) => {
+        const exists = prev.some((o) => o.orderId === updatedOrder.orderId);
+        if (exists) {
+          return prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o));
+        }
+        return [updatedOrder, ...prev];
+      });
       setSelectedOrderDetails((prev: any) => {
         if (prev && prev.orderId === updatedOrder.orderId) {
           return { ...prev, ...updatedOrder };
@@ -760,14 +944,29 @@ export default function MyOrdersScreen() {
 
     const handleOrderStatusUpdated = (updatedOrder: any) => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setUserOrders((prev) =>
-        prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
-      );
+      setUserOrders((prev) => {
+        const exists = prev.some((o) => o.orderId === updatedOrder.orderId);
+        if (exists) {
+          return prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o));
+        }
+        return [updatedOrder, ...prev];
+      });
       setSelectedOrderDetails((prev: any) => {
         if (prev && prev.orderId === updatedOrder.orderId) {
           return { ...prev, ...updatedOrder };
         }
         return prev;
+      });
+    };
+
+    const handleNewOrderPlaced = (newOrder: any) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setUserOrders((prev) => {
+        const exists = prev.some((o) => o.orderId === newOrder.orderId);
+        if (exists) {
+          return prev.map((o) => (o.orderId === newOrder.orderId ? { ...o, ...newOrder } : o));
+        }
+        return [newOrder, ...prev];
       });
     };
 
@@ -846,6 +1045,7 @@ export default function MyOrdersScreen() {
     if (socket) {
       socket.on("order_updated", handleOrderUpdated);
       socket.on("order_status_updated", handleOrderStatusUpdated);
+      socket.on("new_order_placed", handleNewOrderPlaced);
       socket.on("schedule_status_updated", handleScheduleStatusUpdated);
       socket.on("order_delivery_paused", handleOrderDeliveryPaused);
       socket.on("order_delivery_unpaused", handleOrderDeliveryUnpaused);
@@ -858,6 +1058,7 @@ export default function MyOrdersScreen() {
       if (socket) {
         socket.off("order_updated", handleOrderUpdated);
         socket.off("order_status_updated", handleOrderStatusUpdated);
+        socket.off("new_order_placed", handleNewOrderPlaced);
         socket.off("schedule_status_updated", handleScheduleStatusUpdated);
         socket.off("order_delivery_paused", handleOrderDeliveryPaused);
         socket.off("order_delivery_unpaused", handleOrderDeliveryUnpaused);
@@ -1089,7 +1290,6 @@ export default function MyOrdersScreen() {
 
     const sType = (order?.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    // ✅ Use the normalized helper so QuickBites behaves like Homemade.
     const isHomemade = isHomemadeService(sType);
     const activeDateToUse = defaultDate || selectedDatesPerOrder[order.orderId] || order.eventDate || order.deliveryDate;
 
@@ -1127,7 +1327,6 @@ export default function MyOrdersScreen() {
   const openOrderDetails = (order: any, activeDate?: string) => {
     const sType = (order?.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    // ✅ Use the normalized helper so QuickBites behaves like Homemade.
     const isHomemade = isHomemadeService(sType);
     const dateToInspect = activeDate || selectedDatesPerOrder[order.orderId] || order.eventDate || order.deliveryDate;
 
@@ -1135,6 +1334,10 @@ export default function MyOrdersScreen() {
       ...order,
       selectedDeliveryDate: dateToInspect,
     });
+
+    // Reset the special-instruction expandable when opening a new order
+    setIsDetailSpecialInstructionExpanded(false);
+    detailSpecialInstructionChevronAnim.setValue(0);
 
     if (!isCatering && !isHomemade && order?.selections && typeof order.selections === "object" && !Array.isArray(order.selections)) {
       const keys = Object.keys(order.selections).filter((k) => k !== "pausedDates");
@@ -1516,7 +1719,6 @@ export default function MyOrdersScreen() {
   if (isDetailScreenOpen && selectedOrderDetails) {
     const sType = (selectedOrderDetails.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    // ✅ Use the normalized helper so QuickBites behaves like Homemade.
     const isHomemade = isHomemadeService(sType);
     const isMealBox = !isCatering && !isHomemade;
     const detailOrderId = selectedOrderDetails.orderId || "DW12345678";
@@ -1557,6 +1759,9 @@ export default function MyOrdersScreen() {
       selectedOrderDetails.paymentCaptured === true;
 
     const { dayName: schedDayName, dayNumber: schedDayNum, month: schedMonth } = parseDateParts(detailStartDate);
+
+    // ✅ NEW: Resolve the special instruction for this order.
+    const detailSpecialInstruction = resolveOrderSpecialInstruction(selectedOrderDetails);
 
     return (
       <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
@@ -1866,6 +2071,39 @@ export default function MyOrdersScreen() {
               </Text>
             </View>
 
+            {/* ✅ NEW: Special Instructions block inside Bill Summary */}
+            <View style={styles.orderSummarySpecialInstructionBlock}>
+              <View style={styles.orderSummarySpecialInstructionHeader}>
+                <Feather name="file-text" size={14} color="#166538" />
+                <Text style={styles.orderSummarySpecialInstructionTitle}>Special Instructions</Text>
+                {detailSpecialInstruction.hasContent && (
+                  <View style={styles.orderSummarySpecialInstructionDot} />
+                )}
+              </View>
+              <View style={styles.orderSummarySpecialInstructionRow}>
+                <Text style={styles.orderSummarySpecialInstructionLabel}>Preference</Text>
+                <Text
+                  style={[
+                    styles.orderSummarySpecialInstructionValue,
+                    !detailSpecialInstruction.hasContent && styles.orderSummarySpecialInstructionValueNA,
+                  ]}
+                >
+                  {detailSpecialInstruction.displayLabel}
+                </Text>
+              </View>
+              <View style={styles.orderSummarySpecialInstructionRow}>
+                <Text style={styles.orderSummarySpecialInstructionLabel}>Chef Notes</Text>
+                <Text
+                  style={[
+                    styles.orderSummarySpecialInstructionValue,
+                    !detailSpecialInstruction.hasContent && styles.orderSummarySpecialInstructionValueNA,
+                  ]}
+                >
+                  {detailSpecialInstruction.displayText}
+                </Text>
+              </View>
+            </View>
+
             <View style={styles.orderSummaryDivider} />
 
             <View style={styles.orderSummaryTotalRow}>
@@ -2016,7 +2254,6 @@ export default function MyOrdersScreen() {
   }
 
   const isPreviewCatering = (previewOrder?.serviceType || "").toLowerCase() === "catering";
-  // ✅ Use the normalized helper so QuickBites uses the homemade preview layout.
   const isPreviewHomemade = isHomemadeService(previewOrder?.serviceType);
 
   return (
@@ -2113,7 +2350,6 @@ export default function MyOrdersScreen() {
           filteredOrders.map((order, orderIndex) => {
             const sType = (order.serviceType || "").toLowerCase();
             const isCatering = sType === "catering";
-            // ✅ Use the normalized helper so QuickBites uses the homemade card layout.
             const isHomemade = isHomemadeService(sType);
             const orderId = order.orderId;
             const isNotLastOrder = orderIndex < filteredOrders.length - 1;
@@ -2136,6 +2372,12 @@ export default function MyOrdersScreen() {
                   ? "Delivered"
                   : "Completed")
               : orderStatusString;
+
+            // ==================================================================
+            // ✅ PAYMENT BADGE — computed per order card. Shows ONLY the
+            // payment state, never the order status.
+            // ==================================================================
+            const cardPaymentBadge = computePaymentBadge(order);
 
             if (isHomemade) {
               const homemadeItems = Array.isArray(order.items) ? order.items : [];
@@ -2175,6 +2417,9 @@ export default function MyOrdersScreen() {
                   }
                 }
               }
+
+              // ✅ NEW: Resolve special instruction for homemade/quickbites
+              const homemadeSpecialInstruction = resolveOrderSpecialInstruction(order);
 
               return (
                 <View key={`homemade-order-${orderId || orderIndex}`}>
@@ -2329,17 +2574,23 @@ export default function MyOrdersScreen() {
                         styles.cardWithBadgePadding,
                       ]}
                     >
-                      <View style={[
-                        styles.floatingTopRightBadge,
-                        isDeliveredState && styles.floatingBadgeDelivered,
-                        orderStatusString.toLowerCase().includes('prep') && styles.floatingBadgePreparing,
-                      ]}>
-                        <Text style={[
-                          styles.floatingTopRightBadgeText,
-                          isDeliveredState && styles.floatingBadgeTextDelivered,
-                          orderStatusString.toLowerCase().includes('prep') && styles.floatingBadgeTextPreparing,
-                        ]}>
-                          {displayBadgeStatus}
+                      <View
+                        style={[
+                          styles.floatingTopRightBadge,
+                          cardPaymentBadge.isSettled
+                            ? styles.floatingBadgePaymentSettled
+                            : styles.floatingBadgePaymentPending,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.floatingTopRightBadgeText,
+                            cardPaymentBadge.isSettled
+                              ? styles.floatingBadgePaymentTextSettled
+                              : styles.floatingBadgePaymentTextPending,
+                          ]}
+                        >
+                          {cardPaymentBadge.text}
                         </Text>
                       </View>
 
@@ -2362,6 +2613,19 @@ export default function MyOrdersScreen() {
                           <View style={styles.cardBadgesRowSimplified}>
                             <Text style={styles.simplifiedBadgeText}>{homemadeItems.length} Dishes</Text>
                             <Text style={styles.simplifiedBadgeText}>Chef: {dynamicChefName}</Text>
+                            <View style={styles.inlineOrderStatusPill}>
+                              <Text style={styles.inlineOrderStatusPillText}>{displayBadgeStatus}</Text>
+                            </View>
+                          </View>
+
+                          {/* ✅ NEW: Inline special instruction preview */}
+                          <View style={styles.inlineSpecialInstructionPreviewRow}>
+                            <Feather name="file-text" size={11} color="#166538" />
+                            <Text style={styles.inlineSpecialInstructionPreviewText} numberOfLines={1}>
+                              {homemadeSpecialInstruction.hasContent
+                                ? `${homemadeSpecialInstruction.displayLabel} • ${homemadeSpecialInstruction.displayText}`
+                                : 'Special Instructions: N/A'}
+                            </Text>
                           </View>
                         </View>
 
@@ -2417,6 +2681,9 @@ export default function MyOrdersScreen() {
               const cateringDelivery = order.deliveryType || "Standard";
               const cateringTotal = order.totalAmount || 0;
               const isCateringStepperOpen = !!expandedSteppers[orderId];
+
+              // ✅ NEW: Resolve special instruction for catering
+              const cateringSpecialInstruction = resolveOrderSpecialInstruction(order);
 
               return (
                 <View key={`catering-order-${orderId || orderIndex}`}>
@@ -2576,17 +2843,23 @@ export default function MyOrdersScreen() {
                         styles.cardWithBadgePadding,
                       ]}
                     >
-                      <View style={[
-                        styles.floatingTopRightBadge,
-                        isDeliveredState && styles.floatingBadgeDelivered,
-                        orderStatusString.toLowerCase().includes('prep') && styles.floatingBadgePreparing,
-                      ]}>
-                        <Text style={[
-                          styles.floatingTopRightBadgeText,
-                          isDeliveredState && styles.floatingBadgeTextDelivered,
-                          orderStatusString.toLowerCase().includes('prep') && styles.floatingBadgeTextPreparing,
-                        ]}>
-                          {displayBadgeStatus}
+                      <View
+                        style={[
+                          styles.floatingTopRightBadge,
+                          cardPaymentBadge.isSettled
+                            ? styles.floatingBadgePaymentSettled
+                            : styles.floatingBadgePaymentPending,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.floatingTopRightBadgeText,
+                            cardPaymentBadge.isSettled
+                              ? styles.floatingBadgePaymentTextSettled
+                              : styles.floatingBadgePaymentTextPending,
+                          ]}
+                        >
+                          {cardPaymentBadge.text}
                         </Text>
                       </View>
 
@@ -2601,7 +2874,6 @@ export default function MyOrdersScreen() {
                         <View style={styles.deliveryInfoCol}>
                           <Text style={styles.deliveryMenuTitle}>{cateringMenuName}</Text>
 
-                          {/* 🔄 SWAPPED POSITION 1: Total Amount / Price Strip is now placed up top (reduced size/emphasis) */}
                           <View style={styles.cateringPriceStrip}>
                             <View style={styles.cateringPriceLabelCol}>
                               <Text style={styles.cateringPriceLabelText}>Total Amount</Text>
@@ -2609,10 +2881,25 @@ export default function MyOrdersScreen() {
                             </View>
                             <Text style={styles.cateringPriceValueText}>₹{cateringTotal}</Text>
                           </View>
+
+                          <View style={styles.inlineOrderStatusPillWrapper}>
+                            <View style={styles.inlineOrderStatusPill}>
+                              <Text style={styles.inlineOrderStatusPillText}>{displayBadgeStatus}</Text>
+                            </View>
+                          </View>
+
+                          {/* ✅ NEW: Inline special instruction preview */}
+                          <View style={styles.inlineSpecialInstructionPreviewRow}>
+                            <Feather name="file-text" size={11} color="#166538" />
+                            <Text style={styles.inlineSpecialInstructionPreviewText} numberOfLines={1}>
+                              {cateringSpecialInstruction.hasContent
+                                ? `${cateringSpecialInstruction.displayLabel} • ${cateringSpecialInstruction.displayText}`
+                                : 'Special Instructions: N/A'}
+                            </Text>
+                          </View>
                         </View>
                       </View>
 
-                      {/* 🔄 SWAPPED POSITION 2: Catering Details / Meta Card is now placed below, expanded for detailed information, and uses "Guests" text instead of an icon */}
                       <View style={styles.cateringMetaCombinedCard}>
                         <View style={styles.cateringMetaItem}>
                           <Ionicons name="calendar-outline" size={13} color="#166538" />
@@ -2717,6 +3004,9 @@ export default function MyOrdersScreen() {
             }
 
             const timeSlot = order.deliveryTimeSlot || "7:00 PM - 9:00 PM";
+
+            // ✅ NEW: Resolve special instruction for mealbox
+            const mealboxSpecialInstruction = resolveOrderSpecialInstruction(order);
 
             return (
               <View key={`user-order-wrapper-${orderId || orderIndex}`}>
@@ -2896,19 +3186,23 @@ export default function MyOrdersScreen() {
                               isPaused && styles.deliveryCardPausedBg,
                             ]}
                           >
-                            <View style={[
-                              styles.floatingTopRightBadge,
-                              isPaused && styles.floatingBadgePaused,
-                              individualStatus.toLowerCase() === 'delivered' && styles.floatingBadgeDelivered,
-                              individualStatus.toLowerCase().includes('prep') && styles.floatingBadgePreparing,
-                            ]}>
-                              <Text style={[
-                                styles.floatingTopRightBadgeText,
-                                isPaused && styles.floatingBadgeTextPaused,
-                                individualStatus.toLowerCase() === 'delivered' && styles.floatingBadgeTextDelivered,
-                                individualStatus.toLowerCase().includes('prep') && styles.floatingBadgeTextPreparing,
-                              ]}>
-                                {individualStatus}
+                            <View
+                              style={[
+                                styles.floatingTopRightBadge,
+                                cardPaymentBadge.isSettled
+                                  ? styles.floatingBadgePaymentSettled
+                                  : styles.floatingBadgePaymentPending,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.floatingTopRightBadgeText,
+                                  cardPaymentBadge.isSettled
+                                    ? styles.floatingBadgePaymentTextSettled
+                                    : styles.floatingBadgePaymentTextPending,
+                                ]}
+                              >
+                                {cardPaymentBadge.text}
                               </Text>
                             </View>
 
@@ -2956,6 +3250,21 @@ export default function MyOrdersScreen() {
                                     </Text>
                                   </View>
                                 ) : null}
+                                <View style={styles.inlineOrderStatusPillWrapper}>
+                                  <View style={styles.inlineOrderStatusPill}>
+                                    <Text style={styles.inlineOrderStatusPillText}>{individualStatus}</Text>
+                                  </View>
+                                </View>
+
+                                {/* ✅ NEW: Inline special instruction preview */}
+                                <View style={styles.inlineSpecialInstructionPreviewRow}>
+                                  <Feather name="file-text" size={11} color="#166538" />
+                                  <Text style={styles.inlineSpecialInstructionPreviewText} numberOfLines={1}>
+                                    {mealboxSpecialInstruction.hasContent
+                                      ? `${mealboxSpecialInstruction.displayLabel} • ${mealboxSpecialInstruction.displayText}`
+                                      : 'Special Instructions: N/A'}
+                                  </Text>
+                                </View>
                               </View>
 
                               <Ionicons
@@ -3540,6 +3849,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
     marginTop: 4,
+    alignItems: "center",
   },
   simplifiedBadgeText: {
     fontSize: 11,
@@ -3549,6 +3859,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
+  },
+
+  inlineOrderStatusPillWrapper: {
+    flexDirection: "row",
+    marginTop: 6,
+  },
+  inlineOrderStatusPill: {
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 8,
+  },
+  inlineOrderStatusPillText: {
+    fontSize: 10.5,
+    fontWeight: "800",
+    color: "#1E40AF",
+    letterSpacing: 0.2,
+  },
+
+  // ✅ NEW: Inline special instruction preview row on the card
+  inlineSpecialInstructionPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 6,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  inlineSpecialInstructionPreviewText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#166348',
+    flexShrink: 1,
   },
 
   cateringMetaCombinedCard: {
@@ -3970,6 +4321,20 @@ const styles = StyleSheet.create({
   floatingBadgeTextDelivered: {
     color: "#15803D",
   },
+  floatingBadgePaymentSettled: {
+    backgroundColor: "#DCFCE7",
+    borderColor: "#86EFAC",
+  },
+  floatingBadgePaymentPending: {
+    backgroundColor: "#FEF3C7",
+    borderColor: "#FDE68A",
+  },
+  floatingBadgePaymentTextSettled: {
+    color: "#15803D",
+  },
+  floatingBadgePaymentTextPending: {
+    color: "#B45309",
+  },
   dateTile: {
     width: 58,
     height: 64,
@@ -4224,6 +4589,14 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 4,
   },
+  stepCirclePendingAmber: {
+    backgroundColor: "#D97706",
+    shadowColor: "#D97706",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 5,
+    elevation: 4,
+  },
   stepCircleInactive: {
     backgroundColor: "#F1F5F9",
     borderWidth: 1,
@@ -4283,11 +4656,18 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     borderColor: "#86EFAC",
   },
+  liveActiveIndicatorPillAmber: {
+    backgroundColor: "#FEF3C7",
+    borderColor: "#FDE68A",
+  },
   liveActiveIndicatorPillText: {
     fontSize: 8.5,
     fontWeight: "900",
     color: "#15803D",
     letterSpacing: 0.5,
+  },
+  liveActiveIndicatorPillTextAmber: {
+    color: "#92400E",
   },
 
   bottomControlCard: {
@@ -4647,6 +5027,63 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#2D4A22",
   },
+
+  // ✅ NEW: Bill Summary Special Instruction Block (customer detail screen)
+  orderSummarySpecialInstructionBlock: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 10,
+    gap: 8,
+  },
+  orderSummarySpecialInstructionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  orderSummarySpecialInstructionTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F172A",
+    letterSpacing: -0.1,
+  },
+  orderSummarySpecialInstructionDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#166538",
+    marginLeft: 4,
+  },
+  orderSummarySpecialInstructionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  orderSummarySpecialInstructionLabel: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#64748B",
+    minWidth: 90,
+  },
+  orderSummarySpecialInstructionValue: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#0F172A",
+    flex: 1,
+    textAlign: "right",
+    lineHeight: 17,
+  },
+  orderSummarySpecialInstructionValueNA: {
+    color: "#94A3B8",
+    fontStyle: "italic",
+    fontWeight: "600",
+  },
+
   stickyFooterWrapper: {
     position: "absolute",
     bottom: 0,

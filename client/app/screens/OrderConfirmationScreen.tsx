@@ -79,6 +79,32 @@ const formatDateShortLocal = (d: Date | null): string => {
   }
 };
 
+// ✅ NEW HELPER — Resolve the special instruction display data for
+// the confirmation screen. Returns { hasContent, tag, label, text,
+// displayLabel, displayText } where:
+//   • displayLabel falls back to "N/A" when nothing is set
+//   • displayText  falls back to "N/A" when nothing is set
+//   • hasContent is true only when at least one field is non-empty
+const resolveOrderSpecialInstruction = (order: any) => {
+  const si = order?.specialInstruction || {};
+  const rawLabel = String(si?.label || '').trim();
+  const rawText = String(si?.text || '').trim();
+  const rawTag = String(si?.tag || '').trim();
+
+  const hasLabel = rawLabel.length > 0;
+  const hasText = rawText.length > 0;
+  const hasAny = hasLabel || hasText;
+
+  return {
+    hasContent: hasAny,
+    tag: rawTag,
+    label: rawLabel,
+    text: rawText,
+    displayLabel: hasLabel ? rawLabel : 'N/A',
+    displayText: hasText ? rawText : 'N/A',
+  };
+};
+
 // Heavy Ribbon & Confetti Particle Definitions (Matching luxury palette accents)
 const PREMIUM_COLORS = [
   "#0F382A",
@@ -254,12 +280,15 @@ export default function OrderConfirmationScreen() {
   const paymentMethod = dbOrder?.paymentMethod || (params.paymentMethod as string) || "cod";
 
   // ==================================================================
-  // ✅ Resolve the current order status & payment status. These drive
-  // the header subtitle and the "What's Next" timeline.
+  // ✅ Resolve the current order status & payment status.
   //
   // ✅ REVISED: With the new auto-accept behaviour, Cashfree-paid orders
   // immediately land with orderStatus = "Accepted". The admin does not
   // need to intervene. COD orders remain "Placed" and wait for admin.
+  //
+  // ✅ NEW: For QuickBites/Homemade ONLINE orders, we no longer show
+  // any "Awaiting admin acceptance" text — the customer sees a clean
+  // "Order accepted" state.
   // ==================================================================
   const currentOrderStatus = String(dbOrder?.orderStatus || "Placed");
   const currentPaymentStatus = String(dbOrder?.paymentStatus || "");
@@ -318,6 +347,16 @@ export default function OrderConfirmationScreen() {
   }, [dbOrder, params.addons]);
 
   const isMealBoxFlow = serviceType === "mealbox" || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
+
+  // ✅ NEW: Resolve special instruction for the confirmation screen.
+  const specialInstructionData = useMemo(
+    () => resolveOrderSpecialInstruction(dbOrder),
+    [
+      dbOrder?.specialInstruction?.tag,
+      dbOrder?.specialInstruction?.label,
+      dbOrder?.specialInstruction?.text,
+    ]
+  );
 
   // Selected Preview Modal State
   const [showPreviewModal, setShowPreviewModal] = useState(false);
@@ -397,13 +436,7 @@ export default function OrderConfirmationScreen() {
 
   // ==================================================================
   // ✅ PAYMENT BADGE — single source of truth for the top-right badge
-  // displayed on the summary card. Shows ONLY the payment state, never
-  // the order status.
-  //
-  //   • Online + fully paid (HomeMade/QuickBites) → "Payment Settled"
-  //   • Online + advance paid (Catering/Mealbox)  → "Advance Paid ₹X"
-  //   • COD + before delivered                    → "COD ₹X"
-  //   • COD + after delivered                     → "Cash Collected ₹X"
+  // displayed on the summary card.
   // ==================================================================
   const paymentBadgeText = useMemo(() => {
     const paymentLower = String(paymentMethod).toLowerCase();
@@ -636,7 +669,8 @@ export default function OrderConfirmationScreen() {
           </Text>
 
           {/* ==================================================================
-              ✅ HEADER SUBTITLE — Auto-accept aware
+              ✅ HEADER SUBTITLE — Clean "Order Accepted" state.
+              The "Awaiting admin acceptance" text has been REMOVED per spec.
               ================================================================== */}
           {isAdvanceBasedFlow ? (
             <View style={styles.headerAdvanceBalanceBlock}>
@@ -649,9 +683,7 @@ export default function OrderConfirmationScreen() {
                 <Text style={styles.headerBalanceValue}>₹{balanceAmountToCollect}</Text>
               </Text>
               <Text style={styles.headerPaymentNote}>
-                {isAdminAccepted
-                  ? "✓ Order accepted. Chef is preparing your order."
-                  : "Awaiting admin acceptance. You'll be notified once confirmed."}
+                ✓ Order accepted. Chef is preparing your order.
               </Text>
             </View>
           ) : isFullAmountPaidOnline ? (
@@ -661,17 +693,15 @@ export default function OrderConfirmationScreen() {
                 <Text style={styles.headerFullPaidValue}>₹{totalAmount}</Text>
               </Text>
               <Text style={styles.headerFullPaidNote}>
-                {isAdminAccepted
-                  ? "✓ Order accepted. Chef is preparing your order."
-                  : "Awaiting admin acceptance. You'll be notified once confirmed."}
+                ✓ Order accepted. Chef is preparing your order.
               </Text>
             </View>
           ) : (
             <Text style={styles.orderConfirmedSubtitle}>
               {isCod
                 ? (hasAdvancePaid
-                    ? `Advance (₹${advancePaidAmount}) paid successfully.\nPlease keep ₹${balanceAmountToCollect} ready for delivery.\n${isAdminAccepted ? "Order accepted by admin." : "Awaiting admin acceptance."}`
-                    : `Pay ₹${balanceAmountToCollect} in cash upon delivery.\nNo online payment required right now.\n${isAdminAccepted ? "Order accepted by admin." : "Awaiting admin acceptance."}`)
+                    ? `Advance (₹${advancePaidAmount}) paid successfully.\nPlease keep ₹${balanceAmountToCollect} ready for delivery.`
+                    : `Pay ₹${balanceAmountToCollect} in cash upon delivery.\nNo online payment required right now.`)
                 : `Yay! Your payment was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
             </Text>
           )}
@@ -702,13 +732,6 @@ export default function OrderConfirmationScreen() {
         ]}
       >
         <View>
-          {/* ==================================================================
-              1. DYNAMIC ORDER SUMMARY CARD
-              ✅ REVISED: Payment badge is now rendered on the TOP-RIGHT
-              of the primary summary card (Option A). The badge shows
-              ONLY the payment state (Payment Settled / COD ₹X / Cash
-              Collected ₹X / Advance Paid ₹X) — never the order status.
-              ================================================================== */}
           {isHomemadeFlow ? (
             <View style={styles.cateringMainSummaryCard}>
               <View
@@ -846,6 +869,36 @@ export default function OrderConfirmationScreen() {
                 })}
               </View>
 
+              {/* ✅ NEW: Special Instructions display in the summary card */}
+              <View style={styles.specialInstructionConfirmationBlock}>
+                <View style={styles.specialInstructionConfirmationHeader}>
+                  <Feather name="file-text" size={14} color="#166348" />
+                  <Text style={styles.specialInstructionConfirmationTitle}>Special Instructions</Text>
+                </View>
+                <View style={styles.specialInstructionConfirmationRow}>
+                  <Text style={styles.specialInstructionConfirmationLabel}>Preference</Text>
+                  <Text
+                    style={[
+                      styles.specialInstructionConfirmationValue,
+                      !specialInstructionData.hasContent && styles.specialInstructionConfirmationValueNA,
+                    ]}
+                  >
+                    {specialInstructionData.displayLabel}
+                  </Text>
+                </View>
+                <View style={styles.specialInstructionConfirmationRow}>
+                  <Text style={styles.specialInstructionConfirmationLabel}>Chef Notes</Text>
+                  <Text
+                    style={[
+                      styles.specialInstructionConfirmationValue,
+                      !specialInstructionData.hasContent && styles.specialInstructionConfirmationValueNA,
+                    ]}
+                  >
+                    {specialInstructionData.displayText}
+                  </Text>
+                </View>
+              </View>
+
               <View style={styles.dashedDivider} />
 
               <View style={styles.priceBreakdownRow}>
@@ -974,6 +1027,36 @@ export default function OrderConfirmationScreen() {
                 </TouchableOpacity>
               )}
 
+              {/* ✅ NEW: Special Instructions display in the summary card */}
+              <View style={styles.specialInstructionConfirmationBlock}>
+                <View style={styles.specialInstructionConfirmationHeader}>
+                  <Feather name="file-text" size={14} color="#0F382A" />
+                  <Text style={styles.specialInstructionConfirmationTitle}>Special Instructions</Text>
+                </View>
+                <View style={styles.specialInstructionConfirmationRow}>
+                  <Text style={styles.specialInstructionConfirmationLabel}>Preference</Text>
+                  <Text
+                    style={[
+                      styles.specialInstructionConfirmationValue,
+                      !specialInstructionData.hasContent && styles.specialInstructionConfirmationValueNA,
+                    ]}
+                  >
+                    {specialInstructionData.displayLabel}
+                  </Text>
+                </View>
+                <View style={styles.specialInstructionConfirmationRow}>
+                  <Text style={styles.specialInstructionConfirmationLabel}>Chef Notes</Text>
+                  <Text
+                    style={[
+                      styles.specialInstructionConfirmationValue,
+                      !specialInstructionData.hasContent && styles.specialInstructionConfirmationValueNA,
+                    ]}
+                  >
+                    {specialInstructionData.displayText}
+                  </Text>
+                </View>
+              </View>
+
               <View style={styles.dashedDivider} />
 
               <View style={styles.priceBreakdownRow}>
@@ -1079,6 +1162,36 @@ export default function OrderConfirmationScreen() {
                 </TouchableOpacity>
               )}
 
+              {/* ✅ NEW: Special Instructions display in the summary card */}
+              <View style={styles.specialInstructionConfirmationBlock}>
+                <View style={styles.specialInstructionConfirmationHeader}>
+                  <Feather name="file-text" size={14} color="#0F382A" />
+                  <Text style={styles.specialInstructionConfirmationTitle}>Special Instructions</Text>
+                </View>
+                <View style={styles.specialInstructionConfirmationRow}>
+                  <Text style={styles.specialInstructionConfirmationLabel}>Preference</Text>
+                  <Text
+                    style={[
+                      styles.specialInstructionConfirmationValue,
+                      !specialInstructionData.hasContent && styles.specialInstructionConfirmationValueNA,
+                    ]}
+                  >
+                    {specialInstructionData.displayLabel}
+                  </Text>
+                </View>
+                <View style={styles.specialInstructionConfirmationRow}>
+                  <Text style={styles.specialInstructionConfirmationLabel}>Chef Notes</Text>
+                  <Text
+                    style={[
+                      styles.specialInstructionConfirmationValue,
+                      !specialInstructionData.hasContent && styles.specialInstructionConfirmationValueNA,
+                    ]}
+                  >
+                    {specialInstructionData.displayText}
+                  </Text>
+                </View>
+              </View>
+
               <View style={styles.dashedDivider} />
 
               <View style={styles.priceBreakdownRow}>
@@ -1179,10 +1292,6 @@ export default function OrderConfirmationScreen() {
                  3. Prepared & Packing
                  4. Out for Delivery
                  5. Delivered
-              The previous "Balance Collection & Feast" / "Payment Settled"
-              step has been REMOVED from the delivery flow. Payment state
-              is communicated ONLY through the top-right badge on the
-              summary card.
               ================================================================== */}
           <View style={styles.whatsNextCard}>
             <View style={styles.whatsNextHeaderRow}>
@@ -2138,6 +2247,56 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     color: "#0B261D",
+  },
+
+  /* ✅ NEW: Special Instructions confirmation block */
+  specialInstructionConfirmationBlock: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 14,
+    marginBottom: 4,
+    gap: 8,
+  },
+  specialInstructionConfirmationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  specialInstructionConfirmationTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F172A",
+    letterSpacing: -0.1,
+  },
+  specialInstructionConfirmationRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  specialInstructionConfirmationLabel: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#64748B",
+    minWidth: 90,
+  },
+  specialInstructionConfirmationValue: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#0F172A",
+    flex: 1,
+    textAlign: "right",
+    lineHeight: 17,
+  },
+  specialInstructionConfirmationValueNA: {
+    color: "#94A3B8",
+    fontStyle: "italic",
+    fontWeight: "600",
   },
 
   /* Standard Summary Card */

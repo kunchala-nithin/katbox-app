@@ -103,6 +103,17 @@ const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefi
   return addr.fullAddress || '';
 };
 
+// ✅ NEW HELPER — Given a raw tag string ("less", "medium", "very", "noonion"),
+//    return the human-readable label used across the app.
+const resolveInstructionLabel = (rawTag: string): string => {
+  const t = String(rawTag || "").toLowerCase().trim();
+  if (t === "less") return "Less spicy";
+  if (t === "medium") return "Medium spicy";
+  if (t === "very") return "Very spicy";
+  if (t === "noonion") return "No onion & garlic";
+  return "";
+};
+
 const MealBoxOrderReview = () => {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
@@ -585,6 +596,13 @@ const MealBoxOrderReview = () => {
         return `${item.dayName}, ${item.dayNumber} ${item.monthName}`;
       });
 
+      // ✅ NEW: Build the special-instruction payload ONCE.
+      //     `selectedInstructionTag` is the raw tag ("less", "medium", "very", "noonion")
+      //     `resolveInstructionLabel` maps it to the human-readable label.
+      const specialInstructionTag = String(selectedInstructionTag || '').trim();
+      const specialInstructionLabel = resolveInstructionLabel(selectedInstructionTag);
+      const specialInstructionText = String(chefNotesText || '').trim();
+
       const payload = {
         serviceType: 'mealbox',
         userId: userId || currentUser?.id || currentUser?._id,
@@ -607,6 +625,17 @@ const MealBoxOrderReview = () => {
         },
         selections: parsedWeeklySelections,
         addons: parsedAddons,
+
+        // ✅ NEW: Top-level special-instruction block (picked up by cart.controller.ts)
+        specialInstruction: {
+          tag: specialInstructionTag,
+          label: specialInstructionLabel,
+          text: specialInstructionText,
+        },
+        specialInstructionTag,
+        specialInstructionLabel,
+        specialInstructionText,
+
         orderDetails: {
           contactPhone: contactPhoneNumber,
           alternatePhone: alternatePhoneNumber,
@@ -620,7 +649,17 @@ const MealBoxOrderReview = () => {
           scheduledDatesFormatted: scheduledDatesListFormatted,
           instructionTag: selectedInstructionTag,
           chefNotes: chefNotesText,
-          selectedDurationType: selectedDurationType
+          selectedDurationType: selectedDurationType,
+
+          // ✅ NEW: Nested special-instruction block (backup for cart.controller.ts)
+          specialInstruction: {
+            tag: specialInstructionTag,
+            label: specialInstructionLabel,
+            text: specialInstructionText,
+          },
+          specialInstructionTag,
+          specialInstructionLabel,
+          specialInstructionText,
         }
       };
 

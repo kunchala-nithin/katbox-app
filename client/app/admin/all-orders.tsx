@@ -87,7 +87,6 @@ const parseDateParts = (dateStr: string) => {
   return { dayName: "DAY", dayNumber: "1", month: "JUN", fullString: cleanedStr };
 };
 
-// ✅ NEW HELPER — Validate coordinates coming from the order document
 const hasValidCoords = (lat: any, lng: any): boolean => {
   const nLat = Number(lat);
   const nLng = Number(lng);
@@ -98,38 +97,15 @@ const hasValidCoords = (lat: any, lng: any): boolean => {
   );
 };
 
-// ✅ NEW HELPER — Compact coordinate label (e.g. "12.97160, 77.59460")
 const formatCoordLabel = (lat: any, lng: any): string => {
   if (!hasValidCoords(lat, lng)) return '';
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 };
 
 // ==================================================================
-// ✅ NEW SHARED HELPER — Determine whether an order is TRULY fully
+// ✅ SHARED HELPER — Determine whether an order is TRULY fully
 // settled (i.e., the FULL amount has been collected — not just the
 // 45% advance).
-//
-// Business rules enforced here:
-//   • Mealbox / Catering (advance-based):
-//       isFullySettled = TRUE only when the balance has been collected
-//       (balanceAmountToCollect <= 0) AND paymentStatus reflects full
-//       settlement ("Fully Paid" / "Balance Collected") OR the
-//       orderStatus is Completed / Cash Collected / Delivered.
-//       A VERIFIED ADVANCE ALONE MUST NOT FLIP THIS TO TRUE.
-//
-//   • Homemade / QuickBites:
-//       - ONLINE (Cashfree): full amount was captured at placement
-//         → advancePaidAmount === totalAmount AND balance === 0
-//         → isFullySettled = TRUE immediately.
-//       - COD: settled only when status is Delivered / Completed /
-//         Cash Collected.
-//
-// This single source of truth is used by:
-//   • The active-order `isCashCollected` memo
-//   • The pill color logic in the header strip
-//   • The status dropdown lock
-//   • The advance payment verification box
-//   • The new payment badge on the delivery card
 // ==================================================================
 const computeIsFullySettled = (order: any): boolean => {
   if (!order) return false;
@@ -146,7 +122,6 @@ const computeIsFullySettled = (order: any): boolean => {
   const isAdvanceBased =
     serviceType === 'catering' || serviceType === 'mealbox';
 
-  // ---- Explicit full-settlement markers written by the backend ----
   const isFullyPaidStatus =
     pStatus.includes('fully paid') ||
     pStatus.includes('balance collected');
@@ -157,15 +132,12 @@ const computeIsFullySettled = (order: any): boolean => {
     oStatus.includes('amount collected') ||
     oStatus === 'delivered';
 
-  // ---- Homemade/QuickBites ONLINE: full amount captured at placement ----
   const isHomemadeOnlineFullyPaid =
     isHomemadeLike &&
     advAmt > 0 &&
     balAmt <= 0 &&
     Math.abs(advAmt - total) < 0.01;
 
-  // ---- Mealbox/Catering: settled ONLY when balance is cleared AND
-  //      paymentStatus explicitly confirms full settlement ----
   const isBalanceCleared =
     isAdvanceBased &&
     balAmt <= 0 &&
@@ -180,14 +152,7 @@ const computeIsFullySettled = (order: any): boolean => {
 };
 
 // ==================================================================
-// ✅ NEW HELPER — Compute the payment badge text and theme for the
-// admin delivery card. Shows ONLY the payment state, never the
-// order status.
-//
-//   • Online + fully paid       → "Payment Settled" (green)
-//   • Online + advance paid     → "Advance Paid ₹X" (amber)
-//   • COD + before delivered    → "COD ₹X" (amber)
-//   • COD + after delivered     → "Cash Collected ₹X" (green)
+// ✅ SHARED HELPER — Compute the payment badge text + theme.
 // ==================================================================
 const computePaymentBadge = (
   order: any
@@ -213,7 +178,6 @@ const computePaymentBadge = (
     paymentStatus.includes('fully paid') ||
     paymentStatus.includes('collected');
 
-  // COD
   if (paymentMethod === 'cod') {
     if (isDelivered) {
       return { text: `Cash Collected ₹${total}`, isSettled: true };
@@ -221,13 +185,39 @@ const computePaymentBadge = (
     return { text: `COD ₹${total}`, isSettled: false };
   }
 
-  // Online — advance-based services (Catering/Mealbox) with pending balance
   if (isAdvanceBased && balance > 0) {
     return { text: `Advance Paid ₹${advance}`, isSettled: false };
   }
 
-  // Online — fully settled
-  return { text: 'Payment Settled', isSettled: true };
+  return { text: `Payment Settled ₹${total}`, isSettled: true };
+};
+
+// ==================================================================
+// ✅ NEW HELPER — Resolve the special instruction display data for
+// the admin order card. Returns { hasContent, tag, label, text,
+// displayLabel, displayText } where:
+//   • displayLabel falls back to "N/A" when nothing is set
+//   • displayText  falls back to "N/A" when nothing is set
+//   • hasContent is true only when at least one field is non-empty
+// ==================================================================
+const resolveOrderSpecialInstruction = (order: any) => {
+  const si = order?.specialInstruction || {};
+  const rawLabel = String(si?.label || '').trim();
+  const rawText = String(si?.text || '').trim();
+  const rawTag = String(si?.tag || '').trim();
+
+  const hasLabel = rawLabel.length > 0;
+  const hasText = rawText.length > 0;
+  const hasAny = hasLabel || hasText;
+
+  return {
+    hasContent: hasAny,
+    tag: rawTag,
+    label: rawLabel,
+    text: rawText,
+    displayLabel: hasLabel ? rawLabel : 'N/A',
+    displayText: hasText ? rawText : 'N/A',
+  };
 };
 
 /* ─── COUNTDOWN TIMER WIDGET (ADMIN BLUE THEME) ─── */
@@ -397,29 +387,30 @@ export default function AdminAllOrdersScreen() {
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(0);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
 
-  // ✅ NEW: Search query state
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Filter tabs
   const [statusFilter, setStatusFilter] = useState<'All' | 'Placed' | 'Accepted' | 'Preparing' | 'Delivered' | 'Cancelled'>('All');
 
-  // Status dropdowns
   const [showStatusDropdown, setShowStatusDropdown] = useState<boolean>(false);
   const [activeScheduleDropdownDate, setActiveScheduleDropdownDate] = useState<string | null>(null);
 
-  // Price breakdown expander
   const [isPriceExpanded, setIsPriceExpanded] = useState<boolean>(false);
   const chevronAnim = useRef(new Animated.Value(0)).current;
 
-  // Preview modal
+  // ✅ NEW: Bill summary modal state
+  const [showBillSummaryModal, setShowBillSummaryModal] = useState<boolean>(false);
+  const billSummaryAnim = useRef(new Animated.Value(400)).current;
+
+  // ✅ NEW: Special-instruction expandable row state (inside Order Summary card)
+  const [isSpecialInstructionExpanded, setIsSpecialInstructionExpanded] = useState<boolean>(false);
+  const specialInstructionChevronAnim = useRef(new Animated.Value(0)).current;
+
   const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>('');
   const sheetAnim = useRef(new Animated.Value(400)).current;
 
-  // ✅ Alarm snooze-cycle interval ref.
-  //    Sound + vibration + 10s auto-stop are now fully owned by the
-  //    shared singleton `client/src/lib/orderAlarm.ts`.
   const alarmIntervalRef = useRef<any>(null);
+  const alertedOrderIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     async function setupNotifications() {
@@ -471,10 +462,6 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  /* ─────────────────────────────────────────────────────────
-     ✅ UPDATED: These now delegate to the shared singleton
-     alarm controller (`client/src/lib/orderAlarm.ts`).
-     ───────────────────────────────────────────────────────── */
   const startOrderAlarmSound = async () => {
     await startOrderAlarm();
   };
@@ -514,6 +501,44 @@ export default function AdminAllOrdersScreen() {
     outputRange: ['0deg', '180deg'],
   });
 
+  // ✅ NEW: Toggle for the special-instruction expandable row
+  const toggleSpecialInstruction = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const toValue = isSpecialInstructionExpanded ? 0 : 1;
+    Animated.timing(specialInstructionChevronAnim, {
+      toValue,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+    setIsSpecialInstructionExpanded(!isSpecialInstructionExpanded);
+  };
+
+  const specialInstructionChevronRotation = specialInstructionChevronAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+
+  // ✅ NEW: Open / close bill summary modal
+  const openBillSummary = () => {
+    setShowBillSummaryModal(true);
+    billSummaryAnim.setValue(400);
+    Animated.timing(billSummaryAnim, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const closeBillSummary = () => {
+    Animated.timing(billSummaryAnim, {
+      toValue: 400,
+      duration: 250,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowBillSummaryModal(false);
+    });
+  };
+
   const fetchAllOrders = async () => {
     try {
       const res = await api.get('/api/orders/all');
@@ -521,17 +546,18 @@ export default function AdminAllOrdersScreen() {
         const fetched = res.data.orders || [];
         setOrders(fetched);
 
-        // ✅ UPDATED: Only alarm for orders that are GENUINELY awaiting
-        //    admin action — i.e. COD orders still in "Placed" status.
-        const hasPending = fetched.find((o: any) => {
-          const status = String(o.orderStatus || 'Placed').toLowerCase();
-          const payment = String(o.paymentMethod || '').toLowerCase();
-          const fullySettled = computeIsFullySettled(o);
-          return status === 'placed' && payment === 'cod' && !fullySettled;
+        const newestUnseenOrder = fetched.find((o: any) => {
+          const orderId = String(o.orderId || '');
+          if (!orderId) return false;
+          return !alertedOrderIdsRef.current.has(orderId);
         });
 
-        if (hasPending) {
-          initAlarmCycleForPendingOrder(hasPending);
+        if (newestUnseenOrder) {
+          const orderId = String(newestUnseenOrder.orderId || '');
+          if (orderId) {
+            alertedOrderIdsRef.current.add(orderId);
+          }
+          initAlarmCycleForPendingOrder(newestUnseenOrder);
         } else {
           clearAlarmAndSnoozeCycle();
         }
@@ -544,7 +570,6 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  // ─── Real-time socket listeners ───
   useEffect(() => {
     fetchAllOrders();
 
@@ -558,11 +583,9 @@ export default function AdminAllOrdersScreen() {
         return [newOrder, ...prev];
       });
 
-      // ✅ UPDATED: Only trigger the alarm for COD orders that need
-      //    admin action.
-      const status = String(newOrder.orderStatus || 'Placed').toLowerCase();
-      const payment = String(newOrder.paymentMethod || '').toLowerCase();
-      if (status === 'placed' && payment === 'cod') {
+      const orderId = String(newOrder.orderId || '');
+      if (orderId && !alertedOrderIdsRef.current.has(orderId)) {
+        alertedOrderIdsRef.current.add(orderId);
         initAlarmCycleForPendingOrder(newOrder);
       }
     };
@@ -633,7 +656,6 @@ export default function AdminAllOrdersScreen() {
     fetchAllOrders();
   }, []);
 
-  // ─── Filtered orders ───
   const filteredOrders = useMemo(() => {
     let list = orders;
 
@@ -679,8 +701,6 @@ export default function AdminAllOrdersScreen() {
     }
   }, [filteredOrders.length]);
 
-  // ✅ NEW: Whenever the search query changes, jump back to the first
-  //    matching order so the user immediately sees the top result.
   useEffect(() => {
     setSelectedOrderIndex(0);
   }, [searchQuery]);
@@ -728,6 +748,12 @@ export default function AdminAllOrdersScreen() {
       if (keys.length > 0) setPreviewActiveDay(keys[0]);
     }
   }, [parsedSelections]);
+
+  // ✅ NEW: Reset the special-instruction expandable when switching orders
+  useEffect(() => {
+    setIsSpecialInstructionExpanded(false);
+    specialInstructionChevronAnim.setValue(0);
+  }, [activeOrder?.orderId]);
 
   const openPreviewSheet = (day?: string) => {
     if (day) setPreviewActiveDay(day);
@@ -826,9 +852,6 @@ export default function AdminAllOrdersScreen() {
     currentStatus.toLowerCase() !== 'placed' && currentStatus.toLowerCase() !== 'cancelled';
   const isCurrentOrderDelivered = currentStatus.toLowerCase() === 'delivered';
 
-  // ==================================================================
-  // ✅ FIX: Use the shared helper for the active order
-  // ==================================================================
   const isCashCollected = useMemo(
     () => computeIsFullySettled(activeOrder),
     [
@@ -841,10 +864,6 @@ export default function AdminAllOrdersScreen() {
     ]
   );
 
-  // ==================================================================
-  // ✅ NEW: Payment badge for the active order — used on the delivery
-  // card's top-right corner.
-  // ==================================================================
   const activePaymentBadge = useMemo(
     () => computePaymentBadge(activeOrder),
     [
@@ -858,10 +877,16 @@ export default function AdminAllOrdersScreen() {
     ]
   );
 
-  // ==================================================================
-  // ✅ FIX: Derived balance amount that the UI should display for
-  // Mealbox/Catering orders.
-  // ==================================================================
+  // ✅ NEW: Resolve the special-instruction display data for the active order.
+  const activeSpecialInstruction = useMemo(
+    () => resolveOrderSpecialInstruction(activeOrder),
+    [
+      activeOrder?.specialInstruction?.tag,
+      activeOrder?.specialInstruction?.label,
+      activeOrder?.specialInstruction?.text,
+    ]
+  );
+
   const displayedBalanceAmount = useMemo(() => {
     const bal = Number(activeOrder?.balanceAmountToCollect || 0);
     if (isCashCollected) return 0;
@@ -876,16 +901,15 @@ export default function AdminAllOrdersScreen() {
     isCashCollected,
   ]);
 
-  // ==================================================================
-  // ✅ FIX (Flow A): Determine whether the delivery status dropdown
-  // should be visible. Per Flow A, the dropdown only appears after
-  // the order has been accepted (adminAcceptedAt is set).
-  //
-  // For online orders, the backend auto-accepts, so adminAcceptedAt
-  // is set immediately. For COD orders, the admin must click the
-  // "Accept Order" button first.
-  // ==================================================================
   const isOrderAcceptedForAdmin = Boolean(activeOrder?.adminAcceptedAt);
+
+  const serviceTypeLower = String(activeOrder?.serviceType || '').toLowerCase();
+  const isQuickBitesFlow = serviceTypeLower === 'quickbites';
+  const isChefGatedService = serviceTypeLower === 'quickbites' || serviceTypeLower === 'homemade';
+  const isChefGateRequired =
+    isChefGatedService && !isPaymentCod;
+  const chefHasAccepted = Boolean(activeOrder?.chefAcceptedAt);
+  const isWaitingForChefAcceptance = isChefGateRequired && !chefHasAccepted;
 
   const allMealboxSchedules: Array<{
     date: string;
@@ -952,7 +976,7 @@ export default function AdminAllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
-  const isQuickBitesFlow = useMemo(() => {
+  const isQuickBitesFlowLegacy = useMemo(() => {
     if (!activeOrder) return false;
     const flagSet =
       activeOrder?.isQuickBites === true ||
@@ -963,7 +987,7 @@ export default function AdminAllOrdersScreen() {
   }, [activeOrder, isHomemadeFlow]);
 
   const quickBitesDateTime = useMemo(() => {
-    if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
+    if (!isQuickBitesFlowLegacy || !activeOrder?.estimatedDeliveryAt) return null;
     const d = new Date(activeOrder.estimatedDeliveryAt);
     if (isNaN(d.getTime())) return null;
 
@@ -986,24 +1010,24 @@ export default function AdminAllOrdersScreen() {
     });
 
     return { displayDate, timerDate, timeStr };
-  }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
+  }, [isQuickBitesFlowLegacy, activeOrder?.estimatedDeliveryAt]);
 
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    if (isQuickBitesFlow && quickBitesDateTime) {
+    if (isQuickBitesFlowLegacy && quickBitesDateTime) {
       return quickBitesDateTime.timerDate;
     }
     return String(activeOrder?.deliveryDate || '').trim();
   }, [
     activeOrder?.deliveryDate,
     isHomemadeFlow,
-    isQuickBitesFlow,
+    isQuickBitesFlowLegacy,
     quickBitesDateTime,
   ]);
 
   const homemadeDeliverySlotResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    if (isQuickBitesFlow && quickBitesDateTime) {
+    if (isQuickBitesFlowLegacy && quickBitesDateTime) {
       return quickBitesDateTime.timeStr;
     }
     return String(
@@ -1015,22 +1039,28 @@ export default function AdminAllOrdersScreen() {
     activeOrder?.deliverySlot,
     activeOrder?.deliveryTimeSlot,
     isHomemadeFlow,
-    isQuickBitesFlow,
+    isQuickBitesFlowLegacy,
     quickBitesDateTime,
   ]);
 
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    if (isQuickBitesFlow && quickBitesDateTime) {
+    if (isQuickBitesFlowLegacy && quickBitesDateTime) {
       return quickBitesDateTime.displayDate;
     }
     return String(activeOrder?.deliveryDate || '').trim();
   }, [
     activeOrder?.deliveryDate,
     isHomemadeFlow,
-    isQuickBitesFlow,
+    isQuickBitesFlowLegacy,
     quickBitesDateTime,
   ]);
+
+  const displayStatusText = isWaitingForChefAcceptance
+    ? 'Pending Chef'
+    : isCashCollected
+    ? 'Cash Collected'
+    : currentStatus;
 
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
@@ -1088,7 +1118,7 @@ export default function AdminAllOrdersScreen() {
       image: defaultDishImage,
     },
     deliveryAddress: customerAddress,
-    status: isCashCollected ? 'Cash Collected' : currentStatus,
+    status: displayStatusText,
   };
 
   const handleCopyOrderId = () => {
@@ -1289,11 +1319,6 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  // ==================================================================
-  // ✅ NEW: Admin taps "Accept Order" for a pending (COD) order.
-  // This calls the backend `/admin-accept` endpoint which notifies
-  // the chef and sets adminAcceptedAt.
-  // ==================================================================
   const handleAdminAcceptOrder = async () => {
     if (!activeOrder) return;
 
@@ -1394,13 +1419,6 @@ export default function AdminAllOrdersScreen() {
     'All', 'Placed', 'Accepted', 'Preparing', 'Delivered', 'Cancelled',
   ];
 
-  // ==================================================================
-  // ✅ REVISED (Q7 - Flow A): Admin status dropdown now shows ONLY
-  // the 5 delivery statuses. The "Cash on Delivery Amount Collected"
-  // item has been REMOVED — COD cash collection is now handled
-  // implicitly when the order is marked "Delivered" and the badge
-  // updates accordingly.
-  // ==================================================================
   const adminStatusDropdownOptions = [
     { label: 'Accepted', value: 'Accepted', icon: 'checkmark-circle-outline' },
     { label: 'Preparing', value: 'Preparing', icon: 'flame-outline' },
@@ -1454,7 +1472,6 @@ export default function AdminAllOrdersScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* ✅ SEARCH BAR */}
             <View style={styles.searchBarWrapper}>
               <View style={styles.searchBarContainer}>
                 <Ionicons name="search" size={16} color="#60A5FA" />
@@ -1480,7 +1497,6 @@ export default function AdminAllOrdersScreen() {
               </View>
             </View>
 
-            {/* Filter Tabs */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -1505,7 +1521,6 @@ export default function AdminAllOrdersScreen() {
               })}
             </ScrollView>
 
-            {/* Order Pill Strip */}
             {filteredOrders.length > 1 && (
               <ScrollView
                 horizontal
@@ -1607,7 +1622,6 @@ export default function AdminAllOrdersScreen() {
             </View>
           ) : (
             <>
-              {/* ─── ADVANCE PAYMENT VERIFICATION BANNER ─── */}
               {activeOrder &&
                 activeOrder.serviceType !== 'homemade' &&
                 activeOrder.serviceType !== 'quickbites' && (
@@ -1671,11 +1685,6 @@ export default function AdminAllOrdersScreen() {
                   </View>
                 )}
 
-              {/* ==================================================================
-                  ✅ FLOW A GATING — If the order is placed (COD awaiting
-                  admin acceptance), show ONLY the "Accept Order" button.
-                  No status dropdown, no delivery stepper visible yet.
-                  ================================================================== */}
               {activeOrder && !isOrderAcceptedForAdmin && currentStatus.toLowerCase() === 'placed' && (
                 <View style={styles.acceptOrderHeroCard}>
                   <View style={styles.acceptOrderIconCircle}>
@@ -1706,9 +1715,40 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* ─── STEPPER HERO (if accepted) ─── */}
-              {isCurrentOrderAccepted && (
+              {isCurrentOrderAccepted && !isWaitingForChefAcceptance && (
                 <View style={styles.successHeroCard}>
+                  <View
+                    style={[
+                      styles.heroCardPaymentBadge,
+                      activePaymentBadge.isSettled
+                        ? styles.heroCardPaymentBadgeSettled
+                        : styles.heroCardPaymentBadgePending,
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        activePaymentBadge.isSettled
+                          ? 'checkmark-circle'
+                          : isPaymentCod
+                          ? 'cash-outline'
+                          : 'time-outline'
+                      }
+                      size={12}
+                      color={activePaymentBadge.isSettled ? '#166348' : '#92400E'}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text
+                      style={[
+                        styles.heroCardPaymentBadgeText,
+                        activePaymentBadge.isSettled
+                          ? styles.heroCardPaymentBadgeTextSettled
+                          : styles.heroCardPaymentBadgeTextPending,
+                      ]}
+                    >
+                      {activePaymentBadge.text}
+                    </Text>
+                  </View>
+
                   <View style={styles.successOuterGlowCircle}>
                     <View style={styles.successInnerCircle}>
                       <Ionicons name="checkmark-sharp" size={38} color="#FFFFFF" />
@@ -1720,8 +1760,6 @@ export default function AdminAllOrdersScreen() {
                     Order <Text style={styles.successHeroOrderId}>{orderData.orderId}</Text> is currently under live platform fulfillment.
                   </Text>
 
-                  {/* ✅ FLOW A: Admin Status Override Dropdown
-                      Shows ONLY the 5 delivery statuses (no Cash Collected). */}
                   <View style={styles.adminStatusSelectorBox}>
                     <Text style={styles.adminSelectorTitle}>Admin Status Override:</Text>
                     {isCashCollected ? (
@@ -1781,7 +1819,6 @@ export default function AdminAllOrdersScreen() {
                     )}
                   </View>
 
-                  {/* 5-Stage Horizontal Stepper */}
                   <View style={styles.horizontalStepperContainer}>
                     {stepperStages.map((stage, idx) => {
                       const isPast = stepperActiveIndex > idx;
@@ -1831,8 +1868,55 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* Timer */}
-              {isCurrentOrderAccepted && (
+              {isWaitingForChefAcceptance && (
+                <View style={styles.awaitingChefHeroCard}>
+                  <View
+                    style={[
+                      styles.heroCardPaymentBadge,
+                      activePaymentBadge.isSettled
+                        ? styles.heroCardPaymentBadgeSettled
+                        : styles.heroCardPaymentBadgePending,
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        activePaymentBadge.isSettled
+                          ? 'checkmark-circle'
+                          : 'time-outline'
+                      }
+                      size={12}
+                      color={activePaymentBadge.isSettled ? '#166348' : '#92400E'}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text
+                      style={[
+                        styles.heroCardPaymentBadgeText,
+                        activePaymentBadge.isSettled
+                          ? styles.heroCardPaymentBadgeTextSettled
+                          : styles.heroCardPaymentBadgeTextPending,
+                      ]}
+                    >
+                      {activePaymentBadge.text}
+                    </Text>
+                  </View>
+
+                  <View style={styles.awaitingChefIconCircle}>
+                    <Ionicons name="time-outline" size={32} color="#FFFFFF" />
+                  </View>
+
+                  <Text style={styles.awaitingChefTitle}>Waiting for Chef's Acceptance</Text>
+                  <Text style={styles.awaitingChefSubtitle}>
+                    Amount received:{' '}
+                    <Text style={styles.awaitingChefAmount}>
+                      ₹{totalAmountNum}
+                    </Text>
+                    {'\n'}
+                    The chef will accept this order shortly.
+                  </Text>
+                </View>
+              )}
+
+              {isCurrentOrderAccepted && !isWaitingForChefAcceptance && (
                 <DeliverySlotCountdownWidget
                   deliveryDate={orderData.deliveryDate}
                   timeSlot={orderData.deliveryTimeSlot}
@@ -1841,45 +1925,7 @@ export default function AdminAllOrdersScreen() {
                 />
               )}
 
-              {/* ==================================================================
-                  ✅ REVISED: MAIN ORDER CARD — Top-right badge now shows
-                  ONLY the payment state (Payment Settled / Advance Paid ₹X /
-                  COD ₹X / Cash Collected ₹X). Order status moved into a
-                  separate inline pill.
-                  ================================================================== */}
               <View style={styles.card}>
-                <View
-                  style={[
-                    styles.paymentBadgeTopRight,
-                    activePaymentBadge.isSettled
-                      ? styles.paymentBadgeTopRightSettled
-                      : styles.paymentBadgeTopRightPending,
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      activePaymentBadge.isSettled
-                        ? 'checkmark-circle'
-                        : isPaymentCod
-                        ? 'cash-outline'
-                        : 'time-outline'
-                    }
-                    size={12}
-                    color={activePaymentBadge.isSettled ? '#166348' : '#92400E'}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text
-                    style={[
-                      styles.paymentBadgeTopRightText,
-                      activePaymentBadge.isSettled
-                        ? styles.paymentBadgeTopRightTextSettled
-                        : styles.paymentBadgeTopRightTextPending,
-                    ]}
-                  >
-                    {activePaymentBadge.text}
-                  </Text>
-                </View>
-
                 <View style={styles.orderIdTopRow}>
                   <View style={{ flex: 1, paddingRight: 8 }}>
                     <Text style={styles.smallSectionLabel}>ADMIN ORDER IDENTIFIER</Text>
@@ -1891,24 +1937,23 @@ export default function AdminAllOrdersScreen() {
                     </View>
                   </View>
 
-                  {/* ✅ CHANGED: Status badge is now a small inline pill */}
                   <View
                     style={[
                       styles.inlineOrderStatusPill,
-                      isCurrentOrderAccepted && styles.inlineOrderStatusPillAccepted,
+                      isCurrentOrderAccepted && !isWaitingForChefAcceptance && styles.inlineOrderStatusPillAccepted,
                       orderData.status === 'Cancelled' && styles.inlineOrderStatusPillCancelled,
-                      !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && styles.inlineOrderStatusPillPending,
+                      (!isCurrentOrderAccepted || isWaitingForChefAcceptance) && orderData.status !== 'Cancelled' && styles.inlineOrderStatusPillPending,
                     ]}
                   >
                     <Text
                       style={[
                         styles.inlineOrderStatusPillText,
-                        isCurrentOrderAccepted && styles.inlineOrderStatusPillTextAccepted,
+                        isCurrentOrderAccepted && !isWaitingForChefAcceptance && styles.inlineOrderStatusPillTextAccepted,
                         orderData.status === 'Cancelled' && styles.inlineOrderStatusPillTextCancelled,
-                        !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && styles.inlineOrderStatusPillTextPending,
+                        (!isCurrentOrderAccepted || isWaitingForChefAcceptance) && orderData.status !== 'Cancelled' && styles.inlineOrderStatusPillTextPending,
                       ]}
                     >
-                      {orderData.status}
+                      {displayStatusText}
                     </Text>
                   </View>
                 </View>
@@ -1938,7 +1983,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 2. CUSTOMER + CHEF PROFILE */}
               <View style={styles.card}>
                 <Text style={styles.cardSectionHeading}>Customer & Chef</Text>
 
@@ -2013,7 +2057,11 @@ export default function AdminAllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 3. ORDER SUMMARY */}
+              {/* ==================================================================
+                  ✅ ORDER SUMMARY CARD
+                  Includes the NEW Special Instructions expandable row.
+                  When both label & text are empty, we show "N/A".
+                  ================================================================== */}
               <View style={styles.card}>
                 <Text style={styles.cardSectionHeading}>Order Summary</Text>
 
@@ -2058,6 +2106,62 @@ export default function AdminAllOrdersScreen() {
                   </View>
                 </View>
 
+                {/* ✅ NEW: Special Instructions expandable row */}
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={toggleSpecialInstruction}
+                  style={styles.specialInstructionRowHeader}
+                >
+                  <View style={styles.specialInstructionHeaderLeft}>
+                    <View style={styles.specialInstructionIconCircle}>
+                      <Feather name="file-text" size={13} color="#2563EB" />
+                    </View>
+                    <Text style={styles.specialInstructionHeaderTitle}>Special Instructions</Text>
+                    {activeSpecialInstruction.hasContent && (
+                      <View style={styles.specialInstructionDotIndicator} />
+                    )}
+                  </View>
+
+                  <View style={styles.specialInstructionHeaderRight}>
+                    <Text style={styles.specialInstructionPreviewText} numberOfLines={1}>
+                      {activeSpecialInstruction.hasContent
+                        ? (activeSpecialInstruction.label || activeSpecialInstruction.text || '')
+                        : 'N/A'}
+                    </Text>
+                    <Animated.View style={{ transform: [{ rotate: specialInstructionChevronRotation }] }}>
+                      <Ionicons name="chevron-down" size={14} color="#2563EB" />
+                    </Animated.View>
+                  </View>
+                </TouchableOpacity>
+
+                {isSpecialInstructionExpanded && (
+                  <View style={styles.specialInstructionExpandedBox}>
+                    <View style={styles.specialInstructionFieldRow}>
+                      <Text style={styles.specialInstructionFieldLabel}>Preference</Text>
+                      <Text
+                        style={[
+                          styles.specialInstructionFieldValue,
+                          !activeSpecialInstruction.hasContent && styles.specialInstructionFieldValueNA,
+                        ]}
+                      >
+                        {activeSpecialInstruction.displayLabel}
+                      </Text>
+                    </View>
+
+                    <View style={styles.specialInstructionFieldRow}>
+                      <Text style={styles.specialInstructionFieldLabel}>Chef Notes</Text>
+                      <Text
+                        style={[
+                          styles.specialInstructionFieldValue,
+                          !activeSpecialInstruction.hasContent && styles.specialInstructionFieldValueNA,
+                        ]}
+                      >
+                        {activeSpecialInstruction.displayText}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
                 {hasAnyItemsToPreview && (
                   <View style={styles.centeredPreviewContainer}>
                     <TouchableOpacity
@@ -2083,6 +2187,14 @@ export default function AdminAllOrdersScreen() {
                   </View>
                   <Text style={styles.totalAmountValue}>{orderData.meal.totalAmount}</Text>
                 </View>
+
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={openBillSummary}
+                  style={styles.viewDetailsInlineBtn}
+                >
+                  <Text style={styles.viewDetailsInlineBtnText}>View Details</Text>
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   activeOpacity={0.7}
@@ -2161,7 +2273,6 @@ export default function AdminAllOrdersScreen() {
                 )}
               </View>
 
-              {/* ─── MEALBOX SCHEDULES ─── */}
               {isMealBoxFlow && allMealboxSchedules.length > 0 && (
                 <View style={styles.card}>
                   <View style={styles.scheduleHeaderRow}>
@@ -2260,7 +2371,7 @@ export default function AdminAllOrdersScreen() {
                             </TouchableOpacity>
                           </View>
 
-                          {!isItemPaused && !isCashCollected && isOrderAcceptedForAdmin && (
+                          {!isItemPaused && !isCashCollected && isOrderAcceptedForAdmin && !isWaitingForChefAcceptance && (
                             <View style={{ marginTop: 10 }}>
                               <TouchableOpacity
                                 style={styles.individualStatusTrigger}
@@ -2319,7 +2430,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* 4. DELIVERY ADDRESS */}
               <View style={styles.card}>
                 <View style={styles.addressRow}>
                   <View style={styles.addressLeftCol}>
@@ -2374,7 +2484,6 @@ export default function AdminAllOrdersScreen() {
         </ScrollView>
       </View>
 
-      {/* ─── PREVIEW MODAL ─── */}
       <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closePreviewSheet}>
         <BlurView intensity={35} tint="dark" style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closePreviewSheet} />
@@ -2652,6 +2761,171 @@ export default function AdminAllOrdersScreen() {
           </Animated.View>
         </BlurView>
       </Modal>
+
+      <Modal visible={showBillSummaryModal} transparent animationType="none" onRequestClose={closeBillSummary}>
+        <BlurView intensity={35} tint="dark" style={styles.modalOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeBillSummary} />
+
+          <Animated.View
+            style={[
+              styles.billSummaryModalContent,
+              { transform: [{ translateY: billSummaryAnim }] },
+            ]}
+          >
+            <View style={styles.drawerHandle} />
+            <TouchableOpacity style={styles.previewCloseBtn} onPress={closeBillSummary} activeOpacity={0.8}>
+              <Ionicons name="close" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            <View style={styles.billSummaryHeaderRow}>
+              <View style={styles.billSummaryIconCircle}>
+                <Feather name="file-text" size={20} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.billSummaryTitle}>Detailed Bill Summary</Text>
+                <Text style={styles.billSummarySubtitle}>
+                  Order {orderData.orderId}
+                </Text>
+              </View>
+            </View>
+
+            <ScrollView
+              style={{ width: '100%', marginTop: 12 }}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 20 }}
+            >
+              <View style={styles.billSummaryCard}>
+                {isCateringFlow && pricePerPlateNum > 0 && (
+                  <View style={styles.billSummaryRow}>
+                    <Text style={styles.billSummaryLabel}>Price Per Plate</Text>
+                    <Text style={styles.billSummaryValue}>₹{pricePerPlateNum}</Text>
+                  </View>
+                )}
+
+                {isCateringFlow && guestsCount > 0 && (
+                  <View style={styles.billSummaryRow}>
+                    <Text style={styles.billSummaryLabel}>Number of Guests</Text>
+                    <Text style={styles.billSummaryValue}>× {guestsCount}</Text>
+                  </View>
+                )}
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryLabel}>Base Subtotal</Text>
+                  <Text style={styles.billSummaryValue}>₹{subtotalNum}</Text>
+                </View>
+
+                {addonTotalCalculated > 0 && (
+                  <View style={styles.billSummaryRow}>
+                    <Text style={styles.billSummaryLabel}>Add-ons</Text>
+                    <Text style={styles.billSummaryValue}>+ ₹{addonTotalCalculated}</Text>
+                  </View>
+                )}
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryLabel}>Delivery & Kitchen</Text>
+                  <Text style={[styles.billSummaryValue, deliveryPriceNum === 0 && { color: '#2563EB', fontWeight: '900' }]}>
+                    {deliveryPriceNum === 0 ? 'FREE' : `+ ₹${deliveryPriceNum}`}
+                  </Text>
+                </View>
+
+                {discountNum > 0 && (
+                  <View style={styles.billSummaryRow}>
+                    <Text style={styles.billSummaryLabel}>
+                      Coupon Discount {couponAppliedCode ? `(${couponAppliedCode})` : ''}
+                    </Text>
+                    <Text style={[styles.billSummaryValue, { color: '#2563EB' }]}>
+                      - ₹{discountNum}
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryLabel}>Taxes (GST Included)</Text>
+                  <Text style={styles.billSummaryValue}>₹0.00</Text>
+                </View>
+
+                <View style={styles.billSummaryDivider} />
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryTotalLabel}>Total Amount</Text>
+                  <Text style={styles.billSummaryTotalValue}>₹{totalAmountNum}</Text>
+                </View>
+
+                <View style={styles.billSummaryDivider} />
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryLabel}>
+                    {isPaymentCod ? 'Cash on Delivery' : 'Paid Online'}
+                  </Text>
+                  <Text style={styles.billSummaryValue}>
+                    {isPaymentCod
+                      ? `₹${isCashCollected ? totalAmountNum : 0}`
+                      : `₹${totalAmountNum}`}
+                  </Text>
+                </View>
+
+                {!isPaymentCod && activeOrder?.advancePaidAmount > 0 && activeOrder?.balanceAmountToCollect > 0 && (
+                  <>
+                    <View style={styles.billSummaryRow}>
+                      <Text style={styles.billSummaryLabel}>Advance Paid</Text>
+                      <Text style={styles.billSummaryValue}>₹{activeOrder.advancePaidAmount}</Text>
+                    </View>
+                    <View style={styles.billSummaryRow}>
+                      <Text style={styles.billSummaryLabel}>Balance Pending</Text>
+                      <Text style={[styles.billSummaryValue, { color: '#D97706', fontWeight: '800' }]}>
+                        ₹{displayedBalanceAmount}
+                      </Text>
+                    </View>
+                  </>
+                )}
+
+                <View style={styles.billSummaryDivider} />
+
+                <View style={styles.billSummaryPaymentStrip}>
+                  <Text style={styles.billSummaryPaymentLabel}>Payment Method</Text>
+                  <View
+                    style={[
+                      styles.billSummaryPaymentPill,
+                      isCashCollected
+                        ? styles.billSummaryPaymentPillGreen
+                        : isPaymentCod
+                        ? styles.billSummaryPaymentPillAmber
+                        : styles.billSummaryPaymentPillGreen,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.billSummaryPaymentPillText,
+                        isCashCollected
+                          ? styles.billSummaryPaymentPillTextGreen
+                          : isPaymentCod
+                          ? styles.billSummaryPaymentPillTextAmber
+                          : styles.billSummaryPaymentPillTextGreen,
+                      ]}
+                    >
+                      {isCashCollected
+                        ? 'Cash Collected (Paid)'
+                        : isPaymentCod
+                        ? 'Cash on Delivery'
+                        : 'Online Paid'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalAbsoluteFooterCTAWrapper}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={closeBillSummary}
+                style={styles.modalAbsoluteFooterCTAButtonSolid}
+              >
+                <Text style={styles.modalAbsoluteFooterCTAButtonSolidText}>Close Summary</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </BlurView>
+      </Modal>
     </View>
   );
 }
@@ -2683,7 +2957,6 @@ const styles = StyleSheet.create({
   },
   notificationBadgeText: { color: '#FFFFFF', fontSize: 8.5, fontWeight: '900' },
 
-  /* ✅ SEARCH BAR */
   searchBarWrapper: {
     marginBottom: 12,
   },
@@ -2767,49 +3040,6 @@ const styles = StyleSheet.create({
     position: 'relative', overflow: 'hidden',
   },
 
-  // ✅ NEW: payment badge positioned on the top-right of the main order card
-  paymentBadgeTopRight: {
-    position: 'absolute',
-    top: -1,
-    right: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderTopWidth: 0,
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
-    borderWidth: 1,
-    zIndex: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  paymentBadgeTopRightSettled: {
-    backgroundColor: '#DCFCE7',
-    borderColor: '#86EFAC',
-  },
-  paymentBadgeTopRightPending: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FDE68A',
-  },
-  paymentBadgeTopRightText: {
-    fontSize: 10.5,
-    fontWeight: '900',
-    letterSpacing: 0.2,
-  },
-  paymentBadgeTopRightTextSettled: {
-    color: '#166348',
-  },
-  paymentBadgeTopRightTextPending: {
-    color: '#92400E',
-  },
-
-  // ✅ NEW: inline order status pill (companion to the payment badge)
   inlineOrderStatusPill: {
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -2844,7 +3074,6 @@ const styles = StyleSheet.create({
     color: '#DC2626',
   },
 
-  // ✅ NEW: "Accept Order" hero card — displayed for placed COD orders (Flow A)
   acceptOrderHeroCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
@@ -2941,7 +3170,105 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF', borderRadius: 22, padding: 20, alignItems: 'center', marginBottom: 14,
     borderWidth: 1, borderColor: '#BFDBFE',
     shadowColor: '#2563EB', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 3,
+    position: 'relative',
+    overflow: 'hidden',
   },
+
+  awaitingChefHeroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 20,
+    alignItems: 'center',
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  awaitingChefIconCircle: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#D97706',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+    borderWidth: 4,
+    borderColor: 'rgba(217, 119, 6, 0.12)',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  awaitingChefTitle: {
+    fontSize: 19,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginBottom: 8,
+    letterSpacing: -0.3,
+    textAlign: 'center',
+  },
+  awaitingChefSubtitle: {
+    fontSize: 13.5,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 20,
+    paddingHorizontal: 10,
+    fontWeight: '500',
+  },
+  awaitingChefAmount: {
+    color: '#166348',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+
+  heroCardPaymentBadge: {
+    position: 'absolute',
+    top: -1,
+    right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderTopWidth: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    borderWidth: 1,
+    zIndex: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  heroCardPaymentBadgeSettled: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  heroCardPaymentBadgePending: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  heroCardPaymentBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  heroCardPaymentBadgeTextSettled: {
+    color: '#166348',
+  },
+  heroCardPaymentBadgeTextPending: {
+    color: '#92400E',
+  },
+
   successOuterGlowCircle: { width: 76, height: 76, borderRadius: 38, backgroundColor: '#DBEAFE', alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   successInnerCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', shadowColor: '#2563EB', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8, elevation: 5 },
   successHeroTitle: { fontSize: 20, fontWeight: '900', color: '#0F172A', marginBottom: 6, letterSpacing: -0.3 },
@@ -3077,6 +3404,97 @@ const styles = StyleSheet.create({
     marginHorizontal: 10,
   },
 
+  // ✅ NEW: Special Instruction expandable row (inside Order Summary)
+  specialInstructionRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  specialInstructionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  specialInstructionIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  specialInstructionHeaderTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.1,
+  },
+  specialInstructionDotIndicator: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#2563EB',
+    marginLeft: 4,
+  },
+  specialInstructionHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '48%',
+  },
+  specialInstructionPreviewText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#475569',
+    flexShrink: 1,
+  },
+  specialInstructionExpandedBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    gap: 8,
+  },
+  specialInstructionFieldRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  specialInstructionFieldLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.2,
+    minWidth: 90,
+  },
+  specialInstructionFieldValue: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A',
+    flex: 1,
+    textAlign: 'right',
+    lineHeight: 17,
+  },
+  specialInstructionFieldValueNA: {
+    color: '#94A3B8',
+    fontStyle: 'italic',
+    fontWeight: '600',
+  },
+
   centeredPreviewContainer: { alignItems: 'center', justifyContent: 'center', marginVertical: 6 },
   previewMenuCenteredCTA: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8FAFC', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
   previewMenuCenteredCTAText: { fontSize: 12.5, fontWeight: '800', color: '#2563EB' },
@@ -3085,6 +3503,20 @@ const styles = StyleSheet.create({
   totalAmountLabel: { fontSize: 14.5, fontWeight: '800', color: '#0F172A' },
   taxInclusiveSubtext: { fontSize: 11, color: '#94A3B8', fontWeight: '500', marginTop: 1 },
   totalAmountValue: { fontSize: 20, fontWeight: '900', color: '#2563EB' },
+
+  viewDetailsInlineBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingVertical: 2,
+  },
+  viewDetailsInlineBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#2563EB',
+    textDecorationLine: 'underline',
+    letterSpacing: 0.1,
+  },
+
   simpleInlineToggleBtn: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginTop: 6, paddingVertical: 4 },
   simpleInlineToggleText: { fontSize: 12.5, fontWeight: '700', color: '#2563EB' },
 
@@ -3216,4 +3648,119 @@ const styles = StyleSheet.create({
   modalAbsoluteFooterCTAButtonSolid: { backgroundColor: '#2563EB', paddingVertical: 18, borderRadius: 18, alignItems: 'center', justifyContent: 'center', shadowColor: '#2563EB', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 6 },
   modalAbsoluteFooterButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
   modalAbsoluteFooterCTAButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+
+  billSummaryModalContent: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    maxHeight: '82%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    elevation: 25,
+  },
+  billSummaryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingRight: 40,
+  },
+  billSummaryIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  billSummaryTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -0.3,
+  },
+  billSummarySubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  billSummaryCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  billSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  billSummaryLabel: {
+    fontSize: 13,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  billSummaryValue: {
+    fontSize: 13.5,
+    color: '#0F172A',
+    fontWeight: '700',
+  },
+  billSummaryDivider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 10,
+  },
+  billSummaryTotalLabel: {
+    fontSize: 15.5,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  billSummaryTotalValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#2563EB',
+  },
+  billSummaryPaymentStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  billSummaryPaymentLabel: {
+    fontSize: 12.5,
+    color: '#64748B',
+    fontWeight: '700',
+  },
+  billSummaryPaymentPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  billSummaryPaymentPillGreen: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  billSummaryPaymentPillAmber: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  billSummaryPaymentPillText: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  billSummaryPaymentPillTextGreen: {
+    color: '#166348',
+  },
+  billSummaryPaymentPillTextAmber: {
+    color: '#92400E',
+  },
 });

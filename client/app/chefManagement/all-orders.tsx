@@ -314,7 +314,6 @@ const MONTHS_MAP: { [key: string]: number } = {
   JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11
 };
 
-// ─── parseDateParts helper ──────────────────────────────────────────
 const parseDateParts = (dateStr: string) => {
   if (!dateStr) return { dayName: "MON", dayNumber: "17", month: "JUN", fullString: "Mon, 17 Jun" };
 
@@ -331,7 +330,6 @@ const parseDateParts = (dateStr: string) => {
   return { dayName: "DAY", dayNumber: "1", month: "JUN", fullString: cleanedStr };
 };
 
-// ✅ NEW HELPER — Validate coordinates coming from the order document
 const hasValidCoords = (lat: any, lng: any): boolean => {
   const nLat = Number(lat);
   const nLng = Number(lng);
@@ -342,16 +340,14 @@ const hasValidCoords = (lat: any, lng: any): boolean => {
   );
 };
 
-// ✅ NEW HELPER — Compact coordinate label (e.g. "12.97160, 77.59460")
 const formatCoordLabel = (lat: any, lng: any): string => {
   if (!hasValidCoords(lat, lng)) return '';
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 };
 
 // ==================================================================
-// ✅ NEW SHARED HELPER — Determine whether an order is TRULY fully
-// settled. Mirrors the exact same helper in admin/all-orders.tsx so
-// both screens stay perfectly in sync.
+// ✅ SHARED HELPER — Determine whether an order is TRULY fully
+// settled.
 // ==================================================================
 const computeIsFullySettled = (order: any): boolean => {
   if (!order) return false;
@@ -398,9 +394,7 @@ const computeIsFullySettled = (order: any): boolean => {
 };
 
 // ==================================================================
-// ✅ NEW HELPER — Compute the payment badge text + theme for the
-// chef delivery card. Shows ONLY payment state, never order status.
-// Mirrors the same helper in admin/all-orders.tsx.
+// ✅ SHARED HELPER — Compute the payment badge text + theme.
 // ==================================================================
 const computePaymentBadge = (
   order: any
@@ -437,7 +431,35 @@ const computePaymentBadge = (
     return { text: `Advance Paid ₹${advance}`, isSettled: false };
   }
 
-  return { text: 'Payment Settled', isSettled: true };
+  return { text: `Payment Settled ₹${total}`, isSettled: true };
+};
+
+// ==================================================================
+// ✅ NEW HELPER — Resolve the special instruction display data for
+// the chef order card. Returns { hasContent, tag, label, text,
+// displayLabel, displayText } where:
+//   • displayLabel falls back to "N/A" when nothing is set
+//   • displayText  falls back to "N/A" when nothing is set
+//   • hasContent is true only when at least one field is non-empty
+// ==================================================================
+const resolveOrderSpecialInstruction = (order: any) => {
+  const si = order?.specialInstruction || {};
+  const rawLabel = String(si?.label || '').trim();
+  const rawText = String(si?.text || '').trim();
+  const rawTag = String(si?.tag || '').trim();
+
+  const hasLabel = rawLabel.length > 0;
+  const hasText = rawText.length > 0;
+  const hasAny = hasLabel || hasText;
+
+  return {
+    hasContent: hasAny,
+    tag: rawTag,
+    label: rawLabel,
+    text: rawText,
+    displayLabel: hasLabel ? rawLabel : 'N/A',
+    displayText: hasText ? rawText : 'N/A',
+  };
 };
 
 // ─── DeliverySlotCountdownWidget ──────────────────────────────────
@@ -630,33 +652,32 @@ export default function AllOrdersScreen() {
   const [selectedOrderIndex, setSelectedOrderIndex] = useState<number>(0);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
 
-  // Status Dropdown Management State for parent order
   const [showStatusDropdown, setShowStatusDropdown] = useState<boolean>(false);
-
-  // Per-schedule inline dropdown tracker for mealbox orders
   const [activeScheduleDropdownDate, setActiveScheduleDropdownDate] = useState<string | null>(null);
-
-  // Ribbon blast animation trigger state
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
 
-  // Success animation states
   const successScaleAnim = useRef(new Animated.Value(1)).current;
   const successFadeAnim = useRef(new Animated.Value(1)).current;
 
-  // Heartbeat pulsing animation for active horizontal stepper icon
   const heartbeatAnim = useRef(new Animated.Value(1)).current;
 
-  // Price Description Expand/Collapse State
   const [isPriceExpanded, setIsPriceExpanded] = useState<boolean>(false);
   const chevronAnim = useRef(new Animated.Value(0)).current;
 
-  // Preview Modal States
+  // ✅ NEW: Bill summary modal state
+  const [showBillSummaryModal, setShowBillSummaryModal] = useState<boolean>(false);
+  const billSummaryAnim = useRef(new Animated.Value(400)).current;
+
+  // ✅ NEW: Special-instruction expandable row state (inside Order Summary card)
+  const [isSpecialInstructionExpanded, setIsSpecialInstructionExpanded] = useState<boolean>(false);
+  const specialInstructionChevronAnim = useRef(new Animated.Value(0)).current;
+
   const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>('');
   const sheetAnim = useRef(new Animated.Value(400)).current;
 
-  // ✅ Alarm snooze-cycle interval ref.
   const alarmIntervalRef = useRef<any>(null);
+  const alertedOrderIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     async function setupNotifications() {
@@ -708,9 +729,6 @@ export default function AllOrdersScreen() {
     }
   };
 
-  /* ─────────────────────────────────────────────────────────
-     ✅ Delegates to the shared singleton alarm controller.
-     ───────────────────────────────────────────────────────── */
   const startOrderAlarmSound = async () => {
     await startOrderAlarm();
   };
@@ -755,6 +773,44 @@ export default function AllOrdersScreen() {
     outputRange: ['0deg', '180deg'],
   });
 
+  // ✅ NEW: Toggle for the special-instruction expandable row
+  const toggleSpecialInstruction = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const toValue = isSpecialInstructionExpanded ? 0 : 1;
+    Animated.timing(specialInstructionChevronAnim, {
+      toValue,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+    setIsSpecialInstructionExpanded(!isSpecialInstructionExpanded);
+  };
+
+  const specialInstructionChevronRotation = specialInstructionChevronAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+
+  // ✅ NEW: Open / close bill summary modal
+  const openBillSummary = () => {
+    setShowBillSummaryModal(true);
+    billSummaryAnim.setValue(400);
+    Animated.timing(billSummaryAnim, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const closeBillSummary = () => {
+    Animated.timing(billSummaryAnim, {
+      toValue: 400,
+      duration: 250,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowBillSummaryModal(false);
+    });
+  };
+
   const fetchChefOrders = async () => {
     try {
       const res = await api.get('/api/orders/chef-orders');
@@ -763,15 +819,18 @@ export default function AllOrdersScreen() {
         const fetched = allFetched.filter((o: any) => o.isAdvanceVerified === true);
         setOrders(fetched);
 
-        const hasPendingOrder = fetched.find((o: any) => {
-          const status = String(o.orderStatus || 'Placed').toLowerCase();
-          const payment = String(o.paymentMethod || '').toLowerCase();
-          const fullySettled = computeIsFullySettled(o);
-          return status === 'placed' && payment === 'cod' && !fullySettled;
+        const newestUnseenOrder = fetched.find((o: any) => {
+          const orderId = String(o.orderId || '');
+          if (!orderId) return false;
+          return !alertedOrderIdsRef.current.has(orderId);
         });
 
-        if (hasPendingOrder) {
-          initAlarmCycleForPendingOrder(hasPendingOrder);
+        if (newestUnseenOrder) {
+          const orderId = String(newestUnseenOrder.orderId || '');
+          if (orderId) {
+            alertedOrderIdsRef.current.add(orderId);
+          }
+          initAlarmCycleForPendingOrder(newestUnseenOrder);
         } else {
           clearAlarmAndSnoozeCycle();
         }
@@ -784,7 +843,6 @@ export default function AllOrdersScreen() {
     }
   };
 
-  // Real-time Socket.io listeners for instantaneous order updates
   useEffect(() => {
     fetchChefOrders();
 
@@ -851,9 +909,9 @@ export default function AllOrdersScreen() {
             return [newOrder, ...prev];
           });
 
-          const status = String(newOrder.orderStatus || 'Placed').toLowerCase();
-          const payment = String(newOrder.paymentMethod || '').toLowerCase();
-          if (status === 'placed' && payment === 'cod') {
+          const orderId = String(newOrder.orderId || '');
+          if (orderId && !alertedOrderIdsRef.current.has(orderId)) {
+            alertedOrderIdsRef.current.add(orderId);
             initAlarmCycleForPendingOrder(newOrder);
           }
         }
@@ -926,6 +984,12 @@ export default function AllOrdersScreen() {
       }
     }
   }, [parsedSelections]);
+
+  // ✅ NEW: Reset the special-instruction expandable when switching orders
+  useEffect(() => {
+    setIsSpecialInstructionExpanded(false);
+    specialInstructionChevronAnim.setValue(0);
+  }, [activeOrder?.orderId]);
 
   const openPreviewSheet = (day?: string) => {
     if (day) {
@@ -1020,9 +1084,6 @@ export default function AllOrdersScreen() {
     currentStatus.toLowerCase() !== 'cancelled';
   const isCurrentOrderDelivered = currentStatus.toLowerCase() === 'delivered';
 
-  // ==================================================================
-  // ✅ FIX: Use the shared helper for the active order
-  // ==================================================================
   const isCashCollected = useMemo(
     () => computeIsFullySettled(activeOrder),
     [
@@ -1035,9 +1096,6 @@ export default function AllOrdersScreen() {
     ]
   );
 
-  // ==================================================================
-  // ✅ NEW: Payment badge for the active order
-  // ==================================================================
   const activePaymentBadge = useMemo(
     () => computePaymentBadge(activeOrder),
     [
@@ -1051,7 +1109,16 @@ export default function AllOrdersScreen() {
     ]
   );
 
-  // ✅ Derived balance amount that the chef should see
+  // ✅ NEW: Resolve the special-instruction display data for the active order.
+  const activeSpecialInstruction = useMemo(
+    () => resolveOrderSpecialInstruction(activeOrder),
+    [
+      activeOrder?.specialInstruction?.tag,
+      activeOrder?.specialInstruction?.label,
+      activeOrder?.specialInstruction?.text,
+    ]
+  );
+
   const displayedBalanceAmount = useMemo(() => {
     const bal = Number(activeOrder?.balanceAmountToCollect || 0);
     if (isCashCollected) return 0;
@@ -1066,7 +1133,21 @@ export default function AllOrdersScreen() {
     isCashCollected,
   ]);
 
-  // Resolved list of all upcoming delivery dates for mealbox
+  // ==================================================================
+  // ✅ NEW: Chef-acceptance gate detection.
+  //
+  // For QuickBites / Homemade ONLINE orders, chefAcceptedAt is null
+  // until the chef taps "Accept Order". Until then, we HIDE the
+  // hero card + stepper and show only the Accept + Decline buttons.
+  // ==================================================================
+  const serviceTypeLower = String(activeOrder?.serviceType || '').toLowerCase();
+  const isQuickBitesFlow = serviceTypeLower === 'quickbites';
+  const isChefGatedService = serviceTypeLower === 'quickbites' || serviceTypeLower === 'homemade';
+  const isChefGateRequired =
+    isChefGatedService && !isPaymentCod;
+  const chefHasAccepted = Boolean(activeOrder?.chefAcceptedAt);
+  const isWaitingForChefAcceptance = isChefGateRequired && !chefHasAccepted;
+
   const allMealboxSchedules: Array<{
     date: string;
     status: string;
@@ -1109,7 +1190,6 @@ export default function AllOrdersScreen() {
     });
   }, [isMealBoxFlow, activeOrder, customerAddress]);
 
-  // Dynamic delivered schedule determination for meal box widget
   const deliveredScheduleInfo = useMemo(() => {
     if (!isMealBoxFlow) return null;
     const deliveredItem = allMealboxSchedules.find((s) => s.status.toLowerCase() === 'delivered');
@@ -1168,7 +1248,7 @@ export default function AllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
-  const isQuickBitesFlow = useMemo(() => {
+  const isQuickBitesFlowLegacy = useMemo(() => {
     if (!activeOrder) return false;
     if (!isHomemadeFlow) return false;
     const flagSet =
@@ -1184,7 +1264,7 @@ export default function AllOrdersScreen() {
   }, [activeOrder?.deliveryWindowMinutes]);
 
   const quickBitesDateTime = useMemo(() => {
-    if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
+    if (!isQuickBitesFlowLegacy || !activeOrder?.estimatedDeliveryAt) return null;
     const d = new Date(activeOrder.estimatedDeliveryAt);
     if (isNaN(d.getTime())) return null;
 
@@ -1205,24 +1285,24 @@ export default function AllOrdersScreen() {
     const remainingMin = Math.max(0, Math.round(diffMs / (60 * 1000)));
 
     return { displayDate, timerDate, timeStr, remainingMin };
-  }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
+  }, [isQuickBitesFlowLegacy, activeOrder?.estimatedDeliveryAt]);
 
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    if (isQuickBitesFlow && quickBitesDateTime) {
+    if (isQuickBitesFlowLegacy && quickBitesDateTime) {
       return quickBitesDateTime.timerDate;
     }
     return String(activeOrder?.deliveryDate || '').trim();
   }, [
     activeOrder?.deliveryDate,
     isHomemadeFlow,
-    isQuickBitesFlow,
+    isQuickBitesFlowLegacy,
     quickBitesDateTime,
   ]);
 
   const homemadeDeliverySlotResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    if (isQuickBitesFlow && quickBitesDateTime) {
+    if (isQuickBitesFlowLegacy && quickBitesDateTime) {
       return `By ${quickBitesDateTime.timeStr}`;
     }
     return String(
@@ -1234,20 +1314,20 @@ export default function AllOrdersScreen() {
     activeOrder?.deliverySlot,
     activeOrder?.deliveryTimeSlot,
     isHomemadeFlow,
-    isQuickBitesFlow,
+    isQuickBitesFlowLegacy,
     quickBitesDateTime,
   ]);
 
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    if (isQuickBitesFlow && quickBitesDateTime) {
+    if (isQuickBitesFlowLegacy && quickBitesDateTime) {
       return quickBitesDateTime.displayDate;
     }
     return String(activeOrder?.deliveryDate || '').trim();
   }, [
     activeOrder?.deliveryDate,
     isHomemadeFlow,
-    isQuickBitesFlow,
+    isQuickBitesFlowLegacy,
     quickBitesDateTime,
   ]);
 
@@ -1283,14 +1363,14 @@ export default function AllOrdersScreen() {
               : '1 Meal / Day  •  6 Meals / Week'),
       planType:
         isHomemadeFlow
-          ? (isQuickBitesFlow ? '⚡ QuickBites' : 'Homemade Kitchen')
+          ? (isQuickBitesFlowLegacy ? '⚡ QuickBites' : 'Homemade Kitchen')
           : isCateringFlow
           ? `${activeOrder?.occasion || 'Catering'} Event`
           : activeOrder?.durationType || 'Meal Plan',
-      daysRange: isHomemadeFlow ? (isQuickBitesFlow ? 'Same Day Delivery' : 'Today') : activeOrder?.deliveryDate || activeOrder?.eventDate || 'Mon to Fri',
+      daysRange: isHomemadeFlow ? (isQuickBitesFlowLegacy ? 'Same Day Delivery' : 'Today') : activeOrder?.deliveryDate || activeOrder?.eventDate || 'Mon to Fri',
       timingDetails:
         isHomemadeFlow
-          ? (isQuickBitesFlow
+          ? (isQuickBitesFlowLegacy
               ? `Prepared & Delivered within ${quickBitesWindowMinutes} min`
               : 'Fast Prep & Delivery • 30–45 min')
           : activeOrder?.deliveryTimeSlot || activeOrder?.eventTime || 'Lunch Only  •  1 Meal / Day',
@@ -1442,17 +1522,34 @@ export default function AllOrdersScreen() {
     ]);
   };
 
+  // ✅ REVISED: Chef taps Accept Order. For QuickBites/Homemade online
+  // orders, this calls the NEW /chef-accept endpoint. For legacy
+  // flows, it falls back to the existing /status endpoint.
   const handleAcceptOrder = async () => {
     if (!activeOrder) return;
     try {
       setActionLoading(true);
       await clearAlarmAndSnoozeCycle();
-      await api.patch(`/api/orders/${activeOrder.orderId}/status`, { status: 'Accepted' });
+
+      if (isChefGateRequired) {
+        // ✅ Chef-gated flow: call the new chef-accept endpoint.
+        await api.patch(`/api/orders/${activeOrder.orderId}/chef-accept`);
+      } else {
+        // Legacy: reuse the status endpoint.
+        await api.patch(`/api/orders/${activeOrder.orderId}/status`, { status: 'Accepted' });
+      }
 
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setOrders((prev) =>
         prev.map((o, idx) =>
-          idx === selectedOrderIndex ? { ...o, orderStatus: 'Accepted' } : o
+          idx === selectedOrderIndex
+            ? {
+                ...o,
+                orderStatus: 'Accepted',
+                chefAcceptedAt: new Date().toISOString(),
+                chefAcceptedBy: 'chef',
+              }
+            : o
         )
       );
 
@@ -1509,7 +1606,6 @@ export default function AllOrdersScreen() {
     }
   };
 
-  // Dedicated handler to update live status of an individual scheduled date
   const handleUpdateIndividualScheduleStatus = async (dateStr: string, newStatus: string) => {
     if (!activeOrder || isCashCollected) return;
     setActiveScheduleDropdownDate(null);
@@ -1560,6 +1656,9 @@ export default function AllOrdersScreen() {
     parsedItems.length > 0 ||
     parsedAddons.length > 0;
 
+  // ==================================================================
+  // ✅ REVISED: 5 delivery stages only.
+  // ==================================================================
   const stepperStages = [
     { label: 'Accepted', icon: 'checkmark-outline', type: 'ionicons' },
     { label: 'Prep', icon: 'chef-hat', type: 'material' },
@@ -1568,11 +1667,6 @@ export default function AllOrdersScreen() {
     { label: 'Completed', icon: 'sparkles-outline', type: 'ionicons' },
   ];
 
-  // ==================================================================
-  // ✅ REVISED: Chef status dropdown shows ONLY the 5 delivery statuses.
-  // "Cash on Delivery Amount Collected" removed — cash collection is
-  // now implicit when order is marked "Delivered".
-  // ==================================================================
   const chefStatusDropdownOptions = [
     { label: 'Preparing', value: 'Preparing', icon: 'flame-outline' },
     { label: 'Prepared & Packing', value: 'Prepared & Packing', icon: 'cube-outline' },
@@ -1705,9 +1799,48 @@ export default function AllOrdersScreen() {
             </View>
           ) : (
             <>
-              {/* PERMANENT TICK MARK HERO BANNER & FULL LIVE HORIZONTAL STEPPER */}
-              {isCurrentOrderAccepted && (
+              {/* ==================================================================
+                  ✅ REVISED: HERO CARD is shown ONLY when the chef has
+                  accepted (chefAcceptedAt is set) OR when the chef-gate
+                  is not required (Catering / Mealbox / COD).
+                  For QuickBites/Homemade online orders BEFORE chef
+                  acceptance, we show the "Awaiting Chef Acceptance"
+                  card + Accept/Decline buttons instead.
+                  ================================================================== */}
+              {isCurrentOrderAccepted && !isWaitingForChefAcceptance && (
                 <View style={styles.successHeroCard}>
+                  <View
+                    style={[
+                      styles.heroCardPaymentBadge,
+                      activePaymentBadge.isSettled
+                        ? styles.heroCardPaymentBadgeSettled
+                        : styles.heroCardPaymentBadgePending,
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        activePaymentBadge.isSettled
+                          ? 'checkmark-circle'
+                          : isPaymentCod
+                          ? 'cash-outline'
+                          : 'time-outline'
+                      }
+                      size={12}
+                      color={activePaymentBadge.isSettled ? '#166348' : '#92400E'}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text
+                      style={[
+                        styles.heroCardPaymentBadgeText,
+                        activePaymentBadge.isSettled
+                          ? styles.heroCardPaymentBadgeTextSettled
+                          : styles.heroCardPaymentBadgeTextPending,
+                      ]}
+                    >
+                      {activePaymentBadge.text}
+                    </Text>
+                  </View>
+
                   <Animated.View
                     style={[
                       styles.successOuterGlowCircle,
@@ -1727,7 +1860,6 @@ export default function AllOrdersScreen() {
                     Order <Text style={styles.successHeroOrderId}>{orderData.orderId}</Text> is currently under live fulfillment.
                   </Text>
 
-                  {/* Top-level Status Switch for non-mealbox or overall status */}
                   {!isMealBoxFlow && (
                     <View style={styles.chefStatusSelectorBox}>
                       <Text style={styles.chefSelectorTitle}>Live Order Status:</Text>
@@ -1785,7 +1917,7 @@ export default function AllOrdersScreen() {
                     </View>
                   )}
 
-                  {/* ─── FULL 5-STAGE HORIZONTAL STEPPER ─── */}
+                  {/* ─── FULL 5-STAGE HORIZONTAL STEPPER (delivery only) ─── */}
                   <View style={styles.horizontalStepperContainer}>
                     {stepperStages.map((stage, idx) => {
                       const isPast = stepperActiveIndex > idx;
@@ -1835,8 +1967,60 @@ export default function AllOrdersScreen() {
                 </View>
               )}
 
-              {/* ✅ QUICK BITES SAME-DAY BANNER (only for QuickBites flow) */}
-              {isQuickBitesFlow && isCurrentOrderAccepted && (
+              {/* ==================================================================
+                  ✅ NEW: "Awaiting Chef Acceptance" hero card for QuickBites
+                  & Homemade ONLINE orders that the chef has NOT yet accepted.
+                  Shows only the paid amount + waiting message. NO stepper.
+                  ================================================================== */}
+              {isWaitingForChefAcceptance && (
+                <View style={styles.awaitingChefHeroCard}>
+                  <View
+                    style={[
+                      styles.heroCardPaymentBadge,
+                      activePaymentBadge.isSettled
+                        ? styles.heroCardPaymentBadgeSettled
+                        : styles.heroCardPaymentBadgePending,
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        activePaymentBadge.isSettled
+                          ? 'checkmark-circle'
+                          : 'time-outline'
+                      }
+                      size={12}
+                      color={activePaymentBadge.isSettled ? '#166348' : '#92400E'}
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text
+                      style={[
+                        styles.heroCardPaymentBadgeText,
+                        activePaymentBadge.isSettled
+                          ? styles.heroCardPaymentBadgeTextSettled
+                          : styles.heroCardPaymentBadgeTextPending,
+                      ]}
+                    >
+                      {activePaymentBadge.text}
+                    </Text>
+                  </View>
+
+                  <View style={styles.awaitingChefIconCircle}>
+                    <Ionicons name="restaurant-outline" size={32} color="#FFFFFF" />
+                  </View>
+
+                  <Text style={styles.awaitingChefTitle}>Awaiting Chef Acceptance</Text>
+                  <Text style={styles.awaitingChefSubtitle}>
+                    Customer has paid{' '}
+                    <Text style={styles.awaitingChefAmount}>
+                      ₹{totalAmountNum}
+                    </Text>
+                    . Tap <Text style={{ fontWeight: '900' }}>Accept Order</Text> to begin preparation.
+                  </Text>
+                </View>
+              )}
+
+              {/* ✅ QUICK BITES SAME-DAY BANNER (only when chef accepted) */}
+              {isQuickBitesFlowLegacy && isCurrentOrderAccepted && !isWaitingForChefAcceptance && (
                 <View style={styles.quickBitesBannerCard}>
                   <View style={styles.quickBitesBannerIconBox}>
                     <Ionicons name="flash" size={18} color="#FFFFFF" />
@@ -1858,8 +2042,7 @@ export default function AllOrdersScreen() {
                 </View>
               )}
 
-              {/* ATTRACTIVE SIMPLE TIMER CARD */}
-              {isCurrentOrderAccepted && (
+              {isCurrentOrderAccepted && !isWaitingForChefAcceptance && (
                 <DeliverySlotCountdownWidget
                   deliveryDate={orderData.deliveryDate}
                   timeSlot={orderData.deliveryTimeSlot}
@@ -1868,43 +2051,7 @@ export default function AllOrdersScreen() {
                 />
               )}
 
-              {/* ==================================================================
-                  ✅ REVISED: MAIN ORDER CARD — Top-right badge now shows
-                  ONLY the payment state. Order status moved to inline pill.
-                  ================================================================== */}
               <View style={styles.card}>
-                <View
-                  style={[
-                    styles.paymentBadgeTopRight,
-                    activePaymentBadge.isSettled
-                      ? styles.paymentBadgeTopRightSettled
-                      : styles.paymentBadgeTopRightPending,
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      activePaymentBadge.isSettled
-                        ? 'checkmark-circle'
-                        : isPaymentCod
-                        ? 'cash-outline'
-                        : 'time-outline'
-                    }
-                    size={12}
-                    color={activePaymentBadge.isSettled ? '#166348' : '#92400E'}
-                    style={{ marginRight: 4 }}
-                  />
-                  <Text
-                    style={[
-                      styles.paymentBadgeTopRightText,
-                      activePaymentBadge.isSettled
-                        ? styles.paymentBadgeTopRightTextSettled
-                        : styles.paymentBadgeTopRightTextPending,
-                    ]}
-                  >
-                    {activePaymentBadge.text}
-                  </Text>
-                </View>
-
                 <View style={styles.orderIdTopRow}>
                   <View style={{ flex: 1, paddingRight: 8 }}>
                     <Text style={styles.smallSectionLabel}>ORDER IDENTIFIER</Text>
@@ -1920,7 +2067,6 @@ export default function AllOrdersScreen() {
                     </View>
                   </View>
 
-                  {/* ✅ CHANGED: Order status is now a small inline pill */}
                   <View
                     style={[
                       styles.inlineOrderStatusPill,
@@ -1964,7 +2110,6 @@ export default function AllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 2. CUSTOMER PROFILE CARD */}
               <View style={styles.card}>
                 <Text style={styles.cardSectionHeading}>Customer Profile</Text>
 
@@ -1999,7 +2144,11 @@ export default function AllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 3. ORDER SUMMARY CARD */}
+              {/* ==================================================================
+                  ✅ ORDER SUMMARY CARD
+                  Includes the NEW Special Instructions expandable row.
+                  When both label & text are empty, we show "N/A".
+                  ================================================================== */}
               <View style={styles.card}>
                 <Text style={styles.cardSectionHeading}>Order Summary</Text>
 
@@ -2044,6 +2193,62 @@ export default function AllOrdersScreen() {
                   </View>
                 </View>
 
+                {/* ✅ NEW: Special Instructions expandable row */}
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={toggleSpecialInstruction}
+                  style={styles.specialInstructionRowHeader}
+                >
+                  <View style={styles.specialInstructionHeaderLeft}>
+                    <View style={styles.specialInstructionIconCircle}>
+                      <Feather name="file-text" size={13} color="#166348" />
+                    </View>
+                    <Text style={styles.specialInstructionHeaderTitle}>Special Instructions</Text>
+                    {activeSpecialInstruction.hasContent && (
+                      <View style={styles.specialInstructionDotIndicator} />
+                    )}
+                  </View>
+
+                  <View style={styles.specialInstructionHeaderRight}>
+                    <Text style={styles.specialInstructionPreviewText} numberOfLines={1}>
+                      {activeSpecialInstruction.hasContent
+                        ? (activeSpecialInstruction.label || activeSpecialInstruction.text || '')
+                        : 'N/A'}
+                    </Text>
+                    <Animated.View style={{ transform: [{ rotate: specialInstructionChevronRotation }] }}>
+                      <Ionicons name="chevron-down" size={14} color="#166348" />
+                    </Animated.View>
+                  </View>
+                </TouchableOpacity>
+
+                {isSpecialInstructionExpanded && (
+                  <View style={styles.specialInstructionExpandedBox}>
+                    <View style={styles.specialInstructionFieldRow}>
+                      <Text style={styles.specialInstructionFieldLabel}>Preference</Text>
+                      <Text
+                        style={[
+                          styles.specialInstructionFieldValue,
+                          !activeSpecialInstruction.hasContent && styles.specialInstructionFieldValueNA,
+                        ]}
+                      >
+                        {activeSpecialInstruction.displayLabel}
+                      </Text>
+                    </View>
+
+                    <View style={styles.specialInstructionFieldRow}>
+                      <Text style={styles.specialInstructionFieldLabel}>Chef Notes</Text>
+                      <Text
+                        style={[
+                          styles.specialInstructionFieldValue,
+                          !activeSpecialInstruction.hasContent && styles.specialInstructionFieldValueNA,
+                        ]}
+                      >
+                        {activeSpecialInstruction.displayText}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
                 {hasAnyItemsToPreview && (
                   <View style={styles.centeredPreviewContainer}>
                     <TouchableOpacity style={styles.previewMenuCenteredCTA} activeOpacity={0.85} onPress={() => openPreviewSheet()}>
@@ -2065,6 +2270,15 @@ export default function AllOrdersScreen() {
                   </View>
                   <Text style={styles.totalAmountValue}>{orderData.meal.totalAmount}</Text>
                 </View>
+
+                {/* ✅ NEW: View Details underlined link next to Total Amount */}
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={openBillSummary}
+                  style={styles.viewDetailsInlineBtn}
+                >
+                  <Text style={styles.viewDetailsInlineBtnText}>View Details</Text>
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   activeOpacity={0.7}
@@ -2139,7 +2353,6 @@ export default function AllOrdersScreen() {
                 )}
               </View>
 
-              {/* ─── MEALBOX ALL UPCOMING DELIVERIES SCHEDULER & STATUS CONTROLLER ─── */}
               {isMealBoxFlow && allMealboxSchedules.length > 0 && (
                 <View style={styles.card}>
                   <View style={styles.scheduleHeaderRow}>
@@ -2297,7 +2510,6 @@ export default function AllOrdersScreen() {
                 </View>
               )}
 
-              {/* 4. PRIMARY DELIVERY ADDRESS CARD */}
               <View style={styles.card}>
                 <View style={styles.addressRow}>
                   <View style={styles.addressLeftCol}>
@@ -2333,8 +2545,7 @@ export default function AllOrdersScreen() {
                 </View>
               </View>
 
-              {/* 5. RESPONSE TIMER BANNER */}
-              {!isCurrentOrderAccepted && (
+              {!isCurrentOrderAccepted && !isWaitingForChefAcceptance && (
                 <View style={styles.timerBannerCard}>
                   <View style={styles.timerIconCircle}>
                     <Feather name="clock" size={16} color="#D97706" />
@@ -2348,8 +2559,12 @@ export default function AllOrdersScreen() {
                 </View>
               )}
 
-              {/* 6. BOTTOM ACTIONS */}
-              {!isCurrentOrderAccepted && (
+              {/* ==================================================================
+                  ✅ REVISED: Bottom buttons shown when chef acceptance is
+                  needed — either the legacy "placed" flow OR the new
+                  QuickBites/Homemade online gate.
+                  ================================================================== */}
+              {(!isCurrentOrderAccepted || isWaitingForChefAcceptance) && (
                 <View style={styles.bottomButtonsRow}>
                   <TouchableOpacity
                     style={[styles.rejectBtn, actionLoading && { opacity: 0.6 }]}
@@ -2367,8 +2582,14 @@ export default function AllOrdersScreen() {
                     disabled={actionLoading}
                     activeOpacity={0.85}
                   >
-                    <Feather name="check" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
-                    <Text style={styles.acceptBtnText}>Accept Order</Text>
+                    {actionLoading ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Feather name="check" size={16} color="#FFFFFF" style={{ marginRight: 6 }} />
+                        <Text style={styles.acceptBtnText}>Accept Order</Text>
+                      </>
+                    )}
                   </TouchableOpacity>
                 </View>
               )}
@@ -2377,7 +2598,6 @@ export default function AllOrdersScreen() {
         </ScrollView>
       </View>
 
-      {/* SELECTIONS PREVIEW MODAL */}
       <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closePreviewSheet}>
         <BlurView intensity={35} tint="dark" style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closePreviewSheet} />
@@ -2399,7 +2619,7 @@ export default function AllOrdersScreen() {
               </Text>
               <Text style={styles.previewSubtitle}>
                 {isHomemadeFlow
-                  ? (isQuickBitesFlow
+                  ? (isQuickBitesFlowLegacy
                       ? `⚡ QuickBites • Same-day delivery within ${quickBitesWindowMinutes} min`
                       : 'All items cooked fresh for this order')
                   : isCateringFlow
@@ -2623,6 +2843,204 @@ export default function AllOrdersScreen() {
           </Animated.View>
         </BlurView>
       </Modal>
+
+      {/* ✅ NEW: Bill Summary Modal (opens from the "View Details" underlined link) */}
+      <Modal visible={showBillSummaryModal} transparent animationType="none" onRequestClose={closeBillSummary}>
+        <BlurView intensity={35} tint="dark" style={styles.modalOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeBillSummary} />
+
+          <Animated.View
+            style={[
+              styles.billSummaryModalContent,
+              { transform: [{ translateY: billSummaryAnim }] },
+            ]}
+          >
+            <View style={styles.drawerHandle} />
+            <TouchableOpacity style={styles.previewCloseBtn} onPress={closeBillSummary} activeOpacity={0.8}>
+              <Ionicons name="close" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            <View style={styles.billSummaryHeaderRow}>
+              <View style={styles.billSummaryIconCircle}>
+                <Feather name="file-text" size={20} color="#FFFFFF" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.billSummaryTitle}>Detailed Bill Summary</Text>
+                <Text style={styles.billSummarySubtitle}>
+                  Order {orderData.orderId}
+                </Text>
+              </View>
+            </View>
+
+            <ScrollView
+              style={{ width: '100%', marginTop: 12 }}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 20 }}
+            >
+              <View style={styles.billSummaryCard}>
+                {isCateringFlow && pricePerPlateNum > 0 && (
+                  <View style={styles.billSummaryRow}>
+                    <Text style={styles.billSummaryLabel}>Price Per Plate</Text>
+                    <Text style={styles.billSummaryValue}>₹{pricePerPlateNum}</Text>
+                  </View>
+                )}
+
+                {isCateringFlow && guestsCount > 0 && (
+                  <View style={styles.billSummaryRow}>
+                    <Text style={styles.billSummaryLabel}>Number of Guests</Text>
+                    <Text style={styles.billSummaryValue}>× {guestsCount}</Text>
+                  </View>
+                )}
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryLabel}>Base Subtotal</Text>
+                  <Text style={styles.billSummaryValue}>₹{subtotalNum}</Text>
+                </View>
+
+                {addonTotalCalculated > 0 && (
+                  <View style={styles.billSummaryRow}>
+                    <Text style={styles.billSummaryLabel}>Add-ons</Text>
+                    <Text style={styles.billSummaryValue}>+ ₹{addonTotalCalculated}</Text>
+                  </View>
+                )}
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryLabel}>Delivery & Kitchen</Text>
+                  <Text style={[styles.billSummaryValue, deliveryPriceNum === 0 && { color: '#166348', fontWeight: '900' }]}>
+                    {deliveryPriceNum === 0 ? 'FREE' : `+ ₹${deliveryPriceNum}`}
+                  </Text>
+                </View>
+
+                {discountNum > 0 && (
+                  <View style={styles.billSummaryRow}>
+                    <Text style={styles.billSummaryLabel}>
+                      Coupon Discount {couponAppliedCode ? `(${couponAppliedCode})` : ''}
+                    </Text>
+                    <Text style={[styles.billSummaryValue, { color: '#166348' }]}>
+                      - ₹{discountNum}
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryLabel}>Taxes (GST Included)</Text>
+                  <Text style={styles.billSummaryValue}>₹0.00</Text>
+                </View>
+
+                <View style={styles.billSummaryDivider} />
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryTotalLabel}>Total Amount</Text>
+                  <Text style={styles.billSummaryTotalValue}>₹{totalAmountNum}</Text>
+                </View>
+
+                <View style={styles.billSummaryDivider} />
+
+                <View style={styles.billSummaryRow}>
+                  <Text style={styles.billSummaryLabel}>
+                    {isPaymentCod ? 'Cash on Delivery' : 'Paid Online'}
+                  </Text>
+                  <Text style={styles.billSummaryValue}>
+                    {isPaymentCod
+                      ? `₹${isCashCollected ? totalAmountNum : 0}`
+                      : `₹${totalAmountNum}`}
+                  </Text>
+                </View>
+
+                {!isPaymentCod && activeOrder?.advancePaidAmount > 0 && activeOrder?.balanceAmountToCollect > 0 && (
+                  <>
+                    <View style={styles.billSummaryRow}>
+                      <Text style={styles.billSummaryLabel}>Advance Paid</Text>
+                      <Text style={styles.billSummaryValue}>₹{activeOrder.advancePaidAmount}</Text>
+                    </View>
+                    <View style={styles.billSummaryRow}>
+                      <Text style={styles.billSummaryLabel}>Balance Pending</Text>
+                      <Text style={[styles.billSummaryValue, { color: '#D97706', fontWeight: '800' }]}>
+                        ₹{displayedBalanceAmount}
+                      </Text>
+                    </View>
+                  </>
+                )}
+
+                <View style={styles.billSummaryDivider} />
+
+                {/* ✅ NEW: Special Instructions block inside Bill Summary */}
+                <View style={styles.billSummarySpecialInstructionBlock}>
+                  <View style={styles.billSummarySpecialInstructionHeader}>
+                    <Feather name="file-text" size={14} color="#166348" />
+                    <Text style={styles.billSummarySpecialInstructionTitle}>Special Instructions</Text>
+                  </View>
+                  <View style={styles.billSummarySpecialInstructionRow}>
+                    <Text style={styles.billSummarySpecialInstructionLabel}>Preference</Text>
+                    <Text
+                      style={[
+                        styles.billSummarySpecialInstructionValue,
+                        !activeSpecialInstruction.hasContent && styles.billSummarySpecialInstructionValueNA,
+                      ]}
+                    >
+                      {activeSpecialInstruction.displayLabel}
+                    </Text>
+                  </View>
+                  <View style={styles.billSummarySpecialInstructionRow}>
+                    <Text style={styles.billSummarySpecialInstructionLabel}>Chef Notes</Text>
+                    <Text
+                      style={[
+                        styles.billSummarySpecialInstructionValue,
+                        !activeSpecialInstruction.hasContent && styles.billSummarySpecialInstructionValueNA,
+                      ]}
+                    >
+                      {activeSpecialInstruction.displayText}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.billSummaryDivider} />
+
+                <View style={styles.billSummaryPaymentStrip}>
+                  <Text style={styles.billSummaryPaymentLabel}>Payment Method</Text>
+                  <View
+                    style={[
+                      styles.billSummaryPaymentPill,
+                      isCashCollected
+                        ? styles.billSummaryPaymentPillGreen
+                        : isPaymentCod
+                        ? styles.billSummaryPaymentPillAmber
+                        : styles.billSummaryPaymentPillGreen,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.billSummaryPaymentPillText,
+                        isCashCollected
+                          ? styles.billSummaryPaymentPillTextGreen
+                          : isPaymentCod
+                          ? styles.billSummaryPaymentPillTextAmber
+                          : styles.billSummaryPaymentPillTextGreen,
+                      ]}
+                    >
+                      {isCashCollected
+                        ? 'Cash Collected (Paid)'
+                        : isPaymentCod
+                        ? 'Cash on Delivery'
+                        : 'Online Paid'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalAbsoluteFooterCTAWrapper}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={closeBillSummary}
+                style={styles.modalAbsoluteFooterCTAButtonSolid}
+              >
+                <Text style={styles.modalAbsoluteFooterCTAButtonSolidText}>Close Summary</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </BlurView>
+      </Modal>
     </View>
   );
 }
@@ -2806,7 +3224,105 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 12,
     elevation: 3,
+    position: 'relative',
+    overflow: 'hidden',
   },
+  heroCardPaymentBadge: {
+    position: 'absolute',
+    top: -1,
+    right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderTopWidth: 0,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    borderWidth: 1,
+    zIndex: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  heroCardPaymentBadgeSettled: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  heroCardPaymentBadgePending: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  heroCardPaymentBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  heroCardPaymentBadgeTextSettled: {
+    color: '#166348',
+  },
+  heroCardPaymentBadgeTextPending: {
+    color: '#92400E',
+  },
+
+  // ✅ NEW: Awaiting Chef Acceptance hero card (for QuickBites/Homemade online)
+  awaitingChefHeroCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 20,
+    alignItems: 'center',
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  awaitingChefIconCircle: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#D97706',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+    borderWidth: 4,
+    borderColor: 'rgba(217, 119, 6, 0.12)',
+    shadowColor: '#D97706',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  awaitingChefTitle: {
+    fontSize: 19,
+    fontWeight: '900',
+    color: '#0F172A',
+    marginBottom: 8,
+    letterSpacing: -0.3,
+    textAlign: 'center',
+  },
+  awaitingChefSubtitle: {
+    fontSize: 13.5,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 20,
+    paddingHorizontal: 10,
+    fontWeight: '500',
+  },
+  awaitingChefAmount: {
+    color: '#166348',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+
   successOuterGlowCircle: {
     width: 76,
     height: 76,
@@ -3429,49 +3945,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  // ✅ NEW: payment badge top-right
-  paymentBadgeTopRight: {
-    position: 'absolute',
-    top: -1,
-    right: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderTopWidth: 0,
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
-    borderWidth: 1,
-    zIndex: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  paymentBadgeTopRightSettled: {
-    backgroundColor: '#DCFCE7',
-    borderColor: '#86EFAC',
-  },
-  paymentBadgeTopRightPending: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#FDE68A',
-  },
-  paymentBadgeTopRightText: {
-    fontSize: 10.5,
-    fontWeight: '900',
-    letterSpacing: 0.2,
-  },
-  paymentBadgeTopRightTextSettled: {
-    color: '#166348',
-  },
-  paymentBadgeTopRightTextPending: {
-    color: '#92400E',
-  },
-
-  // ✅ NEW: inline order status pill
   inlineOrderStatusPill: {
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -3783,6 +4256,97 @@ const styles = StyleSheet.create({
     marginHorizontal: 10,
   },
 
+  // ✅ NEW: Special Instruction expandable row (inside Order Summary)
+  specialInstructionRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  specialInstructionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  specialInstructionIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#F0FDF4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  specialInstructionHeaderTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.1,
+  },
+  specialInstructionDotIndicator: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#166348',
+    marginLeft: 4,
+  },
+  specialInstructionHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '48%',
+  },
+  specialInstructionPreviewText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#475569',
+    flexShrink: 1,
+  },
+  specialInstructionExpandedBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+    gap: 8,
+  },
+  specialInstructionFieldRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  specialInstructionFieldLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.2,
+    minWidth: 90,
+  },
+  specialInstructionFieldValue: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A',
+    flex: 1,
+    textAlign: 'right',
+    lineHeight: 17,
+  },
+  specialInstructionFieldValueNA: {
+    color: '#94A3B8',
+    fontStyle: 'italic',
+    fontWeight: '600',
+  },
+
   centeredPreviewContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -3825,6 +4389,21 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#166348',
   },
+
+  // ✅ NEW: "View Details" underlined inline button
+  viewDetailsInlineBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingVertical: 2,
+  },
+  viewDetailsInlineBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#166348',
+    textDecorationLine: 'underline',
+    letterSpacing: 0.1,
+  },
+
   simpleInlineToggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4329,5 +4908,169 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+
+  // ✅ NEW: Bill Summary Modal Styles
+  billSummaryModalContent: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    maxHeight: '82%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    elevation: 25,
+  },
+  billSummaryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+    paddingRight: 40,
+  },
+  billSummaryIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#166348',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  billSummaryTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -0.3,
+  },
+  billSummarySubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  billSummaryCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  billSummaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  billSummaryLabel: {
+    fontSize: 13,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  billSummaryValue: {
+    fontSize: 13.5,
+    color: '#0F172A',
+    fontWeight: '700',
+  },
+  billSummaryDivider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 10,
+  },
+  billSummaryTotalLabel: {
+    fontSize: 15.5,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  billSummaryTotalValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#166348',
+  },
+  billSummaryPaymentStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  billSummaryPaymentLabel: {
+    fontSize: 12.5,
+    color: '#64748B',
+    fontWeight: '700',
+  },
+  billSummaryPaymentPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  billSummaryPaymentPillGreen: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  billSummaryPaymentPillAmber: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#FDE68A',
+  },
+  billSummaryPaymentPillText: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  billSummaryPaymentPillTextGreen: {
+    color: '#166348',
+  },
+  billSummaryPaymentPillTextAmber: {
+    color: '#92400E',
+  },
+
+  // ✅ NEW: Bill Summary Special Instruction Block
+  billSummarySpecialInstructionBlock: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  billSummarySpecialInstructionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  billSummarySpecialInstructionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0F172A',
+    letterSpacing: -0.1,
+  },
+  billSummarySpecialInstructionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  billSummarySpecialInstructionLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#64748B',
+    minWidth: 90,
+  },
+  billSummarySpecialInstructionValue: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A',
+    flex: 1,
+    textAlign: 'right',
+    lineHeight: 17,
+  },
+  billSummarySpecialInstructionValueNA: {
+    color: '#94A3B8',
+    fontStyle: 'italic',
+    fontWeight: '600',
   },
 });

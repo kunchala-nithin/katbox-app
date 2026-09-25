@@ -151,26 +151,105 @@ const isHomemadeLikeService = (serviceType: string): boolean => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Normalize the incoming special-instruction payload
+   into a consistent { tag, label, text } shape.
+
+   Accepts any of these input shapes (order of priority top-to-bottom):
+     • body.specialInstruction = { tag, label, text }
+     • body.orderDetails.specialInstruction = { tag, label, text }
+     • body.specialInstructionTag / specialInstructionLabel / specialInstructionText
+     • body.orderDetails.instructionTag / selectedSpice / chefNotes / notes
+
+   Always returns an object with all three string fields (may be "").
+   ───────────────────────────────────────────────────────────────── */
+const resolveSpecialInstruction = (body: any) => {
+  const od = body?.orderDetails || {};
+  const direct = body?.specialInstruction || od?.specialInstruction || {};
+
+  const tag = String(
+    direct.tag ??
+    body?.specialInstructionTag ??
+    od?.instructionTag ??
+    od?.selectedSpice ??
+    ""
+  ).trim();
+
+  const label = String(
+    direct.label ??
+    body?.specialInstructionLabel ??
+    od?.specialInstructionLabel ??
+    ""
+  ).trim();
+
+  const text = String(
+    direct.text ??
+    body?.specialInstructionText ??
+    od?.specialInstructionText ??
+    od?.chefNotes ??
+    od?.notes ??
+    ""
+  ).trim();
+
+  return { tag, label, text };
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Resolve the special instruction for an order.
+   Priority:
+     1. Explicit payload (req.body)
+     2. Nested orderDetails
+     3. Fallback lookup on the source Cart document (when cartId
+        or cart exists — mainly for homemade/quickbites/mealbox flows
+        where the cart was created separately)
+     4. Empty defaults
+   ───────────────────────────────────────────────────────────────── */
+const resolveSpecialInstructionWithCart = async (
+  body: any,
+  cartDoc: any
+): Promise<{ tag: string; label: string; text: string }> => {
+  const fromBody = resolveSpecialInstruction(body);
+
+  // If the body already carried a fully-populated instruction, use it.
+  if (fromBody.tag || fromBody.label || fromBody.text) {
+    return fromBody;
+  }
+
+  // Otherwise, fall back to whatever the cart had persisted.
+  if (cartDoc && cartDoc.specialInstruction) {
+    return {
+      tag: String(cartDoc.specialInstruction.tag || "").trim(),
+      label: String(cartDoc.specialInstruction.label || "").trim(),
+      text: String(cartDoc.specialInstruction.text || "").trim(),
+    };
+  }
+
+  return { tag: "", label: "", text: "" };
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ HELPER — Determine whether this order requires the chef's
+   explicit acceptance before the stepper appears.
+
+   RULE (per business spec):
+     • QuickBites + Homemade ONLINE orders → chef must explicitly
+       tap "Accept Order". Until then, orderStatus stays "Accepted"
+       (admin sees it as accepted), but the chef UI gates the
+       stepper behind chefAcceptedAt.
+     • Catering / Mealbox / any COD order → chef acceptance gate
+       is bypassed (the legacy flow remains).
+   ───────────────────────────────────────────────────────────────── */
+const requiresChefAcceptanceGate = (
+  serviceType: string,
+  paymentMethod: string
+): boolean => {
+  const s = String(serviceType || "").toLowerCase();
+  const p = String(paymentMethod || "").toLowerCase();
+  return (s === "homemade" || s === "quickbites") && p === "online";
+};
+
+/* ─────────────────────────────────────────────────────────────────
    ✅ HELPER — Build the initial orderStatus for a freshly-created
    order based on service type and payment method.
-
-   ✅ REVISED BUSINESS RULE:
-     • Any ONLINE-paid order (Cashfree success) is AUTO-ACCEPTED
-       immediately. The chef is notified right away — the admin does
-       NOT need to tap "Accept".
-         → orderStatus = "Accepted"
-         → adminAcceptedAt = orderPlacedAt
-         → adminAcceptedBy = "system:cashfree"
-
-     • Any COD order (Homemade/QuickBites only) starts as "Placed"
-       and waits for the ADMIN to accept. The chef is NOT notified
-       until the admin accepts.
-         → orderStatus = "Placed"
-         → adminAcceptedAt = null
-         → adminAcceptedBy = ""
-
-   The `autoAccepted` boolean returned by this helper tells the
-   caller whether it should immediately notify the chef.
    ───────────────────────────────────────────────────────────────── */
 const buildInitialStatuses = (
   serviceType: string,
@@ -188,7 +267,6 @@ const buildInitialStatuses = (
   const isOnline = String(paymentMethod || "").toLowerCase() === "online";
 
   if (isAdvance) {
-    // Catering / Mealbox — always online (Cashfree advance), auto-accept.
     if (isOnline && advancePaidAmount > 0) {
       return {
         orderStatus: "Accepted",
@@ -197,7 +275,6 @@ const buildInitialStatuses = (
         autoAccepted: true,
       };
     }
-    // Fallback (should not happen in the new flow)
     return {
       orderStatus: "Placed",
       paymentStatus: "Verification Pending",
@@ -208,7 +285,6 @@ const buildInitialStatuses = (
 
   if (isHomemadeLike) {
     if (isOnline) {
-      // Homemade / QuickBites online — auto-accept (paid in full).
       return {
         orderStatus: "Accepted",
         paymentStatus: "Paid",
@@ -216,7 +292,6 @@ const buildInitialStatuses = (
         autoAccepted: true,
       };
     }
-    // COD — wait for admin acceptance.
     return {
       orderStatus: "Placed",
       paymentStatus: "Payment Pending (COD)",
@@ -225,7 +300,6 @@ const buildInitialStatuses = (
     };
   }
 
-  // Fallback for unknown service types
   return {
     orderStatus: "Placed",
     paymentStatus: "Verification Pending",
@@ -255,7 +329,6 @@ const uploadBufferToCloudinary = (fileBuffer: Buffer) => {
 
 /* ─────────────────────────────────────────────────────────────────
    ✅ Wrapper delegating to the centralized `sendExpoPush` helper.
-   Uses the OS default sound (NOT the alarm).
    ───────────────────────────────────────────────────────────────── */
 const sendExpoPushNotification = async (
   pushToken: string,
@@ -449,6 +522,49 @@ const notifyChefAboutOrder = async (order: any) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ HELPER — Notify ALL admins about a new order via push
+   with the alarm sound.
+   ───────────────────────────────────────────────────────────────── */
+const notifyAdminsAboutOrder = async (order: any, isAutoAccepted: boolean) => {
+  try {
+    const admins = await User.find({
+      isAdmin: true,
+      pushToken: { $exists: true, $ne: "" },
+    }).select("pushToken name");
+
+    const validAdmins = admins.filter((a: any) =>
+      isValidExpoToken(a.pushToken)
+    );
+
+    if (validAdmins.length > 0) {
+      const adminPayloads = validAdmins.map((admin: any) => ({
+        token: String(admin.pushToken),
+        title: `🚨 New Order ${order.orderId}`,
+        body: isAutoAccepted
+          ? `${order.userName || "A customer"} paid ₹${order.totalAmount}. Order auto-accepted — chef notified.`
+          : `${order.userName || "A customer"} placed a COD order of ₹${order.totalAmount}. Tap to review & accept.`,
+        data: {
+          orderId: order.orderId,
+          screen: "admin-orders",
+          role: "admin",
+        },
+        sound: ORDER_ALARM_SOUND,
+        channelId: ADMIN_ORDER_CHANNEL_ID,
+        priority: "max" as const,
+        vibrate: [0, 600, 300, 600, 300],
+      }));
+
+      await sendExpoPushBatch(adminPayloads);
+      console.log(
+        `[notifyAdminsAboutOrder] Sent admin alarm push to ${validAdmins.length} admin(s)`
+      );
+    }
+  } catch (adminPushErr) {
+    console.log("Admin push notification error:", adminPushErr);
+  }
+};
+
 // Background cron reminder for feedbacks
 setInterval(async () => {
   try {
@@ -497,27 +613,6 @@ setInterval(async () => {
 
 /**
  * POST /api/orders/create
- *
- * ✅ REVISED (Auto-Accept for Cashfree payments):
- *
- * 1) ONLINE-PAID ORDERS (Cashfree success) ARE AUTO-ACCEPTED:
- *    Regardless of service type, when the Cashfree payment succeeds:
- *      → orderStatus = "Accepted"
- *      → adminAcceptedAt = now
- *      → adminAcceptedBy = "system:cashfree"
- *      → CHEF IS NOTIFIED IMMEDIATELY (alarm push + socket)
- *    This applies to:
- *      • Catering / Mealbox  (45% advance paid)
- *      • Homemade / QuickBites (100% paid online)
- *
- * 2) COD ORDERS (Homemade / QuickBites only) STILL WAIT FOR ADMIN:
- *      → orderStatus = "Placed"
- *      → adminAcceptedAt = null
- *      → chef is NOT notified until the admin taps "Accept"
- *
- * 3) ADMIN ALARM STILL FIRES:
- *    Every admin always receives the alarm push on new orders
- *    (whether online or COD) so they know an order has arrived.
  */
 export const createOrder = async (req: AuthRequest, res: Response) => {
   try {
@@ -594,9 +689,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       ""
     );
 
+    // ✅ NEW: Track the resolved source Cart document (if any) so we can
+    //    fall back to its persisted specialInstruction when the request
+    //    body doesn't carry one directly.
+    let resolvedSourceCart: any = null;
+
     if (finalUserId && mongoose.Types.ObjectId.isValid(finalUserId)) {
-      if (!finalUserPhone || !finalAlternatePhone) {
-        let userCart = null;
+      if (!finalUserPhone || !finalAlternatePhone || !resolvedSourceCart) {
+        let userCart: any = null;
         if (cartId && mongoose.Types.ObjectId.isValid(cartId)) {
           userCart = await Cart.findById(cartId);
         }
@@ -605,6 +705,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         }
 
         if (userCart) {
+          resolvedSourceCart = userCart;
           if (!finalUserPhone) {
             finalUserPhone = String(userCart.userPhone || userCart.orderDetails?.contactPhone || "");
           }
@@ -648,6 +749,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     const numericTotal = Number(totalAmount) || 0;
     const finalAdvance = advancePaidAmount !== undefined ? Number(advancePaidAmount) : Math.round(numericTotal * 0.45 * 100) / 100;
     const finalBalance = balanceAmountToCollect !== undefined ? Number(balanceAmountToCollect) : Math.round((numericTotal - finalAdvance) * 100) / 100;
+
+    // ✅ NEW: Resolve the special-instruction payload for ALL service types.
+    //    Priority: explicit body → nested orderDetails → source cart.
+    const resolvedSpecialInstruction = await resolveSpecialInstructionWithCart(
+      req.body,
+      resolvedSourceCart
+    );
 
     let resolvedChefPhone = "";
     try {
@@ -713,9 +821,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     }
 
     // ────────────────────────────────────────────────────────────────
-    // ✅ REVISED: Compute initial statuses. Online payments are now
-    // AUTO-ACCEPTED (orderStatus = "Accepted"). COD orders stay "Placed"
-    // and wait for admin acceptance.
+    // ✅ Compute initial statuses. Online payments auto-accepted.
     // ────────────────────────────────────────────────────────────────
     const incomingPaymentMethod = String(paymentMethod || "").toLowerCase();
     const initialStatuses = buildInitialStatuses(
@@ -728,11 +834,15 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     const isOnline = incomingPaymentMethod === "online";
     const isAutoAccepted = initialStatuses.autoAccepted;
 
-    // Compute the admin-acceptance timestamps:
-    //   • Auto-accepted (online) → adminAcceptedAt = orderPlacedAt
-    //   • COD                    → null (waits for real admin)
     const resolvedAdminAcceptedAt = isAutoAccepted ? orderPlacedAt : null;
     const resolvedAdminAcceptedBy = isAutoAccepted ? "system:cashfree" : "";
+
+    const requiresChefGate = requiresChefAcceptanceGate(
+      resolvedServiceType,
+      incomingPaymentMethod
+    );
+    const resolvedChefAcceptedAt = requiresChefGate ? null : orderPlacedAt;
+    const resolvedChefAcceptedBy = requiresChefGate ? "" : "system";
 
     const statusAdvancedPaidAt =
       isAdvanceBasedService(resolvedServiceType) && isOnline && finalAdvance > 0
@@ -812,15 +922,22 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         orderStatus: initialStatuses.orderStatus,
         statusAdvancedPaidAt: null,
         fullPaymentPaidAt: fullPaymentPaidAt,
-        // ✅ Auto-accepted for online; null for COD
         adminAcceptedAt: resolvedAdminAcceptedAt,
         adminAcceptedBy: resolvedAdminAcceptedBy,
+        chefAcceptedAt: resolvedChefAcceptedAt,
+        chefAcceptedBy: resolvedChefAcceptedBy,
+
+        // ✅ NEW: Persist the resolved special-instruction object
+        specialInstruction: resolvedSpecialInstruction,
+
         statusTimeline: [
           {
             status: initialStatuses.orderStatus,
             timestamp: orderPlacedAt,
             note: isAutoAccepted
-              ? "Online payment confirmed — order auto-accepted and chef notified"
+              ? requiresChefGate
+                ? "Online payment confirmed — order auto-accepted at admin level; awaiting chef acceptance"
+                : "Online payment confirmed — order auto-accepted and chef notified"
               : "COD order placed — awaiting admin acceptance",
           },
         ],
@@ -876,9 +993,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         orderStatus: initialStatuses.orderStatus,
         statusAdvancedPaidAt: statusAdvancedPaidAt,
         fullPaymentPaidAt: null,
-        // ✅ Auto-accepted for online; null for COD
         adminAcceptedAt: resolvedAdminAcceptedAt,
         adminAcceptedBy: resolvedAdminAcceptedBy,
+        chefAcceptedAt: resolvedChefAcceptedAt,
+        chefAcceptedBy: resolvedChefAcceptedBy,
+
+        // ✅ NEW: Persist the resolved special-instruction object
+        specialInstruction: resolvedSpecialInstruction,
+
         statusTimeline: [
           {
             status: initialStatuses.orderStatus,
@@ -949,9 +1071,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         orderStatus: initialStatuses.orderStatus,
         statusAdvancedPaidAt: statusAdvancedPaidAt,
         fullPaymentPaidAt: null,
-        // ✅ Auto-accepted for online; null for COD
         adminAcceptedAt: resolvedAdminAcceptedAt,
         adminAcceptedBy: resolvedAdminAcceptedBy,
+        chefAcceptedAt: resolvedChefAcceptedAt,
+        chefAcceptedBy: resolvedChefAcceptedBy,
+
+        // ✅ NEW: Persist the resolved special-instruction object
+        specialInstruction: resolvedSpecialInstruction,
+
         statusTimeline: [
           {
             status: initialStatuses.orderStatus,
@@ -994,13 +1121,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     }
 
     // ────────────────────────────────────────────────────────────────
-    // ✅ Socket + push notifications
-    //
-    // Customer gets a confirmation push.
-    // Admin gets the alarm push (always — online or COD).
-    // Chef is notified IMMEDIATELY if the order was auto-accepted
-    //   (i.e. Cashfree payment succeeded); otherwise the chef is
-    //   notified later via `acceptOrderByAdmin`.
+    // Socket + push notifications
     // ────────────────────────────────────────────────────────────────
     try {
       if (finalUserId) {
@@ -1032,51 +1153,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
       io.emit("new_order_placed", savedOrder);
 
-      // Notify every admin with the alarm sound (always)
-      try {
-        const admins = await User.find({
-          isAdmin: true,
-          pushToken: { $exists: true, $ne: "" },
-        }).select("pushToken name");
+      await notifyAdminsAboutOrder(savedOrder, isAutoAccepted);
 
-        const validAdmins = admins.filter((a: any) =>
-          isValidExpoToken(a.pushToken)
-        );
-
-        if (validAdmins.length > 0) {
-          const adminPayloads = validAdmins.map((admin: any) => ({
-            token: String(admin.pushToken),
-            title: `🚨 New Order ${savedOrder.orderId}`,
-            body: isAutoAccepted
-              ? `${savedOrder.userName || "A customer"} paid ₹${savedOrder.totalAmount}. Order auto-accepted.`
-              : `${savedOrder.userName || "A customer"} placed a COD order of ₹${savedOrder.totalAmount}. Tap to review & accept.`,
-            data: {
-              orderId: savedOrder.orderId,
-              screen: "admin-orders",
-              role: "admin",
-            },
-            sound: ORDER_ALARM_SOUND,
-            channelId: ADMIN_ORDER_CHANNEL_ID,
-            priority: "max" as const,
-            vibrate: [0, 600, 300, 600, 300],
-          }));
-
-          await sendExpoPushBatch(adminPayloads);
-          console.log(
-            `[createOrder] Sent admin alarm push to ${validAdmins.length} admin(s)`
-          );
-        }
-      } catch (adminPushErr) {
-        console.log("Admin push notification error:", adminPushErr);
-      }
-
-      // ✅ Notify the chef IMMEDIATELY if the order was auto-accepted
-      //    (Cashfree success). For COD orders, the chef will be
-      //    notified later via `/admin-accept`.
       if (isAutoAccepted && savedOrder) {
         await notifyChefAboutOrder(savedOrder);
         console.log(
-          `[createOrder] Auto-notified chef for order ${savedOrder.orderId} (Cashfree success)`
+          `[createOrder] Notified chef for order ${savedOrder.orderId} (auto-accepted=${
+            isAutoAccepted
+          }, chefGate=${requiresChefGate})`
         );
       }
     } catch (e) {
@@ -1086,7 +1170,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     return res.status(201).json({
       success: true,
       message: isAutoAccepted
-        ? "Order placed successfully. Payment received and chef notified."
+        ? requiresChefGate
+          ? "Order placed successfully. Awaiting chef acceptance."
+          : "Order placed successfully. Payment received and chef notified."
         : "Order placed successfully. Awaiting admin acceptance.",
       order: savedOrder,
     });
@@ -1102,19 +1188,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
 /**
  * PATCH /api/orders/:orderId/admin-accept
- *
- * ✅ NEW ENDPOINT — used primarily for COD orders.
- *
- * When the admin taps "Accept" on a COD order, this endpoint:
- *   1) Sets `adminAcceptedAt = now` and `adminAcceptedBy = <adminId>`.
- *   2) Moves orderStatus from "Placed" to "Accepted".
- *   3) Appends a status timeline entry.
- *   4) Notifies the assigned CHEF (alarm push + `new_chef_order`).
- *   5) Emits `order_updated` so all UIs refresh.
- *   6) Sends a customer-facing "Order Accepted" push.
- *
- * NOTE: This endpoint is idempotent — calling it on an already-accepted
- * order is a no-op (returns success).
  */
 export const acceptOrderByAdmin = async (req: AuthRequest, res: Response) => {
   try {
@@ -1147,6 +1220,12 @@ export const acceptOrderByAdmin = async (req: AuthRequest, res: Response) => {
     order.adminAcceptedAt = now;
     order.adminAcceptedBy = String(rawAdminId || "");
     order.orderStatus = "Accepted";
+
+    if (!order.chefAcceptedAt) {
+      (order as any).chefAcceptedAt = now;
+      (order as any).chefAcceptedBy = "system:admin-accept";
+    }
+
     order.statusTimeline = order.statusTimeline || [];
     order.statusTimeline.push({
       status: "Accepted",
@@ -1156,10 +1235,8 @@ export const acceptOrderByAdmin = async (req: AuthRequest, res: Response) => {
 
     const updatedOrder = await order.save();
 
-    // ✅ Notify the chef
     await notifyChefAboutOrder(updatedOrder);
 
-    // Emit order_updated so admin & customer UIs refresh
     try {
       io.emit("order_updated", updatedOrder);
       io.emit("order_status_updated", updatedOrder);
@@ -1171,7 +1248,6 @@ export const acceptOrderByAdmin = async (req: AuthRequest, res: Response) => {
       console.log("Socket emit warning (admin-accept):", e);
     }
 
-    // Customer-facing "Order Accepted" push
     try {
       if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
         const customerDoc = await User.findById(updatedOrder.userId);
@@ -1208,12 +1284,105 @@ export const acceptOrderByAdmin = async (req: AuthRequest, res: Response) => {
 };
 
 /**
+ * PATCH /api/orders/:orderId/chef-accept
+ */
+export const chefAcceptOrder = async (req: AuthRequest, res: Response) => {
+  try {
+    const rawChefUserId = req.user?.userId || req.user?._id || req.user?.id;
+    const { orderId } = req.params;
+
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const currentStatus = String(order.orderStatus || "").toLowerCase();
+
+    if (currentStatus === "cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "Cancelled orders cannot be accepted.",
+      });
+    }
+
+    if ((order as any).chefAcceptedAt) {
+      return res.status(200).json({
+        success: true,
+        message: "Order already accepted by chef.",
+        order,
+      });
+    }
+
+    const now = new Date();
+    (order as any).chefAcceptedAt = now;
+    (order as any).chefAcceptedBy = String(rawChefUserId || "chef");
+
+    if (String(order.orderStatus || "").toLowerCase() === "placed") {
+      order.orderStatus = "Accepted";
+    }
+
+    order.statusTimeline = order.statusTimeline || [];
+    order.statusTimeline.push({
+      status: "Chef Accepted",
+      timestamp: now,
+      note: `Chef explicitly accepted the order${
+        rawChefUserId ? ` (chef user: ${rawChefUserId})` : ""
+      }`,
+    });
+
+    const updatedOrder = await order.save();
+
+    try {
+      io.emit("order_updated", updatedOrder);
+      io.emit("order_status_updated", updatedOrder);
+      if (updatedOrder.userId) {
+        io.to(String(updatedOrder.userId)).emit("order_updated", updatedOrder);
+        io.to(String(updatedOrder.userId)).emit("order_status_updated", updatedOrder);
+      }
+      if (updatedOrder.chefId) {
+        io.to(String(updatedOrder.chefId)).emit("order_updated", updatedOrder);
+        io.to(String(updatedOrder.chefId)).emit("order_status_updated", updatedOrder);
+      }
+    } catch (e) {
+      console.log("Socket emit warning (chef-accept):", e);
+    }
+
+    try {
+      if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
+        const customerDoc = await User.findById(updatedOrder.userId);
+        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+          await sendExpoPush({
+            token: String(customerDoc.pushToken),
+            title: "✅ Order Accepted by Chef",
+            body: `Chef has accepted your order #${updatedOrder.orderId}. Preparation will begin shortly.`,
+            data: {
+              orderId: updatedOrder.orderId,
+              screen: "orders",
+              role: "customer",
+              status: "Accepted",
+            },
+            sound: "default",
+            priority: "high",
+          });
+        }
+      }
+    } catch (customerPushErr) {
+      console.log("Customer chef-accept push error:", customerPushErr);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Order accepted by chef.",
+      order: updatedOrder,
+    });
+  } catch (error: any) {
+    console.error("Error in chefAcceptOrder:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
  * PATCH /api/orders/:orderId/verify-advance
- *
- * Manual advance verification (screenshot / UTR flows). NO chef
- * notification here — for auto-accepted online orders the chef has
- * already been notified in `createOrder`; for COD orders the chef is
- * notified later via `/admin-accept`.
  */
 export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
   try {
@@ -1281,9 +1450,6 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
 
 /**
  * GET /api/orders/chef-orders
- *
- * ✅ Only returns orders the ADMIN has accepted (or that were
- * auto-accepted via Cashfree). Cancelled orders are always excluded.
  */
 export const getChefOrders = async (req: AuthRequest, res: Response) => {
   try {
@@ -1316,9 +1482,7 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
             { _id: { $in: chefProfile?.orderHistory || [] } },
           ],
         },
-        // ✅ Only orders the admin has accepted (or auto-accepted)
         { adminAcceptedAt: { $ne: null } },
-        // ✅ Never show cancelled orders
         { orderStatus: { $nin: ["Cancelled", "cancelled"] } },
       ],
     }).sort({ createdAt: -1 });
@@ -1340,8 +1504,6 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
 
 /**
  * PATCH /api/orders/:orderId/status
- *
- * Handles all status transitions including the new flow.
  */
 export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
   try {
@@ -1393,6 +1555,10 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       if (!order.adminAcceptedAt) {
         order.adminAcceptedAt = now;
         order.adminAcceptedBy = String(rawAdminId || "");
+      }
+      if (!(order as any).chefAcceptedAt) {
+        (order as any).chefAcceptedAt = now;
+        (order as any).chefAcceptedBy = "system:status-accepted";
       }
       order.statusTimeline.push({
         status: "Accepted",

@@ -1,6 +1,49 @@
 import { Request, Response } from 'express';
 import Cart from '../models/Cart';
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ HELPER — Normalize the incoming special-instruction payload
+   into a consistent { tag, label, text } shape.
+
+   Accepts any of these input shapes:
+     • req.body.specialInstruction = { tag, label, text }
+     • req.body.orderDetails.specialInstruction = { tag, label, text }
+     • req.body.orderDetails.instructionTag + selectedSpice + notes
+     • req.body.specialInstructionTag + specialInstructionLabel + specialInstructionText
+
+   Always returns an object with all three string fields (may be "").
+   ───────────────────────────────────────────────────────────────── */
+const resolveSpecialInstruction = (body: any) => {
+  const od = body?.orderDetails || {};
+  const direct = body?.specialInstruction || od?.specialInstruction || {};
+
+  const tag = String(
+    direct.tag ??
+    body.specialInstructionTag ??
+    od.instructionTag ??
+    od.selectedSpice ??
+    ""
+  ).trim();
+
+  const label = String(
+    direct.label ??
+    body.specialInstructionLabel ??
+    od.specialInstructionLabel ??
+    ""
+  ).trim();
+
+  const text = String(
+    direct.text ??
+    body.specialInstructionText ??
+    od.specialInstructionText ??
+    od.chefNotes ??
+    od.notes ??
+    ""
+  ).trim();
+
+  return { tag, label, text };
+};
+
 export const addToCart = async (req: Request, res: Response) => {
   try {
     const userId =
@@ -47,8 +90,6 @@ export const addToCart = async (req: Request, res: Response) => {
       );
 
       // ✅ NEW: Resolve the absolute estimated delivery timestamp + window + QuickBites flag.
-      // The client (HomeMadeOrderReview) sends these for QuickBites so the cart
-      // doc carries a fixed Date that the CartScreen can render dynamically.
       const estimatedDeliveryAtMsRaw = req.body.estimatedDeliveryAtMs;
       const parsedEstimatedDeliveryAtMs = Number(estimatedDeliveryAtMsRaw);
       const resolvedEstimatedDeliveryAt =
@@ -65,6 +106,9 @@ export const addToCart = async (req: Request, res: Response) => {
       // estimatedDeliveryAt info. Mealbox carts keep these fields empty.
       const carriesDeliveryMeta =
         serviceType === 'homemade' || serviceType === 'quickbites';
+
+      // ✅ NEW: Normalize the special-instruction payload for ALL item-based flows.
+      const resolvedSpecialInstruction = resolveSpecialInstruction(req.body);
 
       // Clear out active current instances sitting in standard active workflow session
       await Cart.deleteMany({ user: userId, status: "in-cart" });
@@ -83,6 +127,10 @@ export const addToCart = async (req: Request, res: Response) => {
         selections,
         addons,
         orderDetails,
+
+        // ✅ NEW: Persist the special instruction object for homemade/quickbites/mealbox
+        specialInstruction: resolvedSpecialInstruction,
+
         status: 'in-cart',
         couponCode: couponCode || null,
         discount: appliedDiscount,
@@ -123,14 +171,13 @@ export const addToCart = async (req: Request, res: Response) => {
     // ✅ CALCULATE BASE PRICE FROM CURRENT SELECTIONS PIPELINE
     const basePlatterTotal = Number(finalPrice || 0) * guests;
 
-    // ✅ DYNAMIC COMPILATION OF ADDONS CALCULATED ACCORDING TO USER CONFIG: (Addon Price * Addon Selected Qty) * Selected Guest Count
+    // ✅ DYNAMIC COMPILATION OF ADDONS
     const addonsTotal = (addons || []).reduce((sum: number, currentAddon: any) => {
       const addonPrice = Number(currentAddon.price || 0);
       const addonCount = Number(currentAddon.count || 0);
       return sum + (addonPrice * addonCount * guests);
     }, 0);
 
-    // ✅ TOTAL PRICE MATCHES EXACT MATHEMATICAL MODEL: (Plate Price * Guests) + (Addon Plate Matrix * Guests) + Delivery Charges
     const totalPrice = basePlatterTotal + addonsTotal + Number(deliveryPrice || 0);
 
     const appliedDiscount = Number(discount || 0);
@@ -138,6 +185,9 @@ export const addToCart = async (req: Request, res: Response) => {
 
     const resolvedUserPhone = userPhone || orderDetails?.contactPhone || (req as any).user?.phone || '';
     const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
+
+    // ✅ NEW: Normalize the special-instruction payload for catering flow too.
+    const resolvedSpecialInstruction = resolveSpecialInstruction(req.body);
 
     console.log("🔥 EXTRA ITEMS FROM FRONTEND:", extraItems);
     // ✅🔥 DELETE OLD CART (PREVENT DUPLICATES)
@@ -157,6 +207,9 @@ export const addToCart = async (req: Request, res: Response) => {
         noOnionsGarlic: !!orderDetails?.noOnionsGarlic,
         notes: orderDetails?.notes || "",
       },
+
+      // ✅ NEW: Persist the nested special-instruction object
+      specialInstruction: resolvedSpecialInstruction,
 
       totalItems,
       totalPrice,
@@ -227,7 +280,6 @@ export const updateCart = async (req: Request, res: Response) => {
       const resolvedUserPhone = userPhone || orderDetails?.contactPhone || '';
       const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
 
-      // ✅ Homemade / QuickBites-only: resolve delivery date & slot from top-level body OR nested orderDetails
       const resolvedDeliveryDate = String(
         req.body.deliveryDate ||
         orderDetails?.deliveryDate ||
@@ -241,7 +293,6 @@ export const updateCart = async (req: Request, res: Response) => {
         ''
       );
 
-      // ✅ NEW: Same timestamp handling as addToCart
       const estimatedDeliveryAtMsRaw = req.body.estimatedDeliveryAtMs;
       const parsedEstimatedDeliveryAtMs = Number(estimatedDeliveryAtMsRaw);
       const resolvedEstimatedDeliveryAt =
@@ -254,10 +305,11 @@ export const updateCart = async (req: Request, res: Response) => {
         String(orderDetails?.isQuickBites || '').toLowerCase() === 'true' ||
         serviceType === 'quickbites';
 
-      // ✅ Only homemade / quickbites flows carry the delivery date / slot /
-      // estimatedDeliveryAt info. Mealbox carts keep these fields empty.
       const carriesDeliveryMeta =
         serviceType === 'homemade' || serviceType === 'quickbites';
+
+      // ✅ NEW: Normalize special-instruction payload on update too.
+      const resolvedSpecialInstruction = resolveSpecialInstruction(req.body);
 
       const updatedHomemade = await Cart.findByIdAndUpdate(
         cartId,
@@ -274,13 +326,15 @@ export const updateCart = async (req: Request, res: Response) => {
           addons, 
           orderDetails, 
           serviceType,
+
+          // ✅ NEW: Persist nested special-instruction object
+          specialInstruction: resolvedSpecialInstruction,
+
           couponCode: couponCode || null,
           discount: appliedDiscount,
           totalPriceAfterDiscount: calculatedFinalTotal,
-          // ✅ Preserve delivery date & slot on every update for homemade / quickbites; empty for mealbox
           deliveryDate: carriesDeliveryMeta ? resolvedDeliveryDate : '',
           deliverySlot: carriesDeliveryMeta ? resolvedDeliverySlot : '',
-          // ✅ NEW: Preserve the absolute timestamp fields
           estimatedDeliveryAt: carriesDeliveryMeta ? resolvedEstimatedDeliveryAt : undefined,
           deliveryWindowMinutes: carriesDeliveryMeta ? resolvedDeliveryWindowMinutes : 0,
           isQuickBites: carriesDeliveryMeta ? resolvedIsQuickBites : false
@@ -311,7 +365,6 @@ export const updateCart = async (req: Request, res: Response) => {
 
     const guests = Number(orderDetails?.guests || 0);
 
-    // ✅ RECOMPUTE IN STRICT ORDER MATCHING ADD INTERPOLATION LAYOUT LAWS
     const basePlatterTotal = Number(finalPrice || 0) * guests;
     const addonsTotal = (addons || []).reduce((sum: number, currentAddon: any) => {
       const addonPrice = Number(currentAddon.price || 0);
@@ -326,6 +379,9 @@ export const updateCart = async (req: Request, res: Response) => {
 
     const resolvedUserPhone = userPhone || orderDetails?.contactPhone || '';
     const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
+
+    // ✅ NEW: Normalize special-instruction payload on update too.
+    const resolvedSpecialInstruction = resolveSpecialInstruction(req.body);
 
     const updated = await Cart.findByIdAndUpdate(
       cartId,
@@ -344,6 +400,9 @@ export const updateCart = async (req: Request, res: Response) => {
           notes: orderDetails?.notes || '',
         },
 
+        // ✅ NEW: Persist nested special-instruction object
+        specialInstruction: resolvedSpecialInstruction,
+
         totalItems: selections?.reduce
           ? selections.reduce(
               (acc: number, cat: any) =>
@@ -355,18 +414,13 @@ export const updateCart = async (req: Request, res: Response) => {
           : 0,
 
         totalPrice,
-
-        // ✅🔥 UPDATE EXTRA ITEMS
         extraItems: extraItems || 0,
-
         type: type || 'veg',
         couponCode: couponCode || null,
         discount: appliedDiscount,
         totalPriceAfterDiscount: calculatedFinalTotal,
-        // ✅ Catering flow untouched — keep deliveryDate/Slot empty
         deliveryDate: '',
         deliverySlot: '',
-        // ✅ NEW: Catering doesn't use the timestamp fields
         estimatedDeliveryAt: undefined,
         deliveryWindowMinutes: 0,
         isQuickBites: false
