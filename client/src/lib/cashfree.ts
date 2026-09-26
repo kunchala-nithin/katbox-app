@@ -9,18 +9,13 @@
 //   • Verify the payment on the backend before the caller navigates
 //
 // The caller (checkout.tsx) only needs to:
-//   1. Call `computeAdvanceSplit(total)` to know how much to charge.
-//   2. Call `openCashfreeCheckout(...)` and await its result.
-//   3. On `status === "SUCCESS"` → POST /api/orders/create with the
-//      payment metadata attached, then navigate to the confirmation
-//      screen.
+//   1. Call `startCashfreePayment(...)` and await its result.
+//   2. On `success === true` → navigate to the confirmation screen.
 
 import { Platform } from "react-native";
 import {
   CFPaymentGatewayService,
-
   CFSession,
-
 } from "react-native-cashfree-pg-sdk";
 import api from "./api";
 import { CFEnvironment, CFThemeBuilder } from "cashfree-pg-api-contract";
@@ -29,28 +24,13 @@ import { CFEnvironment, CFThemeBuilder } from "cashfree-pg-api-contract";
    BUSINESS RULES
    ═════════════════════════════════════════════════════════════════ */
 
-/**
- * Advance percentage charged for catering and mealbox orders.
- * Stored here so both checkout + backend share one source of truth.
- */
 export const ADVANCE_PERCENT = 45;
 
-/**
- * Returns true when the given service type requires an online
- * advance payment (catering / mealbox).
- */
 export const isAdvanceServiceType = (serviceType?: string): boolean => {
   const s = String(serviceType || "").toLowerCase().trim();
   return s === "catering" || s === "mealbox";
 };
 
-/**
- * Returns true when the given service type is eligible for
- * Cash-On-Delivery (quickbites / homemade only).
- *
- * Catering and mealbox MUST pay 45% online — COD radio is disabled
- * in the checkout UI and this helper is the runtime guard.
- */
 export const canUseCOD = (serviceType?: string): boolean => {
   const s = String(serviceType || "").toLowerCase().trim();
   return s === "quickbites" || s === "homemade";
@@ -60,16 +40,6 @@ export const canUseCOD = (serviceType?: string): boolean => {
    AMOUNT HELPERS
    ═════════════════════════════════════════════════════════════════ */
 
-/**
- * Splits a grand total into the advance and pending amounts.
- *
- *   • Catering / Mealbox  → advance = 45% of total, pending = rest
- *   • QuickBites / HomeMade (online) → advance = total, pending = 0
- *   • QuickBites / HomeMade (COD)    → advance = 0, pending = total
- *
- * The rounding keeps two decimal places so the amounts match
- * exactly what the backend will persist.
- */
 export const computeAdvanceSplit = (
   total: number,
   serviceType?: string,
@@ -91,17 +61,9 @@ export const computeAdvanceSplit = (
     return { total: rounded, advance: 0, pending: rounded };
   }
 
-  // QuickBites / HomeMade + Online → full payment upfront.
   return { total: rounded, advance: rounded, pending: 0 };
 };
 
-/**
- * Human-readable badge label used on the merged top-right pill
- * on order cards and bill summaries.
- *
- * Matches the backend `paymentBadge` virtual's `label` values so
- * customer / chef / admin screens stay consistent.
- */
 export const getPaymentBadgeLabel = (
   serviceType: string | undefined,
   paymentMode: "online" | "cod",
@@ -124,13 +86,9 @@ export const getPaymentBadgeLabel = (
    ═════════════════════════════════════════════════════════════════ */
 
 export interface CashfreeCheckoutParams {
-  /** Cashfree `order_id` returned by the backend create-order call. */
   orderId: string;
-  /** Cashfree `payment_session_id` returned by the backend. */
   paymentSessionId: string;
-  /** Environment — SANDBOX in dev, PRODUCTION in release. */
   environment?: CFEnvironment;
-  /** Optional colour customisation matching the app theme. */
   theme?: {
     backgroundColor?: string;
     primaryTextColor?: string;
@@ -148,28 +106,15 @@ export interface CashfreeCheckoutResult {
   message?: string;
 }
 
-/**
- * Opens the Cashfree SDK checkout UI and resolves when the user
- * completes / cancels / fails the payment.
- *
- * The caller is expected to have already created a Cashfree order
- * on the backend (via `createCashfreeOrder` below) and pass the
- * resulting `orderId` + `paymentSessionId` here.
- */
 export const openCashfreeCheckout = (
   params: CashfreeCheckoutParams
 ): Promise<CashfreeCheckoutResult> => {
   return new Promise<CashfreeCheckoutResult>((resolve) => {
     try {
-      // Wire the one-shot callbacks for this session. Cashfree's
-      // SDK uses module-level listeners, so we set them right
-      // before invoking `doPayment` and clear them afterwards.
       const onVerify = (response: any) => {
         try {
           CFPaymentGatewayService.removeCallback();
-        } catch (_) {
-          // silent
-        }
+        } catch (_) {}
         resolve({
           status: "SUCCESS",
           orderId: String(response?.orderID || response?.order_id || params.orderId),
@@ -181,9 +126,7 @@ export const openCashfreeCheckout = (
       const onError = (error: any, orderId?: string) => {
         try {
           CFPaymentGatewayService.removeCallback();
-        } catch (_) {
-          // silent
-        }
+        } catch (_) {}
 
         const message = String(
           error?.message ||
@@ -192,8 +135,6 @@ export const openCashfreeCheckout = (
             "Payment failed"
         );
 
-        // Cashfree reports user-initiated cancels as an error with
-        // "USER_CANCELLED" or a status of "CANCELLED".
         const isCancel =
           /cancel/i.test(message) ||
           String(error?.status || "").toUpperCase() === "CANCELLED";
@@ -209,13 +150,6 @@ export const openCashfreeCheckout = (
 
       const env = params.environment || CFEnvironment.SANDBOX;
 
-      // ✅ FIX: Cast `env` to `any` because `CFEnvironment` is
-      //    declared separately in both `cashfree-pg-api-contract`
-      //    and `react-native-cashfree-pg-sdk`, and TypeScript
-      //    treats the two enums as structurally incompatible.
-      //
-      //    Runtime is unaffected — both enums have identical
-      //    numeric values (SANDBOX = 1, PRODUCTION = 2).
       const session = new CFSession(
         params.paymentSessionId,
         params.orderId,
@@ -223,33 +157,14 @@ export const openCashfreeCheckout = (
       );
 
       const theme = new CFThemeBuilder()
-        .setNavigationBarBackgroundColor(
-          params.theme?.buttonBackgroundColor || "#2E7D32"
-        )
-        .setNavigationBarTextColor(
-          params.theme?.buttonTextColor || "#FFFFFF"
-        )
-        .setButtonBackgroundColor(
-          params.theme?.buttonBackgroundColor || "#2E7D32"
-        )
-        .setButtonTextColor(
-          params.theme?.buttonTextColor || "#FFFFFF"
-        )
-        .setPrimaryTextColor(
-          params.theme?.primaryTextColor || "#111827"
-        )
-        .setSecondaryTextColor(
-          params.theme?.secondaryTextColor || "#6B7280"
-        )
+        .setNavigationBarBackgroundColor(params.theme?.buttonBackgroundColor || "#2E7D32")
+        .setNavigationBarTextColor(params.theme?.buttonTextColor || "#FFFFFF")
+        .setButtonBackgroundColor(params.theme?.buttonBackgroundColor || "#2E7D32")
+        .setButtonTextColor(params.theme?.buttonTextColor || "#FFFFFF")
+        .setPrimaryTextColor(params.theme?.primaryTextColor || "#111827")
+        .setSecondaryTextColor(params.theme?.secondaryTextColor || "#6B7280")
         .build();
 
-      // ✅ FIX: Cast to `any` so TypeScript uses the wider
-      //    `doPayment(session, theme?)` signature from our
-      //    `src/types/cashfree.d.ts` augmentation instead of the
-      //    1-arg signature from `cashfree-pg-api-contract`.
-      //
-      //    Without this cast, TS raises:
-      //      "Expected 1 arguments, but got 2."
       (CFPaymentGatewayService as any).doPayment(session, theme);
     } catch (err: any) {
       resolve({
@@ -266,16 +181,12 @@ export const openCashfreeCheckout = (
    ═════════════════════════════════════════════════════════════════ */
 
 export interface CreateCashfreeOrderPayload {
-  /** Grand total for the order (what the customer owes in total). */
   amount: number;
-  /** Amount to actually charge NOW (advance or full). */
   chargeAmount: number;
-  /** Arbitrary metadata forwarded to Cashfree (order id, user id…). */
   customerId?: string;
   customerName?: string;
   customerPhone?: string;
   customerEmail?: string;
-  /** Free-form key/value pairs visible on the Cashfree dashboard. */
   notes?: Record<string, string>;
 }
 
@@ -285,49 +196,30 @@ export interface CreateCashfreeOrderResponse {
   amount: number;
 }
 
-/**
- * Creates a Cashfree order on the backend and returns the
- * `orderId` + `paymentSessionId` needed to open the SDK.
- *
- * The backend endpoint is expected to:
- *   • validate the JWT
- *   • create the Cashfree order via the Cashfree REST API
- *   • return { orderId, paymentSessionId, amount }
- */
 export const createCashfreeOrder = async (
   payload: CreateCashfreeOrderPayload
 ): Promise<CreateCashfreeOrderResponse> => {
-  const response = await api.post(
-    "/api/payments/create-order",
-    {
-      amount: payload.chargeAmount,
-      currency: "INR",
-      customerId: payload.customerId,
-      customerName: payload.customerName,
-      customerPhone: payload.customerPhone,
-      customerEmail: payload.customerEmail,
-      notes: {
-        ...(payload.notes || {}),
-        grandTotal: String(payload.amount),
-      },
-    }
-  );
+  const response = await api.post("/api/payments/create-order", {
+    amount: payload.chargeAmount,
+    currency: "INR",
+    customerId: payload.customerId,
+    customerName: payload.customerName,
+    customerPhone: payload.customerPhone,
+    customerEmail: payload.customerEmail,
+    notes: {
+      ...(payload.notes || {}),
+      grandTotal: String(payload.amount),
+    },
+  });
 
   const data = response?.data || {};
-  const orderId = String(
-    data.orderId || data.order_id || data?.data?.orderId || ""
-  );
+  const orderId = String(data.orderId || data.order_id || data?.data?.orderId || "");
   const paymentSessionId = String(
-    data.paymentSessionId ||
-      data.payment_session_id ||
-      data?.data?.paymentSessionId ||
-      ""
+    data.paymentSessionId || data.payment_session_id || data?.data?.paymentSessionId || ""
   );
 
   if (!orderId || !paymentSessionId) {
-    throw new Error(
-      "Cashfree order creation failed: missing orderId or paymentSessionId"
-    );
+    throw new Error("Cashfree order creation failed: missing orderId or paymentSessionId");
   }
 
   return {
@@ -337,16 +229,6 @@ export const createCashfreeOrder = async (
   };
 };
 
-/**
- * Verifies a completed Cashfree payment on the backend. Returns
- * `true` only when the backend confirms the payment status via
- * Cashfree's REST API (no trust in the client response).
- *
- * The backend endpoint is expected to:
- *   • accept { orderId, paymentId, signature }
- *   • call Cashfree GET /orders/{orderId}/payments
- *   • return { verified: boolean, paymentId, amount }
- */
 export const verifyCashfreePayment = async (params: {
   orderId: string;
   paymentId?: string;
@@ -358,14 +240,10 @@ export const verifyCashfreePayment = async (params: {
     return {
       verified: Boolean(data.verified ?? data.success ?? false),
       paymentId: data.paymentId || params.paymentId,
-      amount:
-        data.amount !== undefined ? Number(data.amount) : undefined,
+      amount: data.amount !== undefined ? Number(data.amount) : undefined,
     };
   } catch (err: any) {
-    console.log(
-      "verifyCashfreePayment error:",
-      err?.response?.data || err?.message || err
-    );
+    console.log("verifyCashfreePayment error:", err?.response?.data || err?.message || err);
     return { verified: false };
   }
 };
@@ -374,15 +252,6 @@ export const verifyCashfreePayment = async (params: {
    CONVENIENCE: END-TO-END FLOW
    ═════════════════════════════════════════════════════════════════ */
 
-/**
- * One-shot helper that runs the full flow:
- *   1. Create Cashfree order on backend.
- *   2. Open SDK and await result.
- *   3. On SUCCESS → verify on backend.
- *   4. Return a final `{ ok, orderId, paymentId }` shape.
- *
- * `checkout.tsx` can call this and only needs to branch on `ok`.
- */
 export const runCashfreePaymentFlow = async (params: {
   serviceType?: string;
   totalAmount: number;
@@ -426,8 +295,7 @@ export const runCashfreePaymentFlow = async (params: {
       orderId: created.orderId,
       paymentSessionId: created.paymentSessionId,
       environment:
-        (process.env.EXPO_PUBLIC_CASHFREE_ENV || "").toLowerCase() ===
-        "production"
+        (process.env.EXPO_PUBLIC_CASHFREE_ENV || "").toLowerCase() === "production"
           ? CFEnvironment.PRODUCTION
           : CFEnvironment.SANDBOX,
       theme: params.theme,
@@ -476,10 +344,7 @@ export const runCashfreePaymentFlow = async (params: {
       pendingAmount: pending,
     };
   } catch (err: any) {
-    console.log(
-      "runCashfreePaymentFlow error:",
-      err?.response?.data || err?.message || err
-    );
+    console.log("runCashfreePaymentFlow error:", err?.response?.data || err?.message || err);
     return {
       ok: false,
       status: "FAILED",
@@ -487,6 +352,85 @@ export const runCashfreePaymentFlow = async (params: {
       advanceAmount: advance,
       pendingAmount: pending,
       message: err?.message || "Payment failed unexpectedly",
+    };
+  }
+};
+
+/* ═════════════════════════════════════════════════════════════════
+   ✅ COMPAT WRAPPER — startCashfreePayment
+   ═════════════════════════════════════════════════════════════════
+   Legacy convenience that returns { success, order, message }.
+   Internally delegates to runCashfreePaymentFlow and POSTs the
+   order to /api/orders/create with the verified payment metadata
+   attached, so the backend can persist the correct payment status,
+   chefStatus, and deliveryStatus.
+   ═════════════════════════════════════════════════════════════════ */
+export const startCashfreePayment = async (params: {
+  amount: number;
+  orderPayload: Record<string, any>;
+  customerId?: string;
+}): Promise<{
+  success: boolean;
+  order?: any;
+  message?: string;
+  orderId?: string;
+  paymentId?: string;
+}> => {
+  try {
+    const { orderPayload, customerId } = params;
+    const serviceType = String(orderPayload?.serviceType || "");
+    const advanceService = serviceType === "catering" || serviceType === "mealbox";
+
+    const flow = await runCashfreePaymentFlow({
+      serviceType,
+      totalAmount: Number(orderPayload?.totalAmount) || params.amount,
+      customerId,
+      customerName: orderPayload?.userName,
+      customerPhone: orderPayload?.userPhone,
+    });
+
+    if (!flow.ok) {
+      return {
+        success: false,
+        message: flow.message || "Payment was not completed.",
+      };
+    }
+
+    const enriched = {
+      ...orderPayload,
+      cashfreeOrderId: flow.orderId,
+      cashfreePaymentId: flow.paymentId,
+      cashfreeSignature: flow.signature,
+      chargedAmount: flow.chargeAmount,
+      isAdvanceOrder: advanceService,
+      advancePercent: advanceService ? 45 : 0,
+    };
+
+    const res = await api.post("/api/orders/create", enriched, {
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (res.data?.success && res.data?.order) {
+      return {
+        success: true,
+        order: res.data.order,
+        orderId: res.data.order.orderId,
+        paymentId: flow.paymentId,
+      };
+    }
+
+    return {
+      success: false,
+      message: res.data?.message || "Failed to store order after payment.",
+    };
+  } catch (err: any) {
+    console.log("startCashfreePayment error:", err?.response?.data || err?.message || err);
+    return {
+      success: false,
+      message:
+        err?.response?.data?.message ||
+        err?.message ||
+        "Something went wrong while processing the payment.",
     };
   }
 };
@@ -501,4 +445,5 @@ export default {
   createCashfreeOrder,
   verifyCashfreePayment,
   runCashfreePaymentFlow,
+  startCashfreePayment,
 };
