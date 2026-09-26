@@ -40,6 +40,43 @@ const AUTO_STOP_MS = 10_000;
 /** Repeating vibration pattern: wait, buzz, pause, buzz, pause, buzz… */
 const VIBRATION_PATTERN = [0, 600, 300, 600, 300];
 
+/* ═════════════════════════════════════════════════════════════
+   ✅ NEW: EXPO PUSH SHARED CONSTANTS
+   ═════════════════════════════════════════════════════════════
+   These MUST stay in sync with the backend constants in
+   `server/utils/expoPush.ts`:
+
+     ORDER_ALARM_SOUND        → "alarm.mp3"
+     ADMIN_ORDER_CHANNEL_ID   → "orders-alarm-admin"
+     CHEF_ORDER_CHANNEL_ID    → "orders-alarm-chef"
+     CUSTOMER_CHANNEL_ID      → "orders-customer"
+
+   The Expo push payload the backend sends includes:
+     sound: "alarm.mp3"
+     channelId: "orders-alarm-admin" | "orders-alarm-chef"
+
+   The client-side notification handler (registered in
+   app/layout.tsx) uses these constants to:
+     1. Register the Android channel with the alarm sound.
+     2. Decide whether to fire the local `startOrderAlarm()`
+        when the notification is received in the foreground.
+   ═════════════════════════════════════════════════════════════ */
+
+/** Expo push `sound:` value — must match the bundled asset filename. */
+export const ALARM_SOUND_NAME = "alarm.mp3";
+
+/** Android notification channel for admin devices (alarm tone). */
+export const ADMIN_ORDER_CHANNEL_ID = "orders-alarm-admin";
+
+/** Android notification channel for chef devices (alarm tone). */
+export const CHEF_ORDER_CHANNEL_ID = "orders-alarm-chef";
+
+/** Android notification channel for customers (default tone). */
+export const CUSTOMER_ORDER_CHANNEL_ID = "orders-customer";
+
+/** Standard (non-alarm) sound name used for customer notifications. */
+export const CUSTOMER_NOTIFICATION_SOUND = "default";
+
 // ─────────────────────────────────────────────────────────────
 // INTERNAL STATE
 // ─────────────────────────────────────────────────────────────
@@ -267,4 +304,136 @@ export const stopOrderAlarm = async (): Promise<void> => {
 export const restartOrderAlarm = async (): Promise<void> => {
   await stopOrderAlarm();
   await startOrderAlarm();
+};
+
+/* ═════════════════════════════════════════════════════════════
+   ✅ NEW: ROLE-AWARE CONVENIENCE TRIGGERS
+   ═════════════════════════════════════════════════════════════
+   Used by the Socket.IO listeners in:
+     • app/layout.tsx (global notifier)
+     • admin/layout.tsx
+     • chef/layout.tsx
+
+   These are thin wrappers so the call sites read cleanly:
+
+     socket.on("new_order_placed", () => {
+       void triggerAlarmForRole("chef");
+     });
+   ═════════════════════════════════════════════════════════════ */
+
+/**
+ * Fire the full alarm for the given role.
+ *
+ *   • role === "admin" | "chef" → startOrderAlarm() (looping sound)
+ *   • any other role            → no-op (customer devices don't ring)
+ *
+ * Idempotent and never throws.
+ */
+export const triggerAlarmForRole = async (
+  role: "admin" | "chef" | "customer" | string | null | undefined
+): Promise<void> => {
+  const r = String(role || "").toLowerCase();
+  if (r !== "admin" && r !== "chef") {
+    // Customers never ring the alarm.
+    return;
+  }
+
+  try {
+    await startOrderAlarm();
+  } catch (err) {
+    console.log("triggerAlarmForRole error:", err);
+  }
+};
+
+/**
+ * Fire a lighter "step change" haptic for customer devices when the
+ * chef/admin advances the stepper.
+ *
+ * Uses a short single vibration (no looping sound) so customers are
+ * notified without an intrusive siren. This is fired from the
+ * foreground notification listener, not from socket events.
+ *
+ * Never throws.
+ */
+export const triggerVibrationForStepChange = async (): Promise<void> => {
+  try {
+    Vibration.vibrate([0, 200, 100, 200]);
+  } catch (err) {
+    console.log("triggerVibrationForStepChange error:", err);
+  }
+};
+
+/* ═════════════════════════════════════════════════════════════
+   ✅ NEW: ANDROID CHANNEL REGISTRATION HELPER
+   ═════════════════════════════════════════════════════════════
+   Called ONCE from app/layout.tsx after the notifications
+   permission is granted. Registers the alarm channels so the
+   Android system routes incoming push notifications through the
+   correct sound.
+
+   This is a no-op on iOS (iOS uses the sound name directly).
+   ═════════════════════════════════════════════════════════════ */
+
+/**
+ * Register the Android notification channels used by KatBox.
+ *
+ * Must be idempotent — Android ignores duplicate registrations,
+ * but Expo Notifications' `setNotificationChannelAsync` will warn
+ * if the sound asset hasn't been bundled yet. We call it after
+ * `Notifications.setNotificationHandler` in app/layout.tsx.
+ *
+ * `Notifications` is imported lazily inside the function so that
+ * this module remains usable on web / SSR without crashing.
+ */
+export const registerAndroidOrderChannels = async (): Promise<void> => {
+  try {
+    // Lazy import — this file is otherwise platform-agnostic.
+    const Notifications = await import("expo-notifications");
+
+    if (typeof Notifications.setNotificationChannelAsync !== "function") {
+      // iOS or web — nothing to do.
+      return;
+    }
+
+    // Admin channel — alarm siren.
+    await Notifications.setNotificationChannelAsync(
+      ADMIN_ORDER_CHANNEL_ID,
+      {
+        name: "New Orders (Admin)",
+        importance: Notifications.AndroidImportance.MAX,
+        sound: ALARM_SOUND_NAME,
+        vibrationPattern: VIBRATION_PATTERN,
+        lockscreenVisibility:
+          Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: true,
+      }
+    );
+
+    // Chef channel — alarm siren.
+    await Notifications.setNotificationChannelAsync(
+      CHEF_ORDER_CHANNEL_ID,
+      {
+        name: "New Orders (Chef)",
+        importance: Notifications.AndroidImportance.MAX,
+        sound: ALARM_SOUND_NAME,
+        vibrationPattern: VIBRATION_PATTERN,
+        lockscreenVisibility:
+          Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: true,
+      }
+    );
+
+    // Customer channel — default tone, no siren.
+    await Notifications.setNotificationChannelAsync(
+      CUSTOMER_ORDER_CHANNEL_ID,
+      {
+        name: "Order Updates",
+        importance: Notifications.AndroidImportance.HIGH,
+        sound: CUSTOMER_NOTIFICATION_SOUND,
+        vibrationPattern: [0, 200, 100, 200],
+      }
+    );
+  } catch (err) {
+    console.log("registerAndroidOrderChannels warning:", err);
+  }
 };

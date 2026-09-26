@@ -120,6 +120,62 @@ export interface IBaseOrder extends Document {
   specialInstruction?: ISpecialInstruction;
   // ==================================================================
 
+  // ==================================================================
+  // ✅ NEW FIELDS (Production Upgrade — Chef Gate + 5-Step Stepper)
+  //    These fields drive the stepper visibility rules, the COD/Advance
+  //    branching, and the merged payment badge on every order card.
+  // ==================================================================
+
+  /**
+   * chefStatus — gates the 5-step stepper on customer / admin / chef UIs.
+   *   "pending"  → chef hasn't acted yet → stepper HIDDEN
+   *   "accepted" → chef accepted        → stepper VISIBLE
+   *   "rejected" → chef rejected        → order moved to cancelled tab
+   */
+  chefStatus?: "pending" | "accepted" | "rejected";
+  chefRejectedAt?: Date;
+  chefRejectionReason?: string;
+
+  /**
+   * deliveryStatus — the current step in the 5-step stepper.
+   * Only meaningful once chefStatus === "accepted".
+   */
+  deliveryStatus?:
+    | "accepted"
+    | "preparing"
+    | "ready"
+    | "out_for_delivery"
+    | "delivered"
+    | "cancelled";
+  deliveryStatusUpdatedAt?: Date;
+  deliveryStatusUpdatedBy?: "chef" | "admin" | "system";
+
+  /**
+   * Advance-order flag — true for catering / mealbox (45% advance).
+   * Used by the UI to render the "Advance ₹X Settled" badge.
+   */
+  isAdvanceOrder?: boolean;
+  advancePercent?: number;
+  codAmount?: number;
+
+  /**
+   * Push tokens — captured at order placement time so the backend can
+   * fire killed/minimized-app notifications without an extra lookup.
+   */
+  customerPushToken?: string;
+  chefPushToken?: string;
+  adminPushTokens?: string[];
+
+  /**
+   * Dedupe timestamps — prevent duplicate notifications for the same
+   * lifecycle event (order placed, chef accepted, step advanced, etc.).
+   */
+  customerNotifiedAt?: Date;
+  chefNotifiedAt?: Date;
+  adminNotifiedAt?: Date;
+
+  // ==================================================================
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -318,12 +374,108 @@ const BaseOrderSchema: Schema = new Schema(
       default: { tag: "", label: "", text: "" },
     },
     // ==================================================================
+
+    // ==================================================================
+    // ✅ NEW FIELDS (Production Upgrade — Chef Gate + 5-Step Stepper)
+    // ==================================================================
+    chefStatus: {
+      type: String,
+      enum: ["pending", "accepted", "rejected"],
+      default: "pending",
+      index: true,
+    },
+    chefRejectedAt: { type: Date, default: null },
+    chefRejectionReason: { type: String, default: "" },
+
+    deliveryStatus: {
+      type: String,
+      enum: [
+        "accepted",
+        "preparing",
+        "ready",
+        "out_for_delivery",
+        "delivered",
+        "cancelled",
+      ],
+      default: "accepted",
+      index: true,
+    },
+    deliveryStatusUpdatedAt: { type: Date, default: null },
+    deliveryStatusUpdatedBy: {
+      type: String,
+      enum: ["chef", "admin", "system", ""],
+      default: "",
+    },
+
+    isAdvanceOrder: { type: Boolean, default: false },
+    advancePercent: { type: Number, default: 0 },
+    codAmount: { type: Number, default: 0 },
+
+    customerPushToken: { type: String, default: "" },
+    chefPushToken: { type: String, default: "" },
+    adminPushTokens: { type: [String], default: [] },
+
+    customerNotifiedAt: { type: Date, default: null },
+    chefNotifiedAt: { type: Date, default: null },
+    adminNotifiedAt: { type: Date, default: null },
+    // ==================================================================
   },
   {
     discriminatorKey: "serviceType",
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
+
+// ==================================================================
+// ✅ VIRTUAL — stepperVisible
+//   Frontend uses this to decide whether to render the 5-step stepper.
+//   Rule: visible ONLY when chefStatus === "accepted".
+//   NOTE: orderconfirmation.tsx intentionally bypasses this virtual so
+//   the customer sees the stepper immediately after payment.
+// ==================================================================
+BaseOrderSchema.virtual("stepperVisible").get(function (this: IBaseOrder) {
+  return this.chefStatus === "accepted";
+});
+
+// ==================================================================
+// ✅ VIRTUAL — paymentBadge
+//   Centralised, single source of truth for the merged top-right badge
+//   rendered on customer / admin / chef order cards + bill summary.
+//   Returns { label, amount, tone } so every UI just renders it.
+// ==================================================================
+BaseOrderSchema.virtual("paymentBadge").get(function (this: IBaseOrder) {
+  const total = Number(this.totalAmount || 0);
+  const advance = Number(this.advancePaidAmount || 0);
+  const pending = Number(this.balanceAmountToCollect || 0);
+  const isOnline = this.paymentMethod === "online";
+  const isAdvance = !!this.isAdvanceOrder;
+
+  if (isAdvance && isOnline) {
+    return {
+      label: "Advance Settled",
+      amount: advance,
+      pending,
+      tone: "success",
+    };
+  }
+  if (isOnline) {
+    return {
+      label: "Payment Settled",
+      amount: total,
+      pending: 0,
+      tone: "success",
+    };
+  }
+  // COD
+  return {
+    label: "Cash Pending",
+    amount: pending || total,
+    pending: pending || total,
+    tone: "warning",
+  };
+});
 
 const Order: Model<IBaseOrder> =
   mongoose.models.Order || mongoose.model<IBaseOrder>("Order", BaseOrderSchema);

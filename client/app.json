@@ -34,7 +34,14 @@
           "tel",
           "telprompt",
           "mailto"
+        ],
+        "UIBackgroundModes": [
+          "remote-notification",
+          "fetch"
         ]
+      },
+      "entitlements": {
+        "aps-environment": "production"
       }
     },
     "android": {
@@ -55,8 +62,20 @@
         "android.permission.VIBRATE",
         "android.permission.WAKE_LOCK",
         "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION"
-      ]
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.USE_EXACT_ALARM"
+      ],
+      "notification": {
+        "icon": "./assets/images/notification-icon.png",
+        "color": "#073B1E",
+        "channelId": "orders-alarm-admin",
+        "sounds": [
+          "./assets/sounds/alarm.mp3"
+        ]
+      }
     },
     "web": {
       "bundler": "metro",
@@ -92,7 +111,11 @@
         {
           "sounds": [
             "./assets/sounds/alarm.mp3"
-          ]
+          ],
+          "mode": "production",
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#073B1E",
+          "defaultChannel": "orders-alarm-admin"
         }
       ],
       [

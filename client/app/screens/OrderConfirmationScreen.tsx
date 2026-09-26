@@ -12,12 +12,20 @@ import {
   Easing,
   Modal,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import api from "@/src/lib/api";
+// ✅ NEW: fire a local device notification the moment the customer
+//         lands on this confirmation screen (spec).
+import * as Notifications from "expo-notifications";
+// ✅ NEW: read the cached Expo push token (best-effort — used only for
+//         future server-driven notifications; the local one below fires
+//         regardless).
+import { getCachedPushToken } from "@/src/lib/authStorage";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -144,6 +152,10 @@ export default function OrderConfirmationScreen() {
 
   const initialOrderId = (params.orderId as string) || "DW2405200001";
 
+  // ✅ NEW: dedupe-ref so the local device notification fires exactly
+  //         once per orderId, even across re-renders.
+  const notifiedOrderIdRef = useRef<string | null>(null);
+
   // Fetch Order details directly from MongoDB via API
   useEffect(() => {
     let isMounted = true;
@@ -171,6 +183,69 @@ export default function OrderConfirmationScreen() {
       isMounted = false;
     };
   }, [initialOrderId]);
+
+  // ✅ NEW: fire the customer's local device notification once the order
+  //         is loaded. Deduped per orderId. Never throws.
+  useEffect(() => {
+    if (loading) return;
+    if (!initialOrderId) return;
+    if (notifiedOrderIdRef.current === initialOrderId) return;
+    notifiedOrderIdRef.current = initialOrderId;
+
+    (async () => {
+      try {
+        // Ensure Android channels exist before posting.
+        if (Platform.OS === "android") {
+          try {
+            await Notifications.setNotificationChannelAsync(
+              "orders-customer",
+              {
+                name: "Order Updates",
+                importance: Notifications.AndroidImportance.HIGH,
+                sound: "default",
+                vibrationPattern: [0, 200, 100, 200],
+              }
+            );
+          } catch (_) {
+            // silent — channel may already exist
+          }
+        }
+
+        // Best-effort: read cached push token so the payload carries it
+        // (useful for deep-linking later). We don't block on failure.
+        let cachedToken: string | null = null;
+        try {
+          cachedToken = await getCachedPushToken();
+        } catch (_) {
+          cachedToken = null;
+        }
+
+        const orderIdForDisplay = dbOrder?.orderId || initialOrderId;
+        const shortId = orderIdForDisplay ? `#${orderIdForDisplay}` : "";
+
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "✅ Order Confirmed",
+            body: `Your order ${shortId} is confirmed. Chef is preparing your order.`,
+            sound: "default",
+            priority: Notifications.AndroidNotificationPriority.HIGH,
+            data: {
+              orderId: orderIdForDisplay,
+              screen: "orders",
+              role: "customer",
+              customerPushToken: cachedToken || "",
+            },
+            ...(Platform.OS === "android"
+              ? { channelId: "orders-customer" }
+              : {}),
+          },
+          trigger: null, // fire immediately
+        });
+      } catch (err) {
+        console.log("Local order notification warning:", err);
+      }
+    })();
+  }, [loading, initialOrderId, dbOrder?.orderId]);
 
   // Determine Service Flow dynamically.
   const serviceType = dbOrder?.serviceType || (params.serviceType as string) || "mealbox";

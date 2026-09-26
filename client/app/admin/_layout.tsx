@@ -13,6 +13,9 @@ import { getUser, refreshUser, getToken } from '@/src/lib/authStorage'
 import { isTokenExpired } from '@/src/lib/jwtUtils'
 import { subscribeAuth } from '@/src/lib/authEvents'
 import { useOrderNotifier } from '@/src/hooks/useOrderNotifier'
+// ✅ NEW: Socket client used to join the "admins" broadcast room so
+//         every admin device receives live order/chef-accept events.
+import { socket } from '@/src/lib/socket'
 
 const ADMIN_TAB_CONFIG: Record<
     string,
@@ -45,7 +48,7 @@ export default function AdminTabsLayout() {
     const hasLoadedRef = useRef(false)
 
     /* ─────────────────────────────────────────────────────────
-       ✅ NEW: Role-scoped order alarm + push notification listener.
+       ✅ Role-scoped order alarm + push notification listener.
        Enabled only once auth (allowed === true) AND role
        (isAdmin === true) are fully resolved. When disabled, the
        hook is a no-op — zero side effects.
@@ -53,6 +56,58 @@ export default function AdminTabsLayout() {
     useOrderNotifier('admin', {
         enabled: allowed === true && isAdmin === true,
     })
+
+    /* ─────────────────────────────────────────────────────────
+       ✅ NEW: Join the shared "admins" broadcast room once the
+       admin role is confirmed.
+
+       This is what makes every admin device (not just the one
+       that opened the admin tab group) receive:
+         • new_order_placed          → fire alarm + show card
+         • chef_accepted_order       → flip payment badge
+         • chef_rejected_order       → move order to Cancelled
+         • stepper_updated           → refresh stepper
+         • order_status_updated      → live status sync
+         • delivery_status_updated   → live status sync
+
+       The `useOrderNotifier('admin', …)` hook above handles the
+       alarm + push side; this effect only wires the socket room.
+
+       Safe to call multiple times — the server ignores duplicates.
+       ───────────────────────────────────────────────────────── */
+    useEffect(() => {
+        let isMounted = true
+
+        const joinAdminRooms = async () => {
+            if (allowed !== true || isAdmin !== true) return
+            try {
+                if (!socket) return
+
+                socket.emit('join', 'admins')
+
+                const user = await getUser()
+                const userId = user?.id || user?._id
+                if (userId) {
+                    socket.emit('join', String(userId))
+                }
+
+                if (isMounted) {
+                    console.log('🔌 Admin socket joined rooms:', {
+                        userId,
+                        room: 'admins',
+                    })
+                }
+            } catch (err) {
+                console.log('Admin socket join rooms error:', err)
+            }
+        }
+
+        joinAdminRooms()
+
+        return () => {
+            isMounted = false
+        }
+    }, [allowed, isAdmin])
 
     useEffect(() => {
         let mounted = true

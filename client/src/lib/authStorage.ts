@@ -6,6 +6,9 @@ import api from "./api";
 
 const TOKEN_KEY = "auth_token";
 const USER_KEY = "auth_user";
+// ✅ NEW: SecureStore key for the Expo push token (cached locally so
+//         the app can still re-register the token when it wakes up).
+const PUSH_TOKEN_KEY = "auth_push_token";
 
 const BASE_SAVED_ADDRESSES_PREFIX =
   "@user_saved_delivery_addresses_";
@@ -60,6 +63,11 @@ export type StoredUser = {
   savedAddresses?: SavedAddress[];
   isChef?: boolean;
   isAdmin?: boolean;
+  // ✅ NEW: Expo push token (persisted for killed/minimized app notifications).
+  pushToken?: string;
+  // ✅ NEW: Convenience role hint (derived from isAdmin/isChef). Never
+  //         authoritative on the backend, just used for routing.
+  role?: "customer" | "chef" | "admin";
 };
 
 /**
@@ -201,6 +209,7 @@ export const getUser =
  *
  * auth_token
  * auth_user
+ * auth_push_token    (✅ NEW)
  *
  * We do NOT touch any other keys.
  */
@@ -223,6 +232,19 @@ export const removeToken = async (): Promise<void> => {
   } catch (error) {
     console.log(
       "Error removing stored user:",
+      error
+    );
+  }
+
+  // ✅ NEW: Also clear the cached push token on logout so a subsequent
+  //         user on the same device doesn't inherit the previous token.
+  try {
+    await SecureStore.deleteItemAsync(
+      PUSH_TOKEN_KEY
+    );
+  } catch (error) {
+    console.log(
+      "Error removing stored push token:",
       error
     );
   }
@@ -521,3 +543,111 @@ export const refreshUser =
       return null;
     }
   };
+
+/**
+ * ============================================================
+ * ✅ NEW: SAVE PUSH TOKEN
+ * ============================================================
+ *
+ * Called once at app startup (from app/layout.tsx) after
+ * `Notifications.getExpoPushTokenAsync()` returns a token.
+ *
+ * Writes to BOTH:
+ *   • SecureStore (instant offline cache)
+ *   • MongoDB via POST /auth/push-token (authoritative store)
+ *
+ * The MongoDB write is what lets the backend fire notifications
+ * to the device even when the app is killed or minimized.
+ *
+ * Safe to call repeatedly — the backend upserts on (userId, token).
+ */
+export const savePushToken = async (
+  pushToken: string
+): Promise<void> => {
+  if (!pushToken || typeof pushToken !== "string") {
+    return;
+  }
+
+  // Local cache first so getCachedPushToken works even offline.
+  try {
+    await SecureStore.setItemAsync(
+      PUSH_TOKEN_KEY,
+      pushToken
+    );
+  } catch (err) {
+    console.log("Error caching push token locally:", err);
+  }
+
+  const token = await getToken();
+  if (!token) {
+    // Not logged in yet — token will be flushed on next login.
+    return;
+  }
+
+  try {
+    await api.post(
+      "/auth/push-token",
+      { pushToken },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+  } catch (error: any) {
+    console.log(
+      "Error syncing push token to backend:",
+      error?.response?.data ||
+        error?.message ||
+        error
+    );
+  }
+};
+
+/**
+ * ============================================================
+ * ✅ NEW: GET CACHED PUSH TOKEN
+ * ============================================================
+ *
+ * Offline read of the push token from SecureStore. Used by
+ * screens that need to embed the token directly in an order
+ * payload (e.g. checkout.tsx) so the backend has it available
+ * immediately, without waiting for a network round-trip.
+ */
+export const getCachedPushToken =
+  async (): Promise<string | null> => {
+    try {
+      return await SecureStore.getItemAsync(
+        PUSH_TOKEN_KEY
+      );
+    } catch (error) {
+      console.log(
+        "Error reading cached push token:",
+        error
+      );
+
+      return null;
+    }
+  };
+
+/**
+ * ============================================================
+ * ✅ NEW: CLEAR PUSH TOKEN (LOCAL ONLY)
+ * ============================================================
+ *
+ * Removes the cached token without touching the backend. Useful
+ * for tests or forced re-registration on next app launch.
+ */
+export const clearPushToken = async (): Promise<void> => {
+  try {
+    await SecureStore.deleteItemAsync(
+      PUSH_TOKEN_KEY
+    );
+  } catch (error) {
+    console.log(
+      "Error clearing cached push token:",
+      error
+    );
+  }
+};

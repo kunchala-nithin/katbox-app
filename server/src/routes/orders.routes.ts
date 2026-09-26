@@ -19,6 +19,10 @@ import {
   acceptOrderByAdmin,
   // ✅ NEW: Chef-gated acceptance endpoint
   chefAcceptOrder,
+  // ✅ NEW: Chef-gated rejection endpoint
+  chefRejectOrder,
+  // ✅ NEW: 5-step stepper advancement endpoint (chef/admin)
+  updateDeliveryStatus,
 } from "../controllers/orders.controller";
 import { protect } from "../middleware/auth.middleware";
 
@@ -46,6 +50,15 @@ router.patch("/:orderId/admin-accept", protect, acceptOrderByAdmin);
 // ✅ NEW: Chef clicks "Accept Order" — for QuickBites/Homemade ONLINE orders.
 // Must be registered BEFORE the generic `/:orderId` GET route below.
 router.patch("/:orderId/chef-accept", protect, chefAcceptOrder);
+
+// ✅ NEW: Chef clicks "Reject Order" — cancels order + notifies customer/admin.
+// Must be registered BEFORE the generic `/:orderId` GET route below.
+router.patch("/:orderId/chef-reject", protect, chefRejectOrder);
+
+// ✅ NEW: Chef/Admin advances the 5-step stepper
+// (accepted → preparing → ready → out_for_delivery → delivered).
+// Must be registered BEFORE the generic `/:orderId` GET route below.
+router.patch("/:orderId/delivery-status", protect, updateDeliveryStatus);
 
 router.post("/:orderId/feedback", protect, upload.array("images", 5), submitOrderFeedback);
 router.get("/:orderId", getOrderById);

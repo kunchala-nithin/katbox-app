@@ -33,6 +33,66 @@ declare module "react-native-cashfree-pg-sdk" {
     [key: string]: any;
   }
 
+  /* ═══════════════════════════════════════════════════════════
+     ✅ NEW: Environment enum re-exported from this module.
+
+     The real Cashfree SDK exports `CFEnvironment` at the
+     top level of `react-native-cashfree-pg-sdk` (not only from
+     `cashfree-pg-api-contract`). This augmentation makes the
+     import:
+
+         import { CFEnvironment } from "react-native-cashfree-pg-sdk";
+
+     resolve cleanly at compile time.
+
+     Numeric values match the runtime enum in the SDK:
+         SANDBOX    = 1
+         PRODUCTION = 2
+     ═══════════════════════════════════════════════════════════ */
+  export enum CFEnvironment {
+    SANDBOX = 1,
+    PRODUCTION = 2,
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     ✅ NEW: Theme shape produced by CFThemeBuilder and accepted
+     by CFPaymentGatewayService.doPayment(session, theme).
+
+     All fields are optional — the SDK falls back to sensible
+     defaults when omitted.
+     ═══════════════════════════════════════════════════════════ */
+  export interface CFTheme {
+    backgroundColor?: string;
+    primaryTextColor?: string;
+    secondaryTextColor?: string;
+    buttonBackgroundColor?: string;
+    buttonTextColor?: string;
+    navigationBarBackgroundColor?: string;
+    navigationBarTextColor?: string;
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     ✅ NEW: Fluent theme builder.
+
+     The SDK ships a `CFThemeBuilder` class that produces the
+     theme object. `lib/cashfree.ts` imports it as:
+
+         import { CFThemeBuilder } from "react-native-cashfree-pg-sdk";
+
+     Chain setters, then call `.build()` to obtain the final
+     object to pass to `doPayment`.
+     ═══════════════════════════════════════════════════════════ */
+  export class CFThemeBuilder {
+    setNavigationBarBackgroundColor(color: string): CFThemeBuilder;
+    setNavigationBarTextColor(color: string): CFThemeBuilder;
+    setButtonBackgroundColor(color: string): CFThemeBuilder;
+    setButtonTextColor(color: string): CFThemeBuilder;
+    setPrimaryTextColor(color: string): CFThemeBuilder;
+    setSecondaryTextColor(color: string): CFThemeBuilder;
+    setBackgroundColor(color: string): CFThemeBuilder;
+    build(): CFTheme;
+  }
+
   /**
    * Main payment gateway service. Singleton — do NOT instantiate.
    */
@@ -63,11 +123,30 @@ declare module "react-native-cashfree-pg-sdk" {
     doUPIPayment(session: any): void;
 
     /**
-     * Opens the native checkout with a specific payment mode.
-     * Not used in KatBox.
+     * Opens the native checkout.
+     *
+     * ✅ UPDATED SIGNATURE:
+     *   The second argument is a theme object (produced by
+     *   CFThemeBuilder.build()) OR a payment-mode enum. Accepting
+     *   a union lets both call styles compile without forcing
+     *   callers to cast.
      */
-    doPayment(session: any, paymentMode: any): void;
+    doPayment(session: any, themeOrMode?: CFTheme | any): void;
   };
+
+  /**
+   * Session class re-exported at the top level. Same class as the
+   * one declared in the `cashfree-pg-api-contract` module — both
+   * point at the runtime implementation.
+   */
+  export class CFSession {
+    constructor(
+      paymentSessionId: string,
+      orderId: string,
+      environment: CFEnvironment | string,
+      paymentModes?: any[]
+    );
+  }
 }
 
 declare module "cashfree-pg-api-contract" {
@@ -124,3 +203,103 @@ declare module "cashfree-pg-api-contract" {
     build(): any;
   }
 }
+
+/* ═════════════════════════════════════════════════════════════════
+   ✅ COMPAT WRAPPER — startCashfreePayment
+   ═════════════════════════════════════════════════════════════════
+   checkout.tsx calls:
+       startCashfreePayment({
+         amount,
+         orderPayload,
+         customerId,
+       })
+     → expects { success, order, message }
+
+   Internally this delegates to `runCashfreePaymentFlow`. On success
+   it POSTs the full order to the backend with the verified Cashfree
+   payment metadata attached.
+   ═════════════════════════════════════════════════════════════════ */
+
+export const startCashfreePayment = async (params: {
+  amount: number;
+  orderPayload: Record<string, any>;
+  customerId?: string;
+}): Promise<{
+  success: boolean;
+  order?: any;
+  message?: string;
+  orderId?: string;
+  paymentId?: string;
+}> => {
+  try {
+    const { amount, orderPayload, customerId } = params;
+
+    // Pull the service type out of the payload so `computeAdvanceSplit`
+    // charges the correct amount (45% for catering/mealbox, full for others).
+    const serviceType = String(orderPayload?.serviceType || "");
+    const advanceService =
+      serviceType === "catering" || serviceType === "mealbox";
+
+    // Run the full Cashfree flow (create order → SDK → verify).
+    const flow = await runCashfreePaymentFlow({
+      serviceType,
+      totalAmount: Number(orderPayload?.totalAmount) || amount,
+      customerId,
+      customerName: orderPayload?.userName,
+      customerPhone: orderPayload?.userPhone,
+    });
+
+    if (!flow.ok) {
+      return {
+        success: false,
+        message: flow.message || "Payment was not completed.",
+      };
+    }
+
+    // Payment verified — now POST the order to the backend, attaching
+    // the Cashfree metadata so the backend can persist paymentStatus,
+    // chefStatus, deliveryStatus, and the payment badge correctly.
+    const enrichedPayload: Record<string, any> = {
+      ...orderPayload,
+      // Cashfree reference fields
+      cashfreeOrderId: flow.orderId,
+      cashfreePaymentId: flow.paymentId,
+      cashfreeSignature: flow.signature,
+      // Amount actually charged (advance for catering/mealbox, full for others)
+      chargedAmount: flow.chargeAmount,
+      // Explicit flags the backend uses for the payment badge + gate
+      isAdvanceOrder: advanceService,
+      advancePercent: advanceService ? 45 : 0,
+    };
+
+    const res = await api.post("/api/orders/create", enrichedPayload, {
+      headers: { "Content-Type": "application/json" },
+    });
+
+    if (res.data && res.data.success) {
+      return {
+        success: true,
+        order: res.data.order,
+        orderId: res.data.order?.orderId,
+        paymentId: flow.paymentId,
+      };
+    }
+
+    return {
+      success: false,
+      message: res.data?.message || "Failed to store order after payment.",
+    };
+  } catch (err: any) {
+    console.log(
+      "startCashfreePayment error:",
+      err?.response?.data || err?.message || err
+    );
+    return {
+      success: false,
+      message:
+        err?.response?.data?.message ||
+        err?.message ||
+        "Something went wrong while processing the payment.",
+    };
+  }
+};

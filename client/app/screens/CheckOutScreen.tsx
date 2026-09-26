@@ -26,11 +26,16 @@ import {
   updateUserAddress,
   ActiveAddress,
   SavedAddress,
+  // ✅ NEW: read the cached Expo push token so we can embed it in the
+  //         order payload — this lets the backend fire killed-app
+  //         notifications the moment the order is created.
+  getCachedPushToken,
 } from "@/src/lib/authStorage";
 // ✅ NEW: read the active delivery location (lat/lng) from the global store
 import { useDeliveryLocationStore } from "@/src/store/deliveryLocationStore";
+import { startCashfreePayment } from "@/src/types/cashfree";
 // ✅ NEW: Cashfree payment helper — used for Mealbox/Catering (and Homemade/QuickBites when user pays online)
-import { startCashfreePayment } from "@/src/lib/cashfree";
+
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -66,6 +71,10 @@ export default function CheckOutScreen() {
   const [loading, setLoading] = useState(false);
   // ✅ NEW: guards against double-tapping "Place Order" while Cashfree is open
   const [paymentInProgress, setPaymentInProgress] = useState(false);
+
+  // ✅ NEW: cached Expo push token — sent with the order payload so the
+  //         backend can fire killed-app notifications immediately.
+  const [cachedPushToken, setCachedPushToken] = useState<string | null>(null);
 
   const serviceType = (params.serviceType as string) || "mealbox";
   // ✅ QuickBites detection — separate flow flag, but same UI as homemade.
@@ -206,6 +215,20 @@ export default function CheckOutScreen() {
     },
     [confirmScale, confirmOpacity, confirmTranslateY]
   );
+
+  // ✅ NEW: Load the cached push token once on mount. Sent in the order
+  //    payload so the backend can fire immediate killed-app notifications
+  //    to the customer as soon as the order is created.
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await getCachedPushToken();
+        if (token) setCachedPushToken(token);
+      } catch (e) {
+        // silent — push token is best-effort
+      }
+    })();
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -420,6 +443,29 @@ export default function CheckOutScreen() {
   }, [isHomemadeFlow, selectedPaymentMethod, payLaterAmount, payNowAmount]);
 
   /**
+   * ✅ NEW: Section header label for the payment method block.
+   *    Catering/Mealbox are online-only (COD hidden), so we spell that
+   *    out so customers understand why no COD row is shown.
+   */
+  const paymentSectionHeaderLabel = useMemo(() => {
+    if (isHomemadeFlow) return "Choose a payment method";
+    return "Pay 45% Advance (Online Only)";
+  }, [isHomemadeFlow]);
+
+  /**
+   * ✅ NEW: Confirmation modal title copy — kept dynamic.
+   */
+  const confirmModalTitle = useMemo(() => {
+    if (isHomemadeFlow && selectedPaymentMethod === "cod") {
+      return "Confirm Cash on Delivery";
+    }
+    if (isHomemadeFlow) {
+      return "Confirm Online Payment";
+    }
+    return "Confirm Advance Payment";
+  }, [isHomemadeFlow, selectedPaymentMethod]);
+
+  /**
    * ✅ NEW — handleConfirmPlaceOrder
    *
    *  Branch 1: Homemade/QuickBites + COD
@@ -453,6 +499,9 @@ export default function CheckOutScreen() {
           const resolvedDeliveryFullAddress =
             deliveryLocation?.fullAddress || activeAddress?.fullAddress || addressDetails;
 
+          // ✅ NEW: Compose the push-token string for the payload — best effort.
+          const pushTokenValue = cachedPushToken ? String(cachedPushToken) : "";
+
           // ---------- Branch 1: Homemade/QuickBites + COD → direct order creation ----------
           if (isHomemadeFlow && selectedPaymentMethod === "cod") {
             const formData = new FormData();
@@ -483,6 +532,10 @@ export default function CheckOutScreen() {
             formData.append("deliverySlot", dynamicHomemadeSlotLabel || "30–45 min");
             formData.append("isQuickBites", isQuickBites ? "true" : "false");
             formData.append("deliveryWindowMinutes", isQuickBites ? "75" : "0");
+            // ✅ NEW: badges + push token
+            formData.append("isAdvanceOrder", "false");
+            formData.append("advancePercent", "0");
+            if (pushTokenValue) formData.append("customerPushToken", pushTokenValue);
             if (liveEstimatedDeliveryAt) {
               formData.append("estimatedDeliveryAtMs", String(liveEstimatedDeliveryAt.getTime()));
             }
@@ -533,7 +586,17 @@ export default function CheckOutScreen() {
             advancePaidAmount: isHomemadeFlow ? numericTotal : advanceAmount,
             balanceAmountToCollect: isHomemadeFlow ? 0 : balanceAmount,
             paymentMethod: "online",
+            // ✅ NEW: badges — helps the backend build the merged payment badge
+            //         on customer / admin / chef cards without recomputing.
+            isAdvanceOrder: !isHomemadeFlow,
+            advancePercent: !isHomemadeFlow ? 45 : 0,
           };
+
+          // ✅ NEW: attach push token — backend stores it on the order so
+          //         killed-app notifications can fire immediately.
+          if (pushTokenValue) {
+            orderPayload.customerPushToken = pushTokenValue;
+          }
 
           // Flow-specific fields
           if (isCateringFlow) {
@@ -984,8 +1047,11 @@ export default function CheckOutScreen() {
           </View>
         )}
 
-        {/* Choose a Payment Method Section */}
-        <Text style={styles.choosePaymentHeaderLabel}>Choose a payment method</Text>
+        {/* Choose a Payment Method Section
+            ✅ NEW: header label is dynamic — Catering/Mealbox shows
+            "Pay 45% Advance (Online Only)" so customers understand why
+            COD isn't offered. */}
+        <Text style={styles.choosePaymentHeaderLabel}>{paymentSectionHeaderLabel}</Text>
 
         {/* 1. UPI Payment Option */}
         <TouchableOpacity
@@ -1090,7 +1156,9 @@ export default function CheckOutScreen() {
 
         {/* 5. Cash on Delivery Option
             ✅ Only shown for Homemade / QuickBites.
-            Mealbox & Catering do NOT have a COD option — advance is mandatory. */}
+            Mealbox & Catering do NOT have a COD option — advance is mandatory.
+            The entire card is hidden (not just disabled) since the online-only
+            label at the top already explains the constraint. */}
         {isHomemadeFlow && (
           <TouchableOpacity
             activeOpacity={0.9}
@@ -1359,13 +1427,9 @@ export default function CheckOutScreen() {
               <Ionicons name="receipt-outline" size={28} color="#FAF8F5" />
             </View>
 
-            <Text style={styles.confirmTitle}>
-              {isHomemadeFlow && selectedPaymentMethod === "cod"
-                ? "Confirm Cash on Delivery"
-                : isHomemadeFlow
-                ? "Confirm Online Payment"
-                : "Confirm Advance Payment"}
-            </Text>
+            {/* ✅ FIX: title now uses the memoised copy so all three flows
+                render the correct heading consistently. */}
+            <Text style={styles.confirmTitle}>{confirmModalTitle}</Text>
 
             <Text style={styles.confirmSubtitle}>
               {isHomemadeFlow && selectedPaymentMethod === "cod" ? (

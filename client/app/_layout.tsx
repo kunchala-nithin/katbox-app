@@ -8,10 +8,13 @@ import * as Notifications from 'expo-notifications'
 import * as Device from 'expo-device'
 import Constants from 'expo-constants'
 
-import { getToken, removeToken, getUser } from '@/src/lib/authStorage'
+import { getToken, removeToken, getUser, savePushToken } from '@/src/lib/authStorage'
 import { subscribeAuth } from '@/src/lib/authEvents'
 import { isTokenExpired, getTokenExpiry } from '@/src/lib/jwtUtils'
 import api from '@/src/lib/api'
+// ✅ NEW: Socket.IO client used to join role-scoped rooms for realtime
+//         chef-accept / stepper updates. Never throws if unavailable.
+import { socket } from '@/src/lib/socket'
 
 export { ErrorBoundary } from 'expo-router'
 
@@ -37,31 +40,41 @@ Notifications.setNotificationHandler({
    channel would not exist yet — and Android would fall back to
    a silent default channel.
 
-   We proactively create BOTH alarm channels here at module load
-   so the very first order is guaranteed to ring with the bundled
-   alarm.mp3 sound, even if the user has never opened the tab.
+   We proactively create ALL three alarm channels here at
+   module load so the very first order is guaranteed to ring
+   with the bundled alarm.mp3 sound, even if the user has never
+   opened the relevant tab.
+
+   Channel IDs MUST match:
+     • lib/orderAlarm.ts     (client constant)
+     • server/utils/expoPush.ts  (backend constant)
    ───────────────────────────────────────────────────────────── */
 if (Platform.OS === 'android') {
   ;(async () => {
     try {
       const alarmChannels = [
-        { id: 'admin_orders_alarm', name: 'Admin Order Alarms' },
-        { id: 'chef_orders_alarm', name: 'Chef Order Alarms' },
+        { id: 'orders-alarm-admin', name: 'Admin Order Alarms' },
+        { id: 'orders-alarm-chef', name: 'Chef Order Alarms' },
+        { id: 'orders-customer', name: 'Order Updates' },
       ]
 
       for (const ch of alarmChannels) {
         await Notifications.setNotificationChannelAsync(ch.id, {
           name: ch.name,
-          importance: Notifications.AndroidImportance?.MAX ?? 5,
+          importance:
+            ch.id === 'orders-customer'
+              ? (Notifications.AndroidImportance?.HIGH ?? 4)
+              : (Notifications.AndroidImportance?.MAX ?? 5),
           vibrationPattern: [0, 600, 300, 600, 300],
-          sound: 'alarm',
+          sound: ch.id === 'orders-customer' ? 'default' : 'alarm.mp3',
           enableVibrate: true,
-          bypassDnd: true,
+          bypassDnd: ch.id !== 'orders-customer',
           lockscreenVisibility:
             Notifications.AndroidNotificationVisibility?.PUBLIC,
           audioAttributes: {
             usage: Notifications.AndroidAudioUsage?.NOTIFICATION,
-            contentType: Notifications.AndroidAudioContentType?.SONIFICATION,
+            contentType:
+              Notifications.AndroidAudioContentType?.SONIFICATION,
           },
         })
       }
@@ -284,6 +297,52 @@ function InitialLayout() {
 
   /*
    * ------------------------------------------------------------
+   * ✅ ROLE-SCOPED SOCKET ROOM JOIN
+   * ------------------------------------------------------------
+   *
+   * After authentication succeeds, we ask the socket client to
+   * join the appropriate realtime rooms:
+   *
+   *   • userId      → customer's private room (order updates)
+   *   • "admins"    → shared admin broadcast room
+   *   • "chefs"     → shared chef broadcast room
+   *
+   * This is what makes chef-accept / stepper-changed events
+   * reach the correct devices in real time.
+   *
+   * Safe to call multiple times; the server ignores duplicates.
+   */
+  const joinRoleSocketRooms = useCallback(async () => {
+    try {
+      if (!socket) return
+
+      const user = await getUser()
+      const userId = user?.id || user?._id
+
+      if (userId) {
+        socket.emit('join', String(userId))
+      }
+
+      if (user?.isAdmin) {
+        socket.emit('join', 'admins')
+      }
+
+      if (user?.isChef) {
+        socket.emit('join', 'chefs')
+      }
+
+      console.log('🔌 Socket joined rooms for role:', {
+        userId,
+        isAdmin: !!user?.isAdmin,
+        isChef: !!user?.isChef,
+      })
+    } catch (err) {
+      console.log('Socket join rooms error:', err)
+    }
+  }, [])
+
+  /*
+   * ------------------------------------------------------------
    * AUTH STATE LISTENER
    * ------------------------------------------------------------
    *
@@ -337,6 +396,18 @@ function InitialLayout() {
 
   /*
    * ------------------------------------------------------------
+   * ✅ ROLE-AWARE SOCKET ROOM JOIN (fires whenever auth flips
+   * to authenticated).
+   * ------------------------------------------------------------
+   */
+  useEffect(() => {
+    if (isAuthenticated === true) {
+      joinRoleSocketRooms()
+    }
+  }, [isAuthenticated, joinRoleSocketRooms])
+
+  /*
+   * ------------------------------------------------------------
    * SPLASH SCREEN
    * ------------------------------------------------------------
    */
@@ -375,6 +446,17 @@ function InitialLayout() {
         const token = await registerForPushNotificationsAsync()
 
         if (token && isMounted) {
+          // ✅ Persist locally first so checkout.tsx can read it
+          //    immediately when creating an order.
+          try {
+            await savePushToken(token)
+          } catch (localErr) {
+            console.log(
+              '⚠️ Local push token cache write failed:',
+              localErr
+            )
+          }
+
           api
             .patch('/api/auth/update-profile', {
               pushToken: token,
@@ -398,6 +480,12 @@ function InitialLayout() {
 
     /*
      * Notification tap navigation.
+     *
+     * Extended for the new lifecycle events:
+     *   • chef_accepted_order → customer's Orders tab
+     *   • chef_rejected_order → customer's Orders tab
+     *   • stepper_updated     → customer's Orders tab
+     *   • delivery_status_updated → customer's Orders tab
      */
     const subscription =
       Notifications.addNotificationResponseReceivedListener(
@@ -424,6 +512,15 @@ function InitialLayout() {
                 '/admin/all-orders' as any
               )
 
+              return
+            }
+
+            /*
+             * ✅ NEW: Customer order lifecycle events all deep-link
+             *         to the customer's Orders tab.
+             */
+            if (data?.screen === 'orders') {
+              router.push('/(tabs)/Orders' as any)
               return
             }
 

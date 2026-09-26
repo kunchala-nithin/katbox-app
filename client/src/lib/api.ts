@@ -29,6 +29,11 @@ export const getBaseUrl = (): string => {
 
 export const BASE_URL = getBaseUrl();
 
+// ✅ NEW: Socket.IO uses the same base URL as the REST API.
+// Exported so the socket client can `import { SOCKET_URL }` without
+// having to re-derive it or duplicate the env-var logic.
+export const SOCKET_URL = BASE_URL;
+
 console.log("🌐 USING BASE URL:", BASE_URL);
 
 // 🔥 AXIOS INSTANCE
@@ -100,5 +105,66 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/**
+ * ============================================================
+ * ✅ NEW: GET SOCKET AUTH PAYLOAD
+ * ============================================================
+ *
+ * Returns the JWT + (optional) userId + role so the Socket.IO
+ * client can authenticate the handshake and immediately join
+ * the correct rooms:
+ *
+ *   • userId       → private room for this user (order updates)
+ *   • "admins"     → shared room for admin devices
+ *   • "chefs"      → shared room for chef devices
+ *
+ * Called once in `lib/socket.ts` when establishing a connection.
+ * Never throws — returns null on any failure so callers can
+ * gracefully skip auth (server allows anonymous connects).
+ */
+export const getSocketAuth = async (): Promise<{
+  token: string | null;
+  userId: string | null;
+  role: "customer" | "chef" | "admin";
+} | null> => {
+  try {
+    const token = await getToken();
+    if (!token) {
+      return { token: null, userId: null, role: "customer" };
+    }
+
+    // Best-effort decode of the JWT payload to grab userId + role.
+    // We deliberately avoid adding a `jwt-decode` dependency — the
+    // payload is base64 and we only need two fields.
+    let userId: string | null = null;
+    let role: "customer" | "chef" | "admin" = "customer";
+
+    try {
+      const parts = token.split(".");
+      if (parts.length === 3) {
+        // Base64URL → Base64 padding fix.
+        const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+        const json = JSON.parse(
+          // eslint-disable-next-line no-undef
+          typeof atob === "function"
+            ? atob(padded)
+            : Buffer.from(padded, "base64").toString("binary")
+        );
+        userId = String(json.userId || json._id || json.id || "") || null;
+        if (json.isAdmin === true) role = "admin";
+        else if (json.isChef === true) role = "chef";
+      }
+    } catch (decodeErr) {
+      // Silent — token format may differ, that's fine.
+    }
+
+    return { token, userId, role };
+  } catch (err) {
+    console.log("❌ getSocketAuth error:", err);
+    return null;
+  }
+};
 
 export default api;

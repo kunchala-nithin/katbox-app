@@ -565,6 +565,76 @@ const notifyAdminsAboutOrder = async (order: any, isAutoAccepted: boolean) => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Broadcast a socket event to the "admins" and
+   "chefs" rooms (joined at login by the admin/chef layouts) plus
+   the specific customer + chef user rooms for this order.
+   ───────────────────────────────────────────────────────────────── */
+const emitToAdminsAndChefs = (eventName: string, payload: any, order?: any) => {
+  try {
+    io.to("admins").emit(eventName, payload);
+    io.to("chefs").emit(eventName, payload);
+    io.emit(eventName, payload);
+    io.emit("order_updated", payload);
+
+    if (order?.userId) {
+      io.to(String(order.userId)).emit(eventName, payload);
+      io.to(String(order.userId)).emit("order_updated", payload);
+    }
+    if (order?.chefId) {
+      io.to(String(order.chefId)).emit(eventName, payload);
+      io.to(String(order.chefId)).emit("order_updated", payload);
+    }
+  } catch (e) {
+    console.log("emitToAdminsAndChefs warning:", e);
+  }
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Push a step-change notification to the customer
+   (works when the customer app is minimized/killed).
+   ───────────────────────────────────────────────────────────────── */
+const notifyCustomerOfStepChange = async (
+  order: any,
+  rawStatus: string,
+  extraData: any = {}
+) => {
+  try {
+    if (!order?.userId || !mongoose.Types.ObjectId.isValid(order.userId)) return;
+    const customerDoc = await User.findById(order.userId);
+    const token = customerDoc?.pushToken || order?.customerPushToken;
+    if (!token || !isValidExpoToken(String(token))) return;
+
+    const msg = getCustomerStatusMessage(rawStatus, order.orderId);
+    await sendExpoPush({
+      token: String(token),
+      title: msg.title,
+      body: msg.body,
+      data: {
+        orderId: order.orderId,
+        screen: "orders",
+        role: "customer",
+        status: rawStatus,
+        ...extraData,
+      },
+      sound: "default",
+      priority: "high",
+    });
+
+    order.customerNotifiedAt = new Date();
+    try {
+      await Order.updateOne(
+        { _id: order._id },
+        { $set: { customerNotifiedAt: new Date() } }
+      );
+    } catch (_) {
+      // silent
+    }
+  } catch (err) {
+    console.log("notifyCustomerOfStepChange warning:", err);
+  }
+};
+
 // Background cron reminder for feedbacks
 setInterval(async () => {
   try {
@@ -853,6 +923,40 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         ? orderPlacedAt
         : null;
 
+    // ────────────────────────────────────────────────────────────────
+    // ✅ NEW: Resolve the initial chefStatus + deliveryStatus used for
+    //    the 5-step stepper visibility + payment badge logic.
+    // ────────────────────────────────────────────────────────────────
+    const initialChefStatus: "pending" | "accepted" | "rejected" =
+      requiresChefGate ? "pending" : "accepted";
+    const initialDeliveryStatus:
+      | "accepted"
+      | "preparing"
+      | "ready"
+      | "out_for_delivery"
+      | "delivered"
+      | "cancelled" = "accepted";
+
+    const isAdvanceOrder = isAdvanceBasedService(resolvedServiceType);
+    const advancePercent = isAdvanceOrder ? 45 : 0;
+    const resolvedCodAmount =
+      incomingPaymentMethod === "cod"
+        ? finalBalance > 0
+          ? finalBalance
+          : numericTotal
+        : 0;
+
+    // ✅ NEW: Resolve customer push token for killed-app notifications.
+    let resolvedCustomerPushToken = "";
+    try {
+      if (finalUserId && mongoose.Types.ObjectId.isValid(finalUserId)) {
+        const custDoc = await User.findById(finalUserId).select("pushToken");
+        if (custDoc?.pushToken) resolvedCustomerPushToken = String(custDoc.pushToken);
+      }
+    } catch (_) {
+      // silent
+    }
+
     let savedOrder: any = null;
 
     // ────────────────────────────────────────────────────────────────
@@ -930,6 +1034,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         // ✅ NEW: Persist the resolved special-instruction object
         specialInstruction: resolvedSpecialInstruction,
 
+        // ✅ NEW: Chef gate + delivery status + badge + push fields
+        chefStatus: initialChefStatus,
+        deliveryStatus: initialDeliveryStatus,
+        deliveryStatusUpdatedAt: orderPlacedAt,
+        deliveryStatusUpdatedBy: "system",
+        isAdvanceOrder: false,
+        advancePercent: 0,
+        codAmount: resolvedCodAmount,
+        customerPushToken: resolvedCustomerPushToken,
+
         statusTimeline: [
           {
             status: initialStatuses.orderStatus,
@@ -1000,6 +1114,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
         // ✅ NEW: Persist the resolved special-instruction object
         specialInstruction: resolvedSpecialInstruction,
+
+        // ✅ NEW: Chef gate + delivery status + badge + push fields
+        chefStatus: initialChefStatus,
+        deliveryStatus: initialDeliveryStatus,
+        deliveryStatusUpdatedAt: orderPlacedAt,
+        deliveryStatusUpdatedBy: "system",
+        isAdvanceOrder: true,
+        advancePercent: advancePercent,
+        codAmount: resolvedCodAmount,
+        customerPushToken: resolvedCustomerPushToken,
 
         statusTimeline: [
           {
@@ -1078,6 +1202,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
         // ✅ NEW: Persist the resolved special-instruction object
         specialInstruction: resolvedSpecialInstruction,
+
+        // ✅ NEW: Chef gate + delivery status + badge + push fields
+        chefStatus: initialChefStatus,
+        deliveryStatus: initialDeliveryStatus,
+        deliveryStatusUpdatedAt: orderPlacedAt,
+        deliveryStatusUpdatedBy: "system",
+        isAdvanceOrder: true,
+        advancePercent: advancePercent,
+        codAmount: resolvedCodAmount,
+        customerPushToken: resolvedCustomerPushToken,
 
         statusTimeline: [
           {
@@ -1221,9 +1355,24 @@ export const acceptOrderByAdmin = async (req: AuthRequest, res: Response) => {
     order.adminAcceptedBy = String(rawAdminId || "");
     order.orderStatus = "Accepted";
 
-    if (!order.chefAcceptedAt) {
-      (order as any).chefAcceptedAt = now;
-      (order as any).chefAcceptedBy = "system:admin-accept";
+    // ✅ NEW: Only auto-accept chef gate if this order does NOT require
+    //    explicit chef acceptance. Otherwise leave chefStatus="pending"
+    //    so the stepper stays hidden until the chef acts.
+    const requiresChefGate = requiresChefAcceptanceGate(
+      String(order.serviceType || ""),
+      String(order.paymentMethod || "")
+    );
+
+    if (!requiresChefGate) {
+      if (!(order as any).chefAcceptedAt) {
+        (order as any).chefAcceptedAt = now;
+        (order as any).chefAcceptedBy = "system:admin-accept";
+      }
+      if (!order.chefStatus || order.chefStatus === "pending") {
+        order.chefStatus = "accepted";
+      }
+    } else {
+      if (!order.chefStatus) order.chefStatus = "pending";
     }
 
     order.statusTimeline = order.statusTimeline || [];
@@ -1235,39 +1384,18 @@ export const acceptOrderByAdmin = async (req: AuthRequest, res: Response) => {
 
     const updatedOrder = await order.save();
 
-    await notifyChefAboutOrder(updatedOrder);
+    if (!requiresChefGate) {
+      await notifyChefAboutOrder(updatedOrder);
+    }
 
     try {
-      io.emit("order_updated", updatedOrder);
-      io.emit("order_status_updated", updatedOrder);
-      if (updatedOrder.userId) {
-        io.to(String(updatedOrder.userId)).emit("order_updated", updatedOrder);
-        io.to(String(updatedOrder.userId)).emit("order_status_updated", updatedOrder);
-      }
+      emitToAdminsAndChefs("order_status_updated", updatedOrder, updatedOrder);
     } catch (e) {
       console.log("Socket emit warning (admin-accept):", e);
     }
 
     try {
-      if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
-        const customerDoc = await User.findById(updatedOrder.userId);
-        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
-          const msg = getCustomerStatusMessage("Accepted", updatedOrder.orderId);
-          await sendExpoPush({
-            token: String(customerDoc.pushToken),
-            title: msg.title,
-            body: msg.body,
-            data: {
-              orderId: updatedOrder.orderId,
-              screen: "orders",
-              role: "customer",
-              status: "Accepted",
-            },
-            sound: "default",
-            priority: "high",
-          });
-        }
-      }
+      await notifyCustomerOfStepChange(updatedOrder, "Accepted");
     } catch (customerPushErr) {
       console.log("Customer accept push error:", customerPushErr);
     }
@@ -1285,6 +1413,8 @@ export const acceptOrderByAdmin = async (req: AuthRequest, res: Response) => {
 
 /**
  * PATCH /api/orders/:orderId/chef-accept
+ *
+ * Chef accepts the order. Unlocks the 5-step stepper on all UIs.
  */
 export const chefAcceptOrder = async (req: AuthRequest, res: Response) => {
   try {
@@ -1305,7 +1435,7 @@ export const chefAcceptOrder = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    if ((order as any).chefAcceptedAt) {
+    if ((order as any).chefAcceptedAt || order.chefStatus === "accepted") {
       return res.status(200).json({
         success: true,
         message: "Order already accepted by chef.",
@@ -1316,6 +1446,12 @@ export const chefAcceptOrder = async (req: AuthRequest, res: Response) => {
     const now = new Date();
     (order as any).chefAcceptedAt = now;
     (order as any).chefAcceptedBy = String(rawChefUserId || "chef");
+
+    // ✅ NEW: Unlock the stepper.
+    order.chefStatus = "accepted";
+    order.deliveryStatus = "accepted";
+    order.deliveryStatusUpdatedAt = now;
+    order.deliveryStatusUpdatedBy = "chef";
 
     if (String(order.orderStatus || "").toLowerCase() === "placed") {
       order.orderStatus = "Accepted";
@@ -1332,40 +1468,19 @@ export const chefAcceptOrder = async (req: AuthRequest, res: Response) => {
 
     const updatedOrder = await order.save();
 
+    // ✅ NEW: Broadcast to admins + chefs + customer + chef rooms
     try {
-      io.emit("order_updated", updatedOrder);
-      io.emit("order_status_updated", updatedOrder);
-      if (updatedOrder.userId) {
-        io.to(String(updatedOrder.userId)).emit("order_updated", updatedOrder);
-        io.to(String(updatedOrder.userId)).emit("order_status_updated", updatedOrder);
-      }
-      if (updatedOrder.chefId) {
-        io.to(String(updatedOrder.chefId)).emit("order_updated", updatedOrder);
-        io.to(String(updatedOrder.chefId)).emit("order_status_updated", updatedOrder);
-      }
+      emitToAdminsAndChefs("order_status_updated", updatedOrder, updatedOrder);
+      io.emit("chef_accepted_order", updatedOrder);
+      io.to("admins").emit("chef_accepted_order", updatedOrder);
+      io.to("chefs").emit("chef_accepted_order", updatedOrder);
     } catch (e) {
       console.log("Socket emit warning (chef-accept):", e);
     }
 
+    // ✅ NEW: Notify customer with chef-acceptance push
     try {
-      if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
-        const customerDoc = await User.findById(updatedOrder.userId);
-        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
-          await sendExpoPush({
-            token: String(customerDoc.pushToken),
-            title: "✅ Order Accepted by Chef",
-            body: `Chef has accepted your order #${updatedOrder.orderId}. Preparation will begin shortly.`,
-            data: {
-              orderId: updatedOrder.orderId,
-              screen: "orders",
-              role: "customer",
-              status: "Accepted",
-            },
-            sound: "default",
-            priority: "high",
-          });
-        }
-      }
+      await notifyCustomerOfStepChange(updatedOrder, "Accepted");
     } catch (customerPushErr) {
       console.log("Customer chef-accept push error:", customerPushErr);
     }
@@ -1377,6 +1492,231 @@ export const chefAcceptOrder = async (req: AuthRequest, res: Response) => {
     });
   } catch (error: any) {
     console.error("Error in chefAcceptOrder:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * PATCH /api/orders/:orderId/chef-reject
+ *
+ * ✅ NEW — Chef rejects the order.
+ *   • chefStatus → "rejected"
+ *   • orderStatus → "Cancelled"
+ *   • deliveryStatus → "cancelled"
+ *   • Notifies customer + admin via socket + push
+ */
+export const chefRejectOrder = async (req: AuthRequest, res: Response) => {
+  try {
+    const rawChefUserId = req.user?.userId || req.user?._id || req.user?.id;
+    const { orderId } = req.params;
+    const reason = String(req.body?.reason || "").trim();
+
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (order.chefStatus === "rejected") {
+      return res.status(200).json({
+        success: true,
+        message: "Order already rejected by chef.",
+        order,
+      });
+    }
+
+    const now = new Date();
+
+    order.chefStatus = "rejected";
+    order.chefRejectedAt = now;
+    order.chefRejectionReason = reason;
+    order.deliveryStatus = "cancelled";
+    order.deliveryStatusUpdatedAt = now;
+    order.deliveryStatusUpdatedBy = "chef";
+    order.orderStatus = "Cancelled";
+
+    order.statusTimeline = order.statusTimeline || [];
+    order.statusTimeline.push({
+      status: "Chef Rejected",
+      timestamp: now,
+      note: reason
+        ? `Chef rejected the order. Reason: ${reason}`
+        : `Chef rejected the order${
+            rawChefUserId ? ` (chef user: ${rawChefUserId})` : ""
+          }`,
+    });
+
+    const updatedOrder = await order.save();
+
+    // ✅ Broadcast to admins + chefs + customer + chef rooms
+    try {
+      emitToAdminsAndChefs("order_status_updated", updatedOrder, updatedOrder);
+      io.emit("chef_rejected_order", updatedOrder);
+      io.to("admins").emit("chef_rejected_order", updatedOrder);
+      io.to("chefs").emit("chef_rejected_order", updatedOrder);
+    } catch (e) {
+      console.log("Socket emit warning (chef-reject):", e);
+    }
+
+    // ✅ Notify customer of cancellation
+    try {
+      await notifyCustomerOfStepChange(updatedOrder, "Cancelled");
+    } catch (customerPushErr) {
+      console.log("Customer chef-reject push error:", customerPushErr);
+    }
+
+    // ✅ Notify admins
+    try {
+      const admins = await User.find({
+        isAdmin: true,
+        pushToken: { $exists: true, $ne: "" },
+      }).select("pushToken");
+
+      const validAdmins = admins.filter((a: any) =>
+        isValidExpoToken(a.pushToken)
+      );
+
+      if (validAdmins.length > 0) {
+        const adminPayloads = validAdmins.map((admin: any) => ({
+          token: String(admin.pushToken),
+          title: `❌ Chef Rejected Order ${updatedOrder.orderId}`,
+          body: reason
+            ? `Reason: ${reason}`
+            : `${updatedOrder.userName || "Customer"}'s order was rejected by chef.`,
+          data: {
+            orderId: updatedOrder.orderId,
+            screen: "admin-orders",
+            role: "admin",
+            status: "Cancelled",
+          },
+          sound: ORDER_ALARM_SOUND,
+          channelId: ADMIN_ORDER_CHANNEL_ID,
+          priority: "max" as const,
+          vibrate: [0, 600, 300, 600, 300],
+        }));
+        await sendExpoPushBatch(adminPayloads);
+      }
+    } catch (adminPushErr) {
+      console.log("Admin chef-reject push error:", adminPushErr);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Order rejected by chef.",
+      order: updatedOrder,
+    });
+  } catch (error: any) {
+    console.error("Error in chefRejectOrder:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * PATCH /api/orders/:orderId/delivery-status
+ *
+ * ✅ NEW — Chef or admin advances the 5-step stepper.
+ *   accepted → preparing → ready → out_for_delivery → delivered
+ * Also notifies customer via socket + push on every step change.
+ */
+export const updateDeliveryStatus = async (req: AuthRequest, res: Response) => {
+  try {
+    const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
+    const { orderId } = req.params;
+    const { status, note, updatedBy } = req.body;
+
+    const VALID_STATUSES = [
+      "accepted",
+      "preparing",
+      "ready",
+      "out_for_delivery",
+      "delivered",
+      "cancelled",
+    ] as const;
+    type DeliveryStatus = (typeof VALID_STATUSES)[number];
+
+    const nextStatusRaw = String(status || "").trim().toLowerCase();
+    if (!VALID_STATUSES.includes(nextStatusRaw as DeliveryStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Allowed: ${VALID_STATUSES.join(", ")}`,
+      });
+    }
+    const nextStatus = nextStatusRaw as DeliveryStatus;
+
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (order.chefStatus !== "accepted" && nextStatus !== "cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "Chef must accept the order before advancing delivery status.",
+      });
+    }
+
+    const now = new Date();
+    const actor: "chef" | "admin" | "system" =
+      updatedBy === "admin" ? "admin" : updatedBy === "chef" ? "chef" : "chef";
+
+    order.deliveryStatus = nextStatus;
+    order.deliveryStatusUpdatedAt = now;
+    order.deliveryStatusUpdatedBy = actor;
+
+    // Keep orderStatus in sync for legacy consumers
+    if (nextStatus === "delivered") {
+      order.orderStatus = "Delivered";
+      if (!order.actualDeliveredAt) order.actualDeliveredAt = now;
+    } else if (nextStatus === "cancelled") {
+      order.orderStatus = "Cancelled";
+    } else if (nextStatus === "preparing") {
+      order.orderStatus = "Preparing";
+      if (!order.prepStartedAt) order.prepStartedAt = now;
+    } else if (nextStatus === "ready") {
+      order.orderStatus = "Prepared & Packing";
+    } else if (nextStatus === "out_for_delivery") {
+      order.orderStatus = "Out for Delivery";
+    } else if (nextStatus === "accepted") {
+      order.orderStatus = "Accepted";
+    }
+
+    order.statusTimeline = order.statusTimeline || [];
+    order.statusTimeline.push({
+      status: nextStatus.replace(/_/g, " "),
+      timestamp: now,
+      note:
+        note ||
+        `Delivery status advanced to "${nextStatus.replace(/_/g, " ")}" by ${actor}${
+          rawUserId ? ` (user: ${rawUserId})` : ""
+        }`,
+    });
+
+    const updatedOrder = await order.save();
+
+    // ✅ Broadcast to admins + chefs + customer + chef rooms
+    try {
+      emitToAdminsAndChefs("order_status_updated", updatedOrder, updatedOrder);
+      emitToAdminsAndChefs("delivery_status_updated", updatedOrder, updatedOrder);
+      io.emit("stepper_updated", updatedOrder);
+      io.to("admins").emit("stepper_updated", updatedOrder);
+      io.to("chefs").emit("stepper_updated", updatedOrder);
+    } catch (e) {
+      console.log("Socket emit warning (delivery-status):", e);
+    }
+
+    // ✅ Notify customer of step change
+    try {
+      await notifyCustomerOfStepChange(updatedOrder, nextStatus);
+    } catch (customerPushErr) {
+      console.log("Customer step push error:", customerPushErr);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Delivery status updated to ${nextStatus}.`,
+      order: updatedOrder,
+    });
+  } catch (error: any) {
+    console.error("Error in updateDeliveryStatus:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -1409,31 +1749,13 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
     const updatedOrder = await order.save();
 
     try {
-      io.emit("advance_payment_verified", updatedOrder);
-      io.emit("order_updated", updatedOrder);
-      io.emit("order_status_updated", updatedOrder);
-
-      if (order.userId) {
-        io.to(order.userId).emit("advance_payment_verified", updatedOrder);
-        io.to(order.userId).emit("order_updated", updatedOrder);
-        io.to(order.userId).emit("order_status_updated", updatedOrder);
-      }
+      emitToAdminsAndChefs("advance_payment_verified", updatedOrder, updatedOrder);
     } catch (e) {
       console.log("Socket emit warning (verify-advance):", e);
     }
 
     try {
-      if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
-        const userDoc = await User.findById(order.userId);
-        if (userDoc?.pushToken && isValidExpoToken(userDoc.pushToken)) {
-          await sendExpoPushNotification(
-            userDoc.pushToken,
-            "Advance Payment Verified! 🎉",
-            `Your advance payment for order #${order.orderId} has been verified.`,
-            { orderId: order.orderId, screen: "orders" }
-          );
-        }
-      }
+      await notifyCustomerOfStepChange(updatedOrder, "Advance Paid");
     } catch (custErr) {
       console.log("Customer verify-advance push warning:", custErr);
     }
@@ -1560,6 +1882,10 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
         (order as any).chefAcceptedAt = now;
         (order as any).chefAcceptedBy = "system:status-accepted";
       }
+      // ✅ NEW: Unlock stepper if it wasn't gated
+      if (!order.chefStatus || order.chefStatus === "pending") {
+        order.chefStatus = "accepted";
+      }
       order.statusTimeline.push({
         status: "Accepted",
         timestamp: now,
@@ -1641,40 +1967,13 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
     const updatedOrder = await order.save();
 
     try {
-      io.emit("order_status_updated", updatedOrder);
-      io.emit("order_updated", updatedOrder);
-      if (order.userId) {
-        io.to(order.userId).emit("order_status_updated", updatedOrder);
-        io.to(order.userId).emit("order_updated", updatedOrder);
-      }
-      if (order.chefId) {
-        io.to(String(order.chefId)).emit("order_status_updated", updatedOrder);
-        io.to(String(order.chefId)).emit("order_updated", updatedOrder);
-      }
+      emitToAdminsAndChefs("order_status_updated", updatedOrder, updatedOrder);
     } catch (e) {
       console.log("Socket emit warning:", e);
     }
 
     try {
-      if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
-        const customerDoc = await User.findById(order.userId);
-        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
-          const msg = getCustomerStatusMessage(normalized, order.orderId);
-          await sendExpoPush({
-            token: String(customerDoc.pushToken),
-            title: msg.title,
-            body: msg.body,
-            data: {
-              orderId: order.orderId,
-              screen: "orders",
-              role: "customer",
-              status: normalized,
-            },
-            sound: "default",
-            priority: "high",
-          });
-        }
-      }
+      await notifyCustomerOfStepChange(updatedOrder, normalized);
     } catch (customerPushErr) {
       console.log("Customer status push error:", customerPushErr);
     }
@@ -1772,6 +2071,8 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
     try {
       io.emit("schedule_status_updated", { orderId, dateStr, status: normalizedStatus, order: updatedOrder });
       io.emit("order_updated", updatedOrder);
+      io.to("admins").emit("schedule_status_updated", { orderId, dateStr, status: normalizedStatus, order: updatedOrder });
+      io.to("chefs").emit("schedule_status_updated", { orderId, dateStr, status: normalizedStatus, order: updatedOrder });
       if (order.userId) {
         io.to(order.userId).emit("schedule_status_updated", { orderId, dateStr, status: normalizedStatus, order: updatedOrder });
         io.to(order.userId).emit("order_updated", updatedOrder);
@@ -1781,26 +2082,7 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
     }
 
     try {
-      if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
-        const customerDoc = await User.findById(order.userId);
-        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
-          const baseMsg = getCustomerStatusMessage(normalizedStatus, order.orderId);
-          await sendExpoPush({
-            token: String(customerDoc.pushToken),
-            title: `${baseMsg.title} • ${dateStr}`,
-            body: baseMsg.body,
-            data: {
-              orderId: order.orderId,
-              screen: "orders",
-              role: "customer",
-              status: normalizedStatus,
-              scheduleDate: dateStr,
-            },
-            sound: "default",
-            priority: "high",
-          });
-        }
-      }
+      await notifyCustomerOfStepChange(updatedOrder, normalizedStatus, { scheduleDate: dateStr });
     } catch (customerPushErr) {
       console.log("Customer schedule push error:", customerPushErr);
     }

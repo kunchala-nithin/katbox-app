@@ -502,6 +502,93 @@ router.get(
 
 /*
  * ============================================================
+ * ✅ NEW: REGISTER / UPDATE PUSH TOKEN
+ * ============================================================
+ *
+ *   POST /auth/push-token
+ *   Body: { pushToken: "ExponentPushToken[xxx]" }
+ *
+ * Called by the mobile client (lib/authStorage.ts → savePushToken)
+ * after login and after each Expo push token refresh.
+ *
+ * The token is stored on the user's document so the order
+ * controllers can fire killed/minimized-app notifications:
+ *   • new order → chef + admins
+ *   • order lifecycle update → customer
+ *
+ * Idempotent — repeatedly posting the same token is safe.
+ * Returns the persisted token so the client can confirm.
+ * ============================================================
+ */
+router.post(
+  "/push-token",
+  protect,
+  async (req: AuthRequest, res) => {
+    try {
+      const userId =
+        req.user?.userId ||
+        req.user?._id ||
+        req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized",
+        });
+      }
+
+      const { pushToken } = req.body;
+
+      if (!pushToken || typeof pushToken !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "pushToken is required",
+        });
+      }
+
+      const trimmed = pushToken.trim();
+      if (!trimmed) {
+        return res.status(400).json({
+          success: false,
+          message: "pushToken cannot be empty",
+        });
+      }
+
+      const updatedUser = await User.findByIdAndUpdate(
+        userId,
+        { $set: { pushToken: trimmed } },
+        { new: true }
+      );
+
+      if (!updatedUser) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      console.log(
+        `📲 Push token updated for '${updatedUser.name}' (${updatedUser._id})`
+      );
+
+      return res.json({
+        success: true,
+        message: "Push token registered successfully",
+        pushToken: updatedUser.pushToken || "",
+      });
+    } catch (err: any) {
+      console.error("❌ Push token update error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to register push token",
+        error: err?.message || "Unknown error",
+      });
+    }
+  }
+);
+
+/*
+ * ============================================================
  * GET CURRENT USER
  * ============================================================
  */

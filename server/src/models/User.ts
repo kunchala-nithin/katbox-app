@@ -32,6 +32,15 @@ export interface IUser extends Document {
   savedAddresses: ISavedAddress[];
   isChef: boolean;
   isAdmin: boolean;
+  /**
+   * ✅ Expo push notification token.
+   *
+   * Set by the client after login (POST /auth/push-token) and also
+   * via PATCH /auth/update-profile. Used by the order controllers to
+   * fire killed/minimized-app notifications for:
+   *   • new orders (chef + admins)
+   *   • order lifecycle updates (customer)
+   */
   pushToken?: string;
   orderHistory: mongoose.Types.ObjectId[];
   createdAt: Date;
@@ -218,7 +227,11 @@ const userSchema = new Schema<IUser>(
     },
 
     /*
-     * Expo push notification token
+     * ✅ Expo push notification token.
+     *
+     * Stored as a plain string. Empty string means "no token registered
+     * yet". The notification helper `isValidExpoToken()` guards against
+     * sending to invalid/empty tokens.
      */
     pushToken: {
       type: String,

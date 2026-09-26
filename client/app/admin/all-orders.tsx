@@ -153,6 +153,13 @@ const computeIsFullySettled = (order: any): boolean => {
 
 // ==================================================================
 // ✅ SHARED HELPER — Compute the payment badge text + theme.
+//
+// Rules:
+//   • Catering / Mealbox online  → "Advance Paid ₹X"       (amber)
+//   • Catering / Mealbox, settled → "Payment Settled ₹X"    (green)
+//   • QuickBites / Homemade online → "Payment Settled ₹X"   (green)
+//   • COD before delivery        → "COD ₹X"                (amber)
+//   • COD after delivery         → "Cash Collected ₹X"     (green)
 // ==================================================================
 const computePaymentBadge = (
   order: any
@@ -190,6 +197,22 @@ const computePaymentBadge = (
   }
 
   return { text: `Payment Settled ₹${total}`, isSettled: true };
+};
+
+// ==================================================================
+// ✅ NEW HELPER — Determine whether the Order ID pill should be RED.
+//
+// RULE (per spec):
+//   • paymentMethod === "online" AND chefStatus !== "accepted" → RED
+//   • everything else → default (dark)
+// ==================================================================
+const shouldOrderIdPillBeRed = (order: any): boolean => {
+  if (!order) return false;
+  const isOnline = String(order.paymentMethod || '').toLowerCase() === 'online';
+  const chefAccepted =
+    String(order.chefStatus || '').toLowerCase() === 'accepted' ||
+    Boolean(order.chefAcceptedAt);
+  return isOnline && !chefAccepted;
 };
 
 // ==================================================================
@@ -625,6 +648,31 @@ export default function AdminAllOrdersScreen() {
       );
     };
 
+    // ✅ NEW: Chef accepted the order → flip the payment badge + stepper
+    //         visibility in real time.
+    const handleChefAccepted = (updatedOrder: any) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setOrders((prev) =>
+        prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
+      );
+    };
+
+    // ✅ NEW: Chef rejected the order → move to Cancelled tab.
+    const handleChefRejected = (updatedOrder: any) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setOrders((prev) =>
+        prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
+      );
+    };
+
+    // ✅ NEW: 5-step stepper advanced by chef → refresh card.
+    const handleStepperUpdated = (updatedOrder: any) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setOrders((prev) =>
+        prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
+      );
+    };
+
     if (socket) {
       socket.on('new_order_placed', handleNewOrder);
       socket.on('new_chef_order', handleNewOrder);
@@ -634,6 +682,11 @@ export default function AdminAllOrdersScreen() {
       socket.on('order_delivery_paused', handleOrderDeliveryPaused);
       socket.on('order_delivery_unpaused', handleOrderDeliveryUnpaused);
       socket.on('order_delivery_rescheduled', handleOrderDeliveryRescheduled);
+      // ✅ NEW listeners
+      socket.on('chef_accepted_order', handleChefAccepted);
+      socket.on('chef_rejected_order', handleChefRejected);
+      socket.on('delivery_status_updated', handleStepperUpdated);
+      socket.on('stepper_updated', handleStepperUpdated);
     }
 
     return () => {
@@ -647,6 +700,11 @@ export default function AdminAllOrdersScreen() {
         socket.off('order_delivery_paused', handleOrderDeliveryPaused);
         socket.off('order_delivery_unpaused', handleOrderDeliveryUnpaused);
         socket.off('order_delivery_rescheduled', handleOrderDeliveryRescheduled);
+        // ✅ NEW cleanup
+        socket.off('chef_accepted_order', handleChefAccepted);
+        socket.off('chef_rejected_order', handleChefRejected);
+        socket.off('delivery_status_updated', handleStepperUpdated);
+        socket.off('stepper_updated', handleStepperUpdated);
       }
     };
   }, []);
@@ -1930,7 +1988,14 @@ export default function AdminAllOrdersScreen() {
                   <View style={{ flex: 1, paddingRight: 8 }}>
                     <Text style={styles.smallSectionLabel}>ADMIN ORDER IDENTIFIER</Text>
                     <View style={styles.orderIdCodeRow}>
-                      <Text style={styles.orderIdCodeText}>{orderData.orderId}</Text>
+                      <Text
+                        style={[
+                          styles.orderIdCodeText,
+                          shouldOrderIdPillBeRed(activeOrder) && styles.orderIdCodeTextRed,
+                        ]}
+                      >
+                        {orderData.orderId}
+                      </Text>
                       <TouchableOpacity onPress={handleCopyOrderId} activeOpacity={0.7} style={styles.copyIconHitbox}>
                         <Feather name="copy" size={14} color="#64748B" />
                       </TouchableOpacity>
@@ -3324,6 +3389,9 @@ const styles = StyleSheet.create({
   smallSectionLabel: { fontSize: 9.5, color: '#64748B', fontWeight: '800', letterSpacing: 0.6 },
   orderIdCodeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
   orderIdCodeText: { fontSize: 17, fontWeight: '900', color: '#0F172A', letterSpacing: -0.3 },
+  // ✅ NEW: Red variant for the Order ID text when payment is online and
+  //         the chef hasn't accepted the order yet.
+  orderIdCodeTextRed: { color: '#DC2626', fontWeight: '900' },
   copyIconHitbox: { marginLeft: 8, padding: 4 },
   statusBadgePill: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', paddingHorizontal: 11, paddingVertical: 5, borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0' },
   statusBadgeText: { fontSize: 11, fontWeight: '800' },

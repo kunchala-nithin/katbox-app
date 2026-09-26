@@ -186,8 +186,15 @@ const computeIsFullySettled = (order: any): boolean => {
 };
 
 // ==================================================================
-// ✅ NEW HELPER — Compute the payment badge text + theme for the
-// customer order card. Shows ONLY the payment state.
+// ✅ PAYMENT BADGE — Compute the merged top-right payment badge text
+// and tone for the customer order card.
+//
+// Rules:
+//   • Catering / Mealbox online  → "Advance Paid ₹X"       (amber)
+//   • Catering / Mealbox, delivered & settled → green check
+//   • QuickBites / Homemade online → "Payment Settled ₹X"  (green)
+//   • COD before delivery        → "COD ₹X"                (amber)
+//   • COD after delivery         → "Cash Collected ₹X"     (green)
 // ==================================================================
 const computePaymentBadge = (
   order: any
@@ -220,11 +227,30 @@ const computePaymentBadge = (
     return { text: `COD ₹${total}`, isSettled: false };
   }
 
+  // Online payment
   if (isAdvanceBased && balance > 0) {
+    // Catering / Mealbox — only the 45% advance has been paid so far.
     return { text: `Advance Paid ₹${advance}`, isSettled: false };
   }
 
+  // QuickBites / Homemade online → full amount already paid.
   return { text: `Payment Settled ₹${total}`, isSettled: true };
+};
+
+// ==================================================================
+// ✅ NEW HELPER — Determine whether the Order ID pill should be RED.
+//
+// RULE (per spec):
+//   • paymentMethod === "online" AND chefStatus !== "accepted" → RED
+//   • everything else → default (green/dark)
+// ==================================================================
+const shouldOrderIdPillBeRed = (order: any): boolean => {
+  if (!order) return false;
+  const isOnline = String(order.paymentMethod || "").toLowerCase() === "online";
+  const chefAccepted =
+    String(order.chefStatus || "").toLowerCase() === "accepted" ||
+    Boolean(order.chefAcceptedAt);
+  return isOnline && !chefAccepted;
 };
 
 // ==================================================================
@@ -1042,6 +1068,56 @@ export default function MyOrdersScreen() {
       );
     };
 
+    // ✅ NEW: Chef accepted the order → unlock the stepper on this
+    //         customer's card immediately, and flip the order-id pill
+    //         from red back to the default color.
+    const handleChefAccepted = (updatedOrder: any) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setUserOrders((prev) => {
+        const exists = prev.some((o) => o.orderId === updatedOrder.orderId);
+        if (exists) {
+          return prev.map((o) =>
+            o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o
+          );
+        }
+        return [updatedOrder, ...prev];
+      });
+      setSelectedOrderDetails((prev: any) => {
+        if (prev && prev.orderId === updatedOrder.orderId) {
+          return { ...prev, ...updatedOrder };
+        }
+        return prev;
+      });
+    };
+
+    // ✅ NEW: Chef rejected the order → move it to Cancelled tab.
+    const handleChefRejected = (updatedOrder: any) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setUserOrders((prev) =>
+        prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
+      );
+      setSelectedOrderDetails((prev: any) => {
+        if (prev && prev.orderId === updatedOrder.orderId) {
+          return { ...prev, ...updatedOrder };
+        }
+        return prev;
+      });
+    };
+
+    // ✅ NEW: 5-step stepper advanced by chef/admin → refresh card.
+    const handleStepperUpdated = (updatedOrder: any) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setUserOrders((prev) =>
+        prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
+      );
+      setSelectedOrderDetails((prev: any) => {
+        if (prev && prev.orderId === updatedOrder.orderId) {
+          return { ...prev, ...updatedOrder };
+        }
+        return prev;
+      });
+    };
+
     if (socket) {
       socket.on("order_updated", handleOrderUpdated);
       socket.on("order_status_updated", handleOrderStatusUpdated);
@@ -1051,6 +1127,11 @@ export default function MyOrdersScreen() {
       socket.on("order_delivery_unpaused", handleOrderDeliveryUnpaused);
       socket.on("order_delivery_rescheduled", handleOrderDeliveryRescheduled);
       socket.on("cash_collected_feedback_prompt", handleCashCollectedPrompt);
+      // ✅ NEW listeners
+      socket.on("chef_accepted_order", handleChefAccepted);
+      socket.on("chef_rejected_order", handleChefRejected);
+      socket.on("delivery_status_updated", handleStepperUpdated);
+      socket.on("stepper_updated", handleStepperUpdated);
     }
 
     return () => {
@@ -1064,6 +1145,11 @@ export default function MyOrdersScreen() {
         socket.off("order_delivery_unpaused", handleOrderDeliveryUnpaused);
         socket.off("order_delivery_rescheduled", handleOrderDeliveryRescheduled);
         socket.off("cash_collected_feedback_prompt", handleCashCollectedPrompt);
+        // ✅ NEW cleanup
+        socket.off("chef_accepted_order", handleChefAccepted);
+        socket.off("chef_rejected_order", handleChefRejected);
+        socket.off("delivery_status_updated", handleStepperUpdated);
+        socket.off("stepper_updated", handleStepperUpdated);
       }
     };
   }, []);
@@ -1795,7 +1881,14 @@ export default function MyOrdersScreen() {
           <View style={styles.greenHeroBanner}>
             <View style={styles.greenHeroLeftCol}>
               <View style={styles.orderIdPillRow}>
-                <Text style={styles.orderIdPillText}>Order ID: #{detailOrderId}</Text>
+                <Text
+                  style={[
+                    styles.orderIdPillText,
+                    shouldOrderIdPillBeRed(selectedOrderDetails) && styles.orderIdPillTextRed,
+                  ]}
+                >
+                  Order ID: #{detailOrderId}
+                </Text>
                 <TouchableOpacity style={styles.copyPillBtn} activeOpacity={0.8} onPress={handleCopyOrderId}>
                   <Text style={styles.copyPillBtnText}>Copy</Text>
                 </TouchableOpacity>
@@ -2430,7 +2523,14 @@ export default function MyOrdersScreen() {
                           <View style={[styles.calendarIconBox, { backgroundColor: "#15803D" }]}>
                             <Ionicons name="restaurant-outline" size={16} color="#FFFFFF" />
                           </View>
-                          <Text style={styles.nextDeliveryLabel}>Order #{orderId}</Text>
+                          <Text
+                            style={[
+                              styles.nextDeliveryLabel,
+                              shouldOrderIdPillBeRed(order) && styles.nextDeliveryLabelRed,
+                            ]}
+                          >
+                            Order #{orderId}
+                          </Text>
                         </View>
 
                         <Text style={styles.nextDeliveryDateText}>
@@ -2694,7 +2794,14 @@ export default function MyOrdersScreen() {
                           <View style={styles.calendarIconBox}>
                             <Ionicons name="calendar-outline" size={16} color="#FFFFFF" />
                           </View>
-                          <Text style={styles.nextDeliveryLabel}>Order #{orderId}</Text>
+                          <Text
+                            style={[
+                              styles.nextDeliveryLabel,
+                              shouldOrderIdPillBeRed(order) && styles.nextDeliveryLabelRed,
+                            ]}
+                          >
+                            Order #{orderId}
+                          </Text>
                         </View>
 
                         <Text style={styles.nextDeliveryDateText}>
@@ -3017,7 +3124,14 @@ export default function MyOrdersScreen() {
                         <View style={styles.calendarIconBox}>
                           <Ionicons name="calendar-outline" size={16} color="#FFFFFF" />
                         </View>
-                        <Text style={styles.nextDeliveryLabel}>Order #{orderId}</Text>
+                        <Text
+                          style={[
+                            styles.nextDeliveryLabel,
+                            shouldOrderIdPillBeRed(order) && styles.nextDeliveryLabelRed,
+                          ]}
+                        >
+                          Order #{orderId}
+                        </Text>
                       </View>
 
                       <Text style={styles.nextDeliveryDateText}>
@@ -4032,6 +4146,12 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#0F172A",
   },
+  // ✅ NEW: Red variant for the Order ID label when payment is online and
+  //         the chef hasn't accepted the order yet.
+  nextDeliveryLabelRed: {
+    color: "#DC2626",
+    fontWeight: "900",
+  },
   nextDeliveryDateText: {
     fontSize: 14,
     fontWeight: "800",
@@ -4754,6 +4874,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: "#FFFFFF",
+  },
+  // ✅ NEW: Red variant for the Order ID label in the detail hero banner
+  //         when payment is online and chef hasn't accepted yet.
+  orderIdPillTextRed: {
+    color: "#FCA5A5",
+    fontWeight: "900",
   },
   copyPillBtn: {
     backgroundColor: "rgba(255, 255, 255, 0.2)",

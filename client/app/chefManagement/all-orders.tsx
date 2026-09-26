@@ -395,6 +395,13 @@ const computeIsFullySettled = (order: any): boolean => {
 
 // ==================================================================
 // ✅ SHARED HELPER — Compute the payment badge text + theme.
+//
+// Rules:
+//   • Catering / Mealbox online  → "Advance Paid ₹X"       (amber)
+//   • Catering / Mealbox, settled → "Payment Settled ₹X"    (green)
+//   • QuickBites / Homemade online → "Payment Settled ₹X"   (green)
+//   • COD before delivery        → "COD ₹X"                (amber)
+//   • COD after delivery         → "Cash Collected ₹X"     (green)
 // ==================================================================
 const computePaymentBadge = (
   order: any
@@ -890,6 +897,22 @@ export default function AllOrdersScreen() {
       }
     };
 
+    // ✅ NEW: Chef accepted — same handler since payload contains full order.
+    const handleChefAccepted = (updatedOrder: any) => {
+      handleOrderUpdated(updatedOrder);
+    };
+
+    // ✅ NEW: Chef rejected — remove from list.
+    const handleChefRejected = (updatedOrder: any) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setOrders((prev) => prev.filter((o) => o.orderId !== updatedOrder.orderId));
+    };
+
+    // ✅ NEW: Stepper advanced — refresh order.
+    const handleStepperUpdated = (updatedOrder: any) => {
+      handleOrderUpdated(updatedOrder);
+    };
+
     if (socket) {
       socket.on('order_delivery_paused', handleOrderDeliveryPaused);
       socket.on('order_delivery_unpaused', handleOrderDeliveryUnpaused);
@@ -897,6 +920,11 @@ export default function AllOrdersScreen() {
       socket.on('schedule_status_updated', handleScheduleStatusUpdated);
       socket.on('order_updated', handleOrderUpdated);
       socket.on('advance_payment_verified', handleOrderUpdated);
+      // ✅ NEW listeners
+      socket.on('chef_accepted_order', handleChefAccepted);
+      socket.on('chef_rejected_order', handleChefRejected);
+      socket.on('delivery_status_updated', handleStepperUpdated);
+      socket.on('stepper_updated', handleStepperUpdated);
       socket.on('new_chef_order', (newOrder: any) => {
         if (newOrder.isAdvanceVerified === true) {
           setOrders((prev) => {
@@ -927,6 +955,11 @@ export default function AllOrdersScreen() {
         socket.off('schedule_status_updated', handleScheduleStatusUpdated);
         socket.off('order_updated', handleOrderUpdated);
         socket.off('advance_payment_verified', handleOrderUpdated);
+        // ✅ NEW cleanup
+        socket.off('chef_accepted_order', handleChefAccepted);
+        socket.off('chef_rejected_order', handleChefRejected);
+        socket.off('delivery_status_updated', handleStepperUpdated);
+        socket.off('stepper_updated', handleStepperUpdated);
         socket.off('new_chef_order');
       }
     };
@@ -1491,6 +1524,10 @@ export default function AllOrdersScreen() {
       });
   };
 
+  // ✅ REVISED: Chef taps Decline. For chef-gated (QuickBites/Homemade
+  // online) orders we call the NEW /chef-reject endpoint so the backend
+  // can persist chefStatus="rejected" and notify the customer + admins.
+  // Legacy flows fall back to the /status endpoint with "Cancelled".
   const handleRejectOrder = () => {
     if (!activeOrder) return;
     Alert.alert('Reject Order', 'Are you sure you want to reject this order?', [
@@ -1502,7 +1539,16 @@ export default function AllOrdersScreen() {
           try {
             setActionLoading(true);
             await clearAlarmAndSnoozeCycle();
-            await api.patch(`/api/orders/${activeOrder.orderId}/status`, { status: 'Cancelled' });
+
+            if (isChefGateRequired) {
+              // ✅ Chef-gated flow: call the new chef-reject endpoint.
+              await api.patch(`/api/orders/${activeOrder.orderId}/chef-reject`, {
+                reason: 'Chef declined the order',
+              });
+            } else {
+              // Legacy: reuse the status endpoint.
+              await api.patch(`/api/orders/${activeOrder.orderId}/status`, { status: 'Cancelled' });
+            }
 
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setOrders((prev) =>
@@ -1522,8 +1568,8 @@ export default function AllOrdersScreen() {
     ]);
   };
 
-  // ✅ REVISED: Chef taps Accept Order. For QuickBites/Homemade online
-  // orders, this calls the NEW /chef-accept endpoint. For legacy
+  // ✅ Chef taps Accept Order. For QuickBites/Homemade online
+  // orders, this calls the /chef-accept endpoint. For legacy
   // flows, it falls back to the existing /status endpoint.
   const handleAcceptOrder = async () => {
     if (!activeOrder) return;
@@ -1532,7 +1578,7 @@ export default function AllOrdersScreen() {
       await clearAlarmAndSnoozeCycle();
 
       if (isChefGateRequired) {
-        // ✅ Chef-gated flow: call the new chef-accept endpoint.
+        // ✅ Chef-gated flow: call the chef-accept endpoint.
         await api.patch(`/api/orders/${activeOrder.orderId}/chef-accept`);
       } else {
         // Legacy: reuse the status endpoint.

@@ -13,6 +13,9 @@ import { getUser, refreshUser, getToken } from '@/src/lib/authStorage'
 import { isTokenExpired } from '@/src/lib/jwtUtils'
 import { subscribeAuth } from '@/src/lib/authEvents'
 import { useOrderNotifier } from '@/src/hooks/useOrderNotifier'
+// ✅ NEW: Socket client used to join the "chefs" broadcast room so
+//         every chef device receives live new-order / stepper events.
+import { socket } from '@/src/lib/socket'
 
 const CHEF_TAB_CONFIG: Record<
   string,
@@ -50,7 +53,7 @@ export default function ChefTabsLayout() {
   const hasLoadedRef = useRef(false)
 
   /* ─────────────────────────────────────────────────────────
-     ✅ NEW: Chef identity atoms consumed by useOrderNotifier
+     ✅ Chef identity atoms consumed by useOrderNotifier
      so that CHEF-side order filtering can be done without an
      extra network round-trip.
      ───────────────────────────────────────────────────────── */
@@ -58,7 +61,7 @@ export default function ChefTabsLayout() {
   const [chefName, setChefName] = useState<string | null>(null)
 
   /* ─────────────────────────────────────────────────────────
-     ✅ NEW: Role-scoped order alarm + push notification listener.
+     ✅ Role-scoped order alarm + push notification listener.
      Enabled only once auth (allowed === true) AND role
      (isChef === true) are fully resolved. When disabled, the
      hook is a no-op — zero side effects.
@@ -68,6 +71,57 @@ export default function ChefTabsLayout() {
     chefUserId,
     chefName,
   })
+
+  /* ─────────────────────────────────────────────────────────
+     ✅ NEW: Join the shared "chefs" broadcast room once the
+     chef role is confirmed.
+
+     This is what makes every chef device receive:
+       • new_chef_order            → fire alarm + show card
+       • chef_accepted_order       → refresh own card list
+       • chef_rejected_order       → remove cancelled order
+       • stepper_updated           → refresh stepper
+       • order_status_updated      → live status sync
+       • delivery_status_updated   → live status sync
+
+     The `useOrderNotifier('chef', …)` hook above handles the
+     alarm + push side; this effect only wires the socket room.
+
+     Safe to call multiple times — the server ignores duplicates.
+     ───────────────────────────────────────────────────────── */
+  useEffect(() => {
+    let isMounted = true
+
+    const joinChefRooms = async () => {
+      if (allowed !== true || isChef !== true) return
+      try {
+        if (!socket) return
+
+        socket.emit('join', 'chefs')
+
+        const user = await getUser()
+        const userId = user?.id || user?._id
+        if (userId) {
+          socket.emit('join', String(userId))
+        }
+
+        if (isMounted) {
+          console.log('🔌 Chef socket joined rooms:', {
+            userId,
+            room: 'chefs',
+          })
+        }
+      } catch (err) {
+        console.log('Chef socket join rooms error:', err)
+      }
+    }
+
+    joinChefRooms()
+
+    return () => {
+      isMounted = false
+    }
+  }, [allowed, isChef])
 
   useEffect(() => {
     let mounted = true
