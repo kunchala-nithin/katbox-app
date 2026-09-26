@@ -43,6 +43,16 @@ const Login = () => {
   const phoneRef = useRef<TextInput>(null)
 
   /*
+   * ✅ Guards against double-tap / double-submission while an
+   *    OTP request is already in-flight. This is critical because
+   *    a second request would:
+   *      • trigger a second SMS
+   *      • hit Twilio's per-number rate limit
+   *      • still take the full round-trip time
+   */
+  const submittingRef = useRef(false)
+
+  /*
    * Premium button scale animation value
    */
   const buttonScale = useSharedValue(1)
@@ -82,6 +92,14 @@ const Login = () => {
    */
 
   const sendOTP = async () => {
+    /*
+     * ✅ Guard against concurrent submissions.
+     */
+    if (submittingRef.current || loading) {
+      console.log('⏳ sendOTP ignored — request already in-flight')
+      return
+    }
+
     if (!name.trim()) {
       setNameError('Please enter your name')
       nameRef.current?.focus()
@@ -94,31 +112,91 @@ const Login = () => {
       return
     }
 
+    /*
+     * ✅ Build the E.164 phone string exactly ONCE.
+     *
+     * The backend's `normalizeIndianPhone()` accepts:
+     *   • "9133450555"       (10-digit bare)
+     *   • "+919133450555"    (E.164)
+     *   • "919133450555"     (12-digit with country code)
+     *
+     * We send the E.164 form so the verify screen's path param
+     * and the backend's stored `phone` field are byte-identical.
+     */
+    const e164Phone = `+91${phoneNumber}`
+
     try {
+      submittingRef.current = true
       setLoading(true)
 
-      await api.post('/auth/send-otp', {
-        phone: `+91${phoneNumber}`,
+      console.log('📱 Sending OTP request for:', e164Phone)
+
+      const response = await api.post('/auth/send-otp', {
+        phone: e164Phone,
         name: name.trim(),
       })
 
+      console.log('✅ /auth/send-otp response:', response?.data)
+
       setLoading(false)
+      submittingRef.current = false
+
+      /*
+       * ✅ URL-encode the phone so the "+" does not get mangled
+       *    when Expo Router builds the path.
+       */
+      const encodedPhone = encodeURIComponent(e164Phone)
 
       router.push({
-        pathname: `/verify/+91${phoneNumber}` as any,
+        pathname: `/verify/${encodedPhone}` as any,
         params: {
           name: name.trim(),
+          phone: e164Phone,
         },
       })
     } catch (error: any) {
       setLoading(false)
+      submittingRef.current = false
 
-      console.error(error)
-
-      alert(
-        error?.response?.data?.message ||
-          'Failed to send OTP. Please try again.'
+      /*
+       * ✅ Surface the FULL error to Metro so we can see what the
+       *    backend actually returned. This is the single most
+       *    important part for debugging the OTP problem.
+       */
+      console.error(
+        '❌ /auth/send-otp failed:',
+        {
+          message: error?.message,
+          status: error?.response?.status,
+          data: error?.response?.data,
+          code: error?.code,
+        }
       )
+
+      /*
+       * ✅ Pick the most specific message available:
+       *      1. Backend-provided message ("Invalid mobile number",
+       *         "SMS service configuration error", etc.)
+       *      2. Axios-level message (network errors)
+       *      3. Generic fallback
+       */
+      const backendMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.error
+
+      const networkMessage =
+        error?.code === 'ECONNABORTED'
+          ? 'Request timed out. Please check your internet connection.'
+          : error?.message === 'Network Error'
+          ? 'Cannot reach the server. Please check your internet connection.'
+          : null
+
+      const finalMessage =
+        backendMessage ||
+        networkMessage ||
+        'Failed to send OTP. Please try again.'
+
+      alert(finalMessage)
     }
   }
 

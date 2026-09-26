@@ -119,22 +119,131 @@ export const normalizePhoneForStorage = (
 
 /**
  * ============================================================
+ * ✅ SAFE SECURESTORE HELPERS
+ * ============================================================
+ *
+ * Android SecureStore occasionally throws transient errors
+ * during cold-start (especially right after install or after
+ * a device reboot). We add a single quick retry so a transient
+ * failure does not cascade into a "user is not authenticated"
+ * false-negative.
+ * ============================================================
+ */
+
+const safeGetItem = async (
+  key: string,
+  retries = 1
+): Promise<string | null> => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await SecureStore.getItemAsync(key);
+    } catch (error) {
+      console.log(
+        `⚠️ SecureStore.getItemAsync("${key}") failed (attempt ${
+          attempt + 1
+        }):`,
+        error
+      );
+
+      if (attempt < retries) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 80)
+        );
+      }
+    }
+  }
+
+  return null;
+};
+
+const safeSetItem = async (
+  key: string,
+  value: string,
+  retries = 1
+): Promise<boolean> => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      await SecureStore.setItemAsync(key, value);
+      return true;
+    } catch (error) {
+      console.log(
+        `⚠️ SecureStore.setItemAsync("${key}") failed (attempt ${
+          attempt + 1
+        }):`,
+        error
+      );
+
+      if (attempt < retries) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 80)
+        );
+      }
+    }
+  }
+
+  return false;
+};
+
+const safeDeleteItem = async (
+  key: string,
+  retries = 1
+): Promise<boolean> => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      await SecureStore.deleteItemAsync(key);
+      return true;
+    } catch (error) {
+      console.log(
+        `⚠️ SecureStore.deleteItemAsync("${key}") failed (attempt ${
+          attempt + 1
+        }):`,
+        error
+      );
+
+      if (attempt < retries) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 80)
+        );
+      }
+    }
+  }
+
+  return false;
+};
+
+/**
+ * ============================================================
  * SAVE KATBOX SESSION
  * ============================================================
+ *
+ * ✅ We now await the writes and log if any fail, so the root
+ *    layout's checkAuth() won't run against a partially-written
+ *    session.
  */
 export const saveSession = async (
   token: string,
   user: StoredUser
 ): Promise<void> => {
-  await SecureStore.setItemAsync(
+  const tokenOk = await safeSetItem(
     TOKEN_KEY,
     token
   );
 
-  await SecureStore.setItemAsync(
+  const userOk = await safeSetItem(
     USER_KEY,
     JSON.stringify(user)
   );
+
+  if (!tokenOk || !userOk) {
+    console.log(
+      "⚠️ saveSession encountered a write failure:",
+      { tokenOk, userOk }
+    );
+  } else {
+    console.log(
+      "✅ saveSession wrote token + user to SecureStore"
+    );
+  }
 };
 
 /**
@@ -146,9 +255,7 @@ export const getToken = async (): Promise<
   string | null
 > => {
   try {
-    return await SecureStore.getItemAsync(
-      TOKEN_KEY
-    );
+    return await safeGetItem(TOKEN_KEY);
   } catch (error) {
     console.log(
       "Error reading auth token:",
@@ -167,10 +274,7 @@ export const getToken = async (): Promise<
 export const getUser =
   async (): Promise<StoredUser | null> => {
     try {
-      const user =
-        await SecureStore.getItemAsync(
-          USER_KEY
-        );
+      const user = await safeGetItem(USER_KEY);
 
       if (!user) {
         return null;
@@ -184,9 +288,7 @@ export const getUser =
           parseError
         );
 
-        await SecureStore.deleteItemAsync(
-          USER_KEY
-        );
+        await safeDeleteItem(USER_KEY);
 
         return null;
       }
@@ -215,9 +317,7 @@ export const getUser =
  */
 export const removeToken = async (): Promise<void> => {
   try {
-    await SecureStore.deleteItemAsync(
-      TOKEN_KEY
-    );
+    await safeDeleteItem(TOKEN_KEY);
   } catch (error) {
     console.log(
       "Error removing auth token:",
@@ -226,9 +326,7 @@ export const removeToken = async (): Promise<void> => {
   }
 
   try {
-    await SecureStore.deleteItemAsync(
-      USER_KEY
-    );
+    await safeDeleteItem(USER_KEY);
   } catch (error) {
     console.log(
       "Error removing stored user:",
@@ -239,9 +337,7 @@ export const removeToken = async (): Promise<void> => {
   // ✅ NEW: Also clear the cached push token on logout so a subsequent
   //         user on the same device doesn't inherit the previous token.
   try {
-    await SecureStore.deleteItemAsync(
-      PUSH_TOKEN_KEY
-    );
+    await safeDeleteItem(PUSH_TOKEN_KEY);
   } catch (error) {
     console.log(
       "Error removing stored push token:",
@@ -467,7 +563,7 @@ export const updateUserAddress =
         null;
 
       if (updatedUser) {
-        await SecureStore.setItemAsync(
+        await safeSetItem(
           USER_KEY,
           JSON.stringify(updatedUser)
         );
@@ -526,7 +622,7 @@ export const refreshUser =
         return null;
       }
 
-      await SecureStore.setItemAsync(
+      await safeSetItem(
         USER_KEY,
         JSON.stringify(updatedUser)
       );
@@ -570,7 +666,7 @@ export const savePushToken = async (
 
   // Local cache first so getCachedPushToken works even offline.
   try {
-    await SecureStore.setItemAsync(
+    await safeSetItem(
       PUSH_TOKEN_KEY,
       pushToken
     );
@@ -618,9 +714,7 @@ export const savePushToken = async (
 export const getCachedPushToken =
   async (): Promise<string | null> => {
     try {
-      return await SecureStore.getItemAsync(
-        PUSH_TOKEN_KEY
-      );
+      return await safeGetItem(PUSH_TOKEN_KEY);
     } catch (error) {
       console.log(
         "Error reading cached push token:",
@@ -641,9 +735,7 @@ export const getCachedPushToken =
  */
 export const clearPushToken = async (): Promise<void> => {
   try {
-    await SecureStore.deleteItemAsync(
-      PUSH_TOKEN_KEY
-    );
+    await safeDeleteItem(PUSH_TOKEN_KEY);
   } catch (error) {
     console.log(
       "Error clearing cached push token:",

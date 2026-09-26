@@ -29,7 +29,7 @@ export const getBaseUrl = (): string => {
 
 export const BASE_URL = getBaseUrl();
 
-// ✅ NEW: Socket.IO uses the same base URL as the REST API.
+// ✅ Socket.IO uses the same base URL as the REST API.
 // Exported so the socket client can `import { SOCKET_URL }` without
 // having to re-derive it or duplicate the env-var logic.
 export const SOCKET_URL = BASE_URL;
@@ -43,6 +43,34 @@ export const api = axios.create({
   // can take 40–60s after the service has been idle).
   timeout: 60000,
 });
+
+/*
+ * ============================================================
+ * ✅ NON-RETRYABLE URLS
+ * ============================================================
+ *
+ * These endpoints MUST NOT be retried automatically because:
+ *
+ *   • /auth/send-otp   → retrying triggers a SECOND SMS and can
+ *                        hit Twilio's rate limit, plus it makes
+ *                        the user wait ~2x longer on failure.
+ *   • /auth/verify-otp → retrying a bad OTP is pointless and
+ *                        burns Twilio verification attempts.
+ *   • /auth/push-token → idempotent but retrying is wasteful.
+ *
+ * For these we surface the backend error immediately.
+ * ============================================================
+ */
+const NON_RETRYABLE_PATHS = [
+  "/auth/send-otp",
+  "/auth/verify-otp",
+  "/auth/push-token",
+];
+
+const isNonRetryable = (url?: string): boolean => {
+  if (!url) return false;
+  return NON_RETRYABLE_PATHS.some((p) => url.includes(p));
+};
 
 // 🔥 REQUEST INTERCEPTOR - Fixed for FormData + Authorization
 api.interceptors.request.use(
@@ -61,7 +89,10 @@ api.interceptors.request.use(
 
       // Allow Axios to set boundary headers automatically for FormData;
       // manual setting can occasionally corrupt multipart boundaries on React Native.
-      if (!(config.data instanceof FormData) && !config.headers.get("Content-Type")) {
+      if (
+        !(config.data instanceof FormData) &&
+        !config.headers.get("Content-Type")
+      ) {
         config.headers.set("Content-Type", "application/json");
       }
 
@@ -84,6 +115,24 @@ api.interceptors.response.use(
     const config: any = error.config || {};
     const code = (error as any)?.code;
     const status = error.response?.status;
+    const url = config.url || "";
+
+    /*
+     * ✅ Skip retry entirely for OTP / verification endpoints.
+     *    These should surface their real error to the user
+     *    immediately, not after a 1.5s delay + second round-trip.
+     */
+    if (isNonRetryable(url)) {
+      console.log(
+        "⛔ Skipping retry for non-retryable endpoint:",
+        url,
+        "status:",
+        status,
+        "code:",
+        code
+      );
+      return Promise.reject(error);
+    }
 
     const isNetworkOrTimeout =
       code === "ECONNABORTED" ||
@@ -94,9 +143,15 @@ api.interceptors.response.use(
     const isRetryableStatus =
       status === 502 || status === 503 || status === 504;
 
-    if ((isNetworkOrTimeout || isRetryableStatus) && !config.__retried) {
+    if (
+      (isNetworkOrTimeout || isRetryableStatus) &&
+      !config.__retried
+    ) {
       config.__retried = true;
-      console.log("🔁 Retrying request once after cold-start failure:", config.url);
+      console.log(
+        "🔁 Retrying request once after cold-start failure:",
+        url
+      );
 
       await new Promise((resolve) => setTimeout(resolve, 1500));
       return api.request(config);
@@ -152,7 +207,8 @@ export const getSocketAuth = async (): Promise<{
             ? atob(padded)
             : Buffer.from(padded, "base64").toString("binary")
         );
-        userId = String(json.userId || json._id || json.id || "") || null;
+        userId =
+          String(json.userId || json._id || json.id || "") || null;
         if (json.isAdmin === true) role = "admin";
         else if (json.isChef === true) role = "chef";
       }

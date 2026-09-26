@@ -3,14 +3,13 @@ dotenv.config();
 
 import express from "express";
 import jwt from "jsonwebtoken";
-import twilio from "twilio"; // ⭐ Twilio is now ACTIVE again
+import twilio from "twilio";
 import User, {
   ISavedAddress,
   IActiveAddress,
 } from "../models/User";
-// ✅ Chef model import — needed to join Chef.orderHistory for chef users
 import Chef from "../models/Chef";
-import { otpRateLimiter } from "../middleware/otpRateLimit"; // ⭐ Twilio rate limiter is ACTIVE
+import { otpRateLimiter } from "../middleware/otpRateLimit";
 import {
   AuthRequest,
   protect,
@@ -36,19 +35,158 @@ const normalizeEmail = (email: unknown): string => {
   return email.trim().toLowerCase();
 };
 
-/**
- * Initialize Twilio Client.
- *
- * Used for the OTP-based phone login flow.
+/*
+ * ============================================================
+ * TWILIO CONFIGURATION & CLIENT INITIALIZATION
+ * ============================================================
  */
+
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
+
+// Debug: Log whether Twilio credentials are present (without exposing full values)
+console.log("🔧 Twilio Configuration Check:");
+console.log(
+  "   TWILIO_ACCOUNT_SID:",
+  accountSid
+    ? `✅ Present (${accountSid.substring(0, 6)}...)`
+    : "❌ Missing"
+);
+console.log(
+  "   TWILIO_AUTH_TOKEN:",
+  authToken
+    ? `✅ Present (${authToken.substring(0, 4)}...)`
+    : "❌ Missing"
+);
+console.log(
+  "   TWILIO_VERIFY_SERVICE_SID:",
+  verifyServiceSid
+    ? `✅ Present (${verifyServiceSid.substring(0, 6)}...)`
+    : "❌ Missing"
+);
 
 const twilioClient =
   accountSid && authToken
     ? twilio(accountSid, authToken)
     : null;
+
+/**
+ * Validate Twilio configuration and return any issues found.
+ */
+const validateTwilioConfig = (): string[] => {
+  const issues: string[] = [];
+
+  if (!accountSid) {
+    issues.push("TWILIO_ACCOUNT_SID is missing");
+  } else if (!accountSid.startsWith("AC")) {
+    issues.push("TWILIO_ACCOUNT_SID should start with 'AC'");
+  }
+
+  if (!authToken) {
+    issues.push("TWILIO_AUTH_TOKEN is missing");
+  }
+
+  if (!verifyServiceSid) {
+    issues.push("TWILIO_VERIFY_SERVICE_SID is missing");
+  } else if (!verifyServiceSid.startsWith("VA")) {
+    issues.push("TWILIO_VERIFY_SERVICE_SID should start with 'VA'");
+  }
+
+  return issues;
+};
+
+/**
+ * Map Twilio error codes to user-friendly messages.
+ */
+const getTwilioErrorMessage = (
+  error: any
+): { status: number; message: string } => {
+  const code = error?.code;
+  const status = error?.status;
+
+  console.log("🔍 Twilio error details:", {
+    code,
+    status,
+    message: error?.message,
+    moreInfo: error?.moreInfo,
+  });
+
+  // Authentication errors (invalid credentials)
+  if (code === 20003 || status === 401) {
+    return {
+      status: 500,
+      message:
+        "SMS service authentication failed. Please contact support.",
+    };
+  }
+
+  // Invalid phone number
+  if (code === 60200 || code === 21211 || status === 400) {
+    return {
+      status: 400,
+      message:
+        "Invalid mobile number format. Please check and try again.",
+    };
+  }
+
+  // Rate limiting
+  if (code === 60203 || code === 20429) {
+    return {
+      status: 429,
+      message:
+        "Too many OTP requests. Please try again later.",
+    };
+  }
+
+  // Unverified number (trial account)
+  if (code === 21608) {
+    return {
+      status: 400,
+      message:
+        "This number is not verified. Please contact support.",
+    };
+  }
+
+  // Unsubscribed recipient
+  if (code === 21610) {
+    return {
+      status: 400,
+      message:
+        "This number has opted out of receiving messages.",
+    };
+  }
+
+  // Verify Service not found
+  if (code === 20404) {
+    return {
+      status: 500,
+      message:
+        "SMS service configuration error. Please contact support.",
+    };
+  }
+
+  // Network / timeout errors
+  if (
+    code === "ETIMEDOUT" ||
+    code === "ECONNREFUSED" ||
+    code === "ENOTFOUND" ||
+    code === "ECONNABORTED" ||
+    error?.message?.toLowerCase?.()?.includes("timeout")
+  ) {
+    return {
+      status: 503,
+      message:
+        "SMS service temporarily unavailable. Please try again.",
+    };
+  }
+
+  // Generic error
+  return {
+    status: 500,
+    message: "Unable to send OTP. Please try again later.",
+  };
+};
 
 /**
  * Helper: build consistent user response payload.
@@ -168,17 +306,29 @@ router.post(
         });
       }
 
-      if (
-        !twilioClient ||
-        !verifyServiceSid
-      ) {
+      // Validate Twilio configuration before calling the API
+      const configIssues = validateTwilioConfig();
+      if (configIssues.length > 0) {
         console.error(
-          "❌ Twilio credentials are not properly configured on the server."
+          "❌ Twilio configuration issues detected:",
+          configIssues
         );
 
         return res.status(500).json({
           message:
-            "Twilio service temporarily unavailable",
+            "SMS service configuration error. Please contact support.",
+          details: configIssues,
+        });
+      }
+
+      if (!twilioClient || !verifyServiceSid) {
+        console.error(
+          "❌ Twilio client or Verify Service SID is not available."
+        );
+
+        return res.status(500).json({
+          message:
+            "SMS service temporarily unavailable. Please try again later.",
         });
       }
 
@@ -208,26 +358,11 @@ router.post(
         error?.message || error
       );
 
-      if (
-        error?.code === 60200 ||
-        error?.status === 400
-      ) {
-        return res.status(400).json({
-          message:
-            "Invalid mobile number format",
-        });
-      }
+      const { status, message } =
+        getTwilioErrorMessage(error);
 
-      if (error?.code === 60203) {
-        return res.status(429).json({
-          message:
-            "Too many OTP requests. Please try again later.",
-        });
-      }
-
-      return res.status(500).json({
-        message:
-          "Unable to send OTP. Please try again later.",
+      return res.status(status).json({
+        message,
       });
     }
   }
@@ -276,17 +411,28 @@ router.post(
         });
       }
 
-      if (
-        !twilioClient ||
-        !verifyServiceSid
-      ) {
+      // Validate Twilio configuration
+      const configIssues = validateTwilioConfig();
+      if (configIssues.length > 0) {
         console.error(
-          "❌ Twilio credentials are not properly configured on the server."
+          "❌ Twilio configuration issues:",
+          configIssues
         );
 
         return res.status(500).json({
           message:
-            "Twilio service temporarily unavailable",
+            "SMS service configuration error. Please contact support.",
+        });
+      }
+
+      if (!twilioClient || !verifyServiceSid) {
+        console.error(
+          "❌ Twilio client or Verify Service SID is not available."
+        );
+
+        return res.status(500).json({
+          message:
+            "SMS service temporarily unavailable. Please try again later.",
         });
       }
 
@@ -389,19 +535,11 @@ router.post(
         error?.message || error
       );
 
-      if (
-        error?.status === 404 ||
-        error?.code === 20404
-      ) {
-        return res.status(400).json({
-          message:
-            "OTP expired or not found",
-        });
-      }
+      const { status, message } =
+        getTwilioErrorMessage(error);
 
-      return res.status(400).json({
-        message:
-          "Verification failed. Please request a new OTP.",
+      return res.status(status).json({
+        message,
       });
     }
   }

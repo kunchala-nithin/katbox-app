@@ -102,15 +102,26 @@ function InitialLayout() {
    * LOGIN TRANSITION GUARD
    * ──────────────────────────────────────────────────────────
    *
-   * When login.tsx calls notifyAuthChanged(), the layout's
-   * checkAuth() runs asynchronously. During that window,
-   * `isAuthenticated` is still `false`. If the user was on a
-   * protected route (or navigating to one), the navigation
+   * When login.tsx / verify/[phone].tsx calls notifyAuthChanged(),
+   * the layout's checkAuth() runs asynchronously. During that
+   * window, `isAuthenticated` is still `false`. If the user was
+   * on a protected route (or navigating to one), the navigation
    * guard below would bounce them back to /login.
    *
-   * We suppress the "logged-out → /login" rule for a short
+   * We suppress BOTH navigation rules (the "logged-out → /login"
+   * rule AND the "logged-in → role route" rule) for a short
    * window after an auth-change event to allow checkAuth() to
    * resolve.
+   *
+   * ✅ INCREASED FROM 1500ms TO 4000ms
+   *
+   * The old 1.5s window was too short: checkAuth() has to do a
+   * SecureStore read for the token + a SecureStore read for the
+   * user + (optionally) parse the JWT. On slow Android devices
+   * this can easily exceed 1.5s, letting the navigation guard
+   * fire and bounce the user back to /login before the JWT is
+   * observed. 4s gives plenty of headroom without being
+   * noticeable to the user.
    */
   const loginTransitionRef = useRef<boolean>(false)
   const loginTransitionTimerRef =
@@ -365,6 +376,9 @@ function InitialLayout() {
       /**
        * Mark a login transition in-flight so the navigation
        * guard does not immediately bounce the user.
+       *
+       * ✅ Extended to 4s to comfortably exceed the typical
+       *    SecureStore read latency on cold devices.
        */
       loginTransitionRef.current = true
 
@@ -374,7 +388,7 @@ function InitialLayout() {
 
       loginTransitionTimerRef.current = setTimeout(() => {
         loginTransitionRef.current = false
-      }, 1500)
+      }, 4000)
 
       checkAuth()
     })
@@ -582,6 +596,11 @@ function InitialLayout() {
    *
    * AND we skip the "logged-out -> /login" rule while a login
    * transition is in-flight so we don't bounce the user back.
+   *
+   * ✅ ALSO skip the "authenticated on a public route ->
+   *    role route" redirect during the login transition, so the
+   *    user can finish landing on /verify or /(tabs) without
+   *    the guard firing mid-flight.
    */
 
   useEffect(() => {
@@ -649,12 +668,19 @@ function InitialLayout() {
      *
      * IMPORTANT:
      *
-     * We do not redirect arbitrary authenticated routes.
-     * This prevents the layout from fighting with screens such
-     * as chef/admin pages.
+     * ✅ SKIP this redirect while a login transition is in-
+     *    flight. Otherwise, right after notifyAuthChanged()
+     *    fires, isAuthenticated briefly flips to true while the
+     *    user is still on /verify — and this guard would try to
+     *    yank them to /(tabs)/Home before they've even entered
+     *    the OTP.
      */
 
-    if (isAuthenticated && isPublicRoute) {
+    if (
+      isAuthenticated &&
+      isPublicRoute &&
+      !loginTransitionRef.current
+    ) {
       /*
        * Resolve the user's role from authStorage.
        */

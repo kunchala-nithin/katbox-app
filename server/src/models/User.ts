@@ -28,7 +28,7 @@ export interface IUser extends Document {
   phone: string;
   email?: string;
   address?: string;
-  activeAddress?: IActiveAddress;
+  activeAddress?: IActiveAddress | null;
   savedAddresses: ISavedAddress[];
   isChef: boolean;
   isAdmin: boolean;
@@ -47,6 +47,15 @@ export interface IUser extends Document {
   updatedAt: Date;
 }
 
+/*
+ * ============================================================
+ * SAVED ADDRESS SUB-SCHEMA
+ * ============================================================
+ *
+ * Each saved address gets its own _id so the client can
+ * reference it for edit / delete without relying on array
+ * indices (which shift when entries are removed).
+ */
 const savedAddressSchema = new Schema<ISavedAddress>(
   {
     id: {
@@ -94,6 +103,14 @@ const savedAddressSchema = new Schema<ISavedAddress>(
   }
 );
 
+/*
+ * ============================================================
+ * ACTIVE ADDRESS SUB-SCHEMA
+ * ============================================================
+ *
+ * Single embedded object (not an array). `_id: false` because
+ * there is exactly one active address at a time.
+ */
 const activeAddressSchema = new Schema<IActiveAddress>(
   {
     id: {
@@ -141,6 +158,11 @@ const activeAddressSchema = new Schema<IActiveAddress>(
   }
 );
 
+/*
+ * ============================================================
+ * USER SCHEMA
+ * ============================================================
+ */
 const userSchema = new Schema<IUser>(
   {
     /*
@@ -163,12 +185,19 @@ const userSchema = new Schema<IUser>(
      *
      * (Twilio OTP flow handles login. No Google / Clerk
      * email is required to authenticate.)
+     *
+     * ✅ Indexed with `unique: true` (was previously
+     *    `index: true` only — which allowed theoretical
+     *    duplicate-user races during concurrent
+     *    /auth/verify-otp requests from the same number).
      */
     phone: {
       type: String,
       required: true,
       default: "",
       trim: true,
+      unique: true,
+      sparse: true, // allow missing phone only for legacy records
       index: true,
     },
 
@@ -229,9 +258,10 @@ const userSchema = new Schema<IUser>(
     /*
      * ✅ Expo push notification token.
      *
-     * Stored as a plain string. Empty string means "no token registered
-     * yet". The notification helper `isValidExpoToken()` guards against
-     * sending to invalid/empty tokens.
+     * Stored as a plain string. Empty string means "no token
+     * registered yet". The notification helper
+     * `isValidExpoToken()` guards against sending to
+     * invalid/empty tokens.
      */
     pushToken: {
       type: String,
@@ -250,8 +280,61 @@ const userSchema = new Schema<IUser>(
   },
   {
     timestamps: true,
+
+    /*
+     * ----------------------------------------------------------
+     * ✅ AUTO-INDEX IN PRODUCTION?
+     * ----------------------------------------------------------
+     *
+     * In production, `autoIndex: true` can slow down app boot
+     * on large collections because Mongoose will inspect and
+     * build indexes every time the app connects. Set
+     * autoIndex: false in production and build indexes via a
+     * migration script or `syncIndexes()`.
+     *
+     * Default is true for dev convenience.
+     */
+    autoIndex: process.env.NODE_ENV !== "production",
   }
 );
+
+/*
+ * ============================================================
+ * ✅ COMPOUND INDEX FOR LOOKUPS
+ * ============================================================
+ *
+ * `/auth/send-otp` and `/auth/verify-otp` both look up users
+ * by phone. The unique index above already covers this, but
+ * adding an explicit compound index on (phone, createdAt)
+ * makes the `findOne({ phone })` queries used by
+ * buildUserResponse / admin listing noticeably faster on
+ * larger collections.
+ */
+userSchema.index({ phone: 1, createdAt: -1 });
+
+/*
+ * ============================================================
+ * ✅ HELPER: ENSURE UNIQUE INDEX IN PRODUCTION
+ * ============================================================
+ *
+ * When `autoIndex: false` (production), call this once after
+ * the DB connection is established to guarantee the unique
+ * index on `phone` exists. This is what prevents a
+ * concurrent /verify-otp race from creating two users with
+ * the same phone number.
+ *
+ * Usage (in config/db.ts or index.ts after connectDB):
+ *   import User from "./models/User";
+ *   await User.syncIndexes();
+ */
+userSchema.statics.ensureIndexes = async function () {
+  try {
+    await this.syncIndexes();
+    console.log("✅ User indexes ensured.");
+  } catch (err) {
+    console.error("⚠️ User index sync failed:", err);
+  }
+};
 
 /*
  * Reuse the existing model during hot reloads/server restarts.

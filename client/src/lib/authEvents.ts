@@ -85,7 +85,29 @@ export const notifyAuthChanged = (): void => {
 
   currentListeners.forEach((listener) => {
     try {
-      listener();
+      /**
+       * ✅ Call the listener. If it returns a Promise (i.e. the
+       *    listener is async — like our checkAuth() in
+       *    app/layout.tsx), attach a .catch() so a rejected
+       *    promise does not surface as an unhandled rejection.
+       *
+       *    Synchronous throws are still caught by the
+       *    surrounding try/catch below.
+       */
+      const result: any = listener();
+
+      if (
+        result &&
+        typeof result === "object" &&
+        typeof result.catch === "function"
+      ) {
+        result.catch((asyncError: any) => {
+          console.error(
+            "Async auth listener error:",
+            asyncError
+          );
+        });
+      }
     } catch (error) {
       /**
        * One broken listener should not prevent the remaining
