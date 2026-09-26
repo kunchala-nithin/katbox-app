@@ -29,10 +29,8 @@ import {
   getCachedPushToken,
 } from "@/src/lib/authStorage";
 import { useDeliveryLocationStore } from "@/src/store/deliveryLocationStore";
-// ✅ FIX: the Cashfree helper is exported as an object, not a callable function.
-//         Use the runtime object method that wraps the SDK flow.
-import cashfreeLib from "@/src/lib/cashfree";
-import { startCashfreePayment } from "@/src/types/cashfree";
+import startCashfreePayment from "@/src/lib/cashfree";
+
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -89,6 +87,8 @@ export default function CheckOutScreen() {
   const chefName = (params.chefName as string) || "Nithin Samrat";
   const userId = (params.userId as string) || "";
   const userName = (params.userName as string) || "";
+  const userPhone = (params.userPhone as string) || "";
+  const userEmail = (params.userEmail as string) || "";
 
   const restaurantName = (params.restaurantName as string) || "Premium Caterer";
   const restaurantImage = (params.restaurantImage as string) || "https://picsum.photos/200";
@@ -565,15 +565,17 @@ export default function CheckOutScreen() {
 
           const cashfreeChargeAmount = isHomemadeFlow ? numericTotal : advanceAmount;
 
-          // ✅ FIX: startCashfreePayment is now correctly imported
-          //         from @/src/lib/cashfree
-          const result = await startCashfreePayment({
-            amount: cashfreeChargeAmount,
-            orderPayload,
+          // ✅ FIX: use the current Cashfree wrapper signature
+          const result = await startCashfreePayment.runCashfreePaymentFlow({
+            serviceType,
+            totalAmount: cashfreeChargeAmount,
             customerId: userId || undefined,
+            customerName: userName || undefined,
+            customerPhone: userPhone || undefined,
+            customerEmail: userEmail || undefined,
           });
 
-          if (result.success && result.order) {
+          if (result.ok && result.orderId) {
             if (params.cartId) {
               try {
                 await api.delete(`/api/cart/${params.cartId}`);
@@ -584,7 +586,7 @@ export default function CheckOutScreen() {
 
             router.push({
               pathname: "/screens/OrderConfirmationScreen",
-              params: { orderId: result.order.orderId, serviceType },
+              params: { orderId: result.orderId, serviceType },
             });
           } else {
             Alert.alert(
