@@ -18,7 +18,6 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { useFocusEffect } from "@react-navigation/native";
-
 import api from "@/src/lib/api";
 import {
   getUser,
@@ -30,7 +29,6 @@ import {
 } from "@/src/lib/authStorage";
 import { useDeliveryLocationStore } from "@/src/store/deliveryLocationStore";
 import startCashfreePayment from "@/src/lib/cashfree";
-
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -58,9 +56,7 @@ const formatTimeShortLocal = (d: Date | null): string => {
 export default function CheckOutScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-
   const deliveryLocation = useDeliveryLocationStore((s) => s.deliveryLocation);
-
   const [loading, setLoading] = useState(false);
   const [paymentInProgress, setPaymentInProgress] = useState(false);
   const [cachedPushToken, setCachedPushToken] = useState<string | null>(null);
@@ -69,11 +65,9 @@ export default function CheckOutScreen() {
   const isQuickBitesFlow = serviceType === "quickbites";
   const isCateringFlow = serviceType === "catering";
   const isHomemadeFlow = serviceType === "homemade" || isQuickBitesFlow;
-  const requiresAdvanceFlow = !isHomemadeFlow;
 
   const totalAmount = (params.totalAmount as string) || "687";
   const numericTotal = Number(totalAmount) || 0;
-
   const ADVANCE_RATIO = 0.45;
   const advanceAmount = Math.round(numericTotal * ADVANCE_RATIO * 100) / 100;
   const balanceAmount = Math.round((numericTotal - advanceAmount) * 100) / 100;
@@ -89,7 +83,6 @@ export default function CheckOutScreen() {
   const userName = (params.userName as string) || "";
   const userPhone = (params.userPhone as string) || "";
   const userEmail = (params.userEmail as string) || "";
-
   const restaurantName = (params.restaurantName as string) || "Premium Caterer";
   const restaurantImage = (params.restaurantImage as string) || "https://picsum.photos/200";
   const occasion = (params.occasion as string) || "Event";
@@ -99,14 +92,18 @@ export default function CheckOutScreen() {
   const deliveryType = (params.deliveryType as string) || "Standard";
   const pricePerPlate = Number(params.pricePerPlate) || 0;
 
-  const menuName = (params.menuName as string) || (isCateringFlow ? "Catering Platter" : (isHomemadeFlow ? "Homemade Order" : "Classic Lunch Plan"));
+  const menuName =
+    (params.menuName as string) ||
+    (isCateringFlow ? "Catering Platter" : isHomemadeFlow ? "Homemade Order" : "Classic Lunch Plan");
+
   const menuImage = (() => {
     const v = params.menuImage || params.restaurantImage;
     if (Array.isArray(v)) return v[0];
     return v || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400";
   })();
+
   const durationType = (params.durationType as string) || "Flexible Days (2 Days Running)";
-  const deliveryDate = (params.deliveryDate as string) || "Mon, 20 May – Tue, 21 May";
+  const deliveryDate = (params.deliveryDate as string) || "Mon, 20 May - Tue, 21 May";
   const deliveryTimeSlot = (params.deliveryTimeSlot as string) || "7:00 PM - 9:00 PM";
   const deliverySlotParam = (params.deliverySlot as string) || "";
 
@@ -114,8 +111,7 @@ export default function CheckOutScreen() {
   const homemadeResolvedSlot = deliverySlotParam || deliveryTimeSlot || "";
 
   const isQuickBites =
-    isQuickBitesFlow ||
-    String((params.isQuickBites as string) || "").toLowerCase() === "true";
+    isQuickBitesFlow || String((params.isQuickBites as string) || "").toLowerCase() === "true";
 
   const liveEstimatedDeliveryAt = useMemo(() => {
     if (isQuickBites) {
@@ -149,7 +145,9 @@ export default function CheckOutScreen() {
   }, [isHomemadeFlow, isQuickBites, liveEstimatedDeliveryAt, homemadeResolvedSlot]);
 
   const [addressDetails, setAddressDetails] = useState<string>(
-    (params.addressDetails as string) || (params.deliveryAddress as string) || "2-91/32, Sai Enclave, Hyderabad"
+    (params.addressDetails as string) ||
+      (params.deliveryAddress as string) ||
+      "2-91/32, Sai Enclave, Hyderabad"
   );
   const [activeAddress, setActiveAddress] = useState<ActiveAddress | null>(null);
   const [isLoadingAddress, setIsLoadingAddress] = useState<boolean>(true);
@@ -171,7 +169,6 @@ export default function CheckOutScreen() {
     confirmScale.setValue(0.85);
     confirmOpacity.setValue(0);
     confirmTranslateY.setValue(24);
-
     Animated.parallel([
       Animated.spring(confirmScale, { toValue: 1, friction: 7, tension: 65, useNativeDriver: true }),
       Animated.timing(confirmOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
@@ -271,30 +268,29 @@ export default function CheckOutScreen() {
     if (!rawSelections) return null;
     try {
       return typeof rawSelections === "string" ? JSON.parse(rawSelections) : rawSelections;
-    } catch (e) {
-      return null;
-    }
+    } catch (e) {}
+    return null;
   }, [rawSelections]);
 
   const parsedItems = useMemo(() => {
     if (!rawItems) return [];
     try {
       return typeof rawItems === "string" ? JSON.parse(rawItems) : rawItems;
-    } catch (e) {
-      return [];
-    }
+    } catch (e) {}
+    return [];
   }, [rawItems]);
 
   const parsedAddons = useMemo(() => {
     if (!rawAddons) return [];
     try {
       return typeof rawAddons === "string" ? JSON.parse(rawAddons) : rawAddons;
-    } catch (e) {
-      return [];
-    }
+    } catch (e) {}
+    return [];
   }, [rawAddons]);
 
-  const isMealBoxFlow = serviceType === "mealbox" || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
+  const isMealBoxFlow =
+    serviceType === "mealbox" ||
+    (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
 
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>(() => {
@@ -405,7 +401,6 @@ export default function CheckOutScreen() {
 
   const handleConfirmPlaceOrder = () => {
     if (paymentInProgress) return;
-
     closeConfirmModal(async () => {
       setTimeout(async () => {
         try {
@@ -415,11 +410,12 @@ export default function CheckOutScreen() {
           const resolvedLatitude =
             deliveryLocation?.latitude !== undefined && deliveryLocation?.latitude !== null
               ? deliveryLocation.latitude
-              : (activeAddress?.latitude ?? 0);
+              : activeAddress?.latitude ?? 0;
           const resolvedLongitude =
             deliveryLocation?.longitude !== undefined && deliveryLocation?.longitude !== null
               ? deliveryLocation.longitude
-              : (activeAddress?.longitude ?? 0);
+              : activeAddress?.longitude ?? 0;
+
           const resolvedDeliveryFullAddress =
             deliveryLocation?.fullAddress || activeAddress?.fullAddress || addressDetails;
 
@@ -450,8 +446,8 @@ export default function CheckOutScreen() {
             formData.append("chefName", chefName);
             formData.append("items", JSON.stringify(parsedItems));
             formData.append("deliveryDate", dynamicHomemadeDateLabel || "Today");
-            formData.append("deliveryTimeSlot", dynamicHomemadeSlotLabel || "30–45 min");
-            formData.append("deliverySlot", dynamicHomemadeSlotLabel || "30–45 min");
+            formData.append("deliveryTimeSlot", dynamicHomemadeSlotLabel || "30-45 min");
+            formData.append("deliverySlot", dynamicHomemadeSlotLabel || "30-45 min");
             formData.append("isQuickBites", isQuickBites ? "true" : "false");
             formData.append("deliveryWindowMinutes", isQuickBites ? "75" : "0");
             formData.append("isAdvanceOrder", "false");
@@ -484,7 +480,7 @@ export default function CheckOutScreen() {
             return;
           }
 
-          // ---------- Branch 2 & 3: Cashfree online payment ----------
+          // ----- Branch 2 & 3: Cashfree online payment -----
           const orderPayload: Record<string, any> = {
             userId,
             userName,
@@ -528,7 +524,6 @@ export default function CheckOutScreen() {
           } else if (isHomemadeFlow) {
             orderPayload.chefId = chefId;
             orderPayload.chefName = chefName;
-
             const sanitizedItems = (Array.isArray(parsedItems) ? parsedItems : []).map(
               (it: any, idx: number) => ({
                 id: String(it.id || it._id || `item_${Date.now()}_${idx}`),
@@ -536,17 +531,15 @@ export default function CheckOutScreen() {
                 image: String(it.image || it.imageUrl || ""),
                 price: Number(it.price) || 0,
                 quantity: Number(it.quantity) || 1,
-                selectedQtyConfig: String(
-                  it.selectedQtyConfig || it.sizeLabel || it.size || "Standard Serving"
-                ),
+                selectedQtyConfig: String(it.selectedQtyConfig || it.sizeLabel || it.size || "Standard Serving"),
                 isVeg: it.isVeg !== undefined ? Boolean(it.isVeg) : true,
               })
             );
             orderPayload.items = sanitizedItems;
             orderPayload.deliveryAddress = addressDetails;
             orderPayload.deliveryDate = dynamicHomemadeDateLabel || "Today";
-            orderPayload.deliveryTimeSlot = dynamicHomemadeSlotLabel || "30–45 min";
-            orderPayload.deliverySlot = dynamicHomemadeSlotLabel || "30–45 min";
+            orderPayload.deliveryTimeSlot = dynamicHomemadeSlotLabel || "30-45 min";
+            orderPayload.deliverySlot = dynamicHomemadeSlotLabel || "30-45 min";
             orderPayload.isQuickBites = isQuickBites ? "true" : "false";
             orderPayload.deliveryWindowMinutes = isQuickBites ? "75" : "0";
             if (liveEstimatedDeliveryAt) {
@@ -556,8 +549,8 @@ export default function CheckOutScreen() {
             orderPayload.chefId = chefId;
             orderPayload.chefName = chefName;
             orderPayload.durationType = durationType;
-            orderPayload.deliveryTimeSlot = deliveryTimeSlot;
             orderPayload.deliveryDate = deliveryDate;
+            orderPayload.deliveryTimeSlot = deliveryTimeSlot;
             orderPayload.upcomingDeliveries = upcomingDeliveriesList;
             if (parsedSelections) orderPayload.selections = parsedSelections;
             if (parsedItems) orderPayload.items = parsedItems;
@@ -565,14 +558,14 @@ export default function CheckOutScreen() {
 
           const cashfreeChargeAmount = isHomemadeFlow ? numericTotal : advanceAmount;
 
-          // ✅ FIX: use the current Cashfree wrapper signature
           const result = await startCashfreePayment.runCashfreePaymentFlow({
             serviceType,
             totalAmount: cashfreeChargeAmount,
-            customerId: userId || undefined,
+            customerld: userId || undefined,
             customerName: userName || undefined,
             customerPhone: userPhone || undefined,
             customerEmail: userEmail || undefined,
+            orderPayload,
           });
 
           if (result.ok && result.orderId) {
@@ -583,7 +576,6 @@ export default function CheckOutScreen() {
                 console.log("Cart cleanup non-critical error", e);
               }
             }
-
             router.push({
               pathname: "/screens/OrderConfirmationScreen",
               params: { orderId: result.orderId, serviceType },
@@ -613,20 +605,21 @@ export default function CheckOutScreen() {
   const getGroupedMealBoxItemsBySection = (items: any[]) => {
     const map: Record<string, any[]> = { STARTERS: [], MAINS: [], "ADD ON'S": [] };
     if (!Array.isArray(items)) return map;
-
     items.forEach((item) => {
       const sect = String(item.section || "").toUpperCase();
       if (sect.includes("STARTER")) map["STARTERS"].push(item);
-      else if (sect.includes("ADDON") || sect.includes("ADD ON") || item.type === "addon") map["ADD ON'S"].push(item);
+      else if (sect.includes("ADDON") || sect.includes("ADD ON") || item.type === "addon")
+        map["ADD ON'S"].push(item);
       else map["MAINS"].push(item);
     });
     return map;
   };
 
   const currentDaySelectionsArray =
-    (parsedSelections && previewActiveDay && !Array.isArray(parsedSelections))
+    parsedSelections && previewActiveDay && !Array.isArray(parsedSelections)
       ? parsedSelections[previewActiveDay] || []
       : [];
+
   const groupedPreviewDayItemsMap = getGroupedMealBoxItemsBySection(currentDaySelectionsArray);
 
   const HEADER_HEIGHT = insets.top + 60;
@@ -649,9 +642,7 @@ export default function CheckOutScreen() {
         >
           <Ionicons name="chevron-back" size={20} color="#0D2E22" />
         </TouchableOpacity>
-
         <Text style={styles.headerTitle}>Checkout</Text>
-
         <View style={{ width: 38 }} />
       </View>
 
@@ -661,7 +652,15 @@ export default function CheckOutScreen() {
       >
         {isHomemadeFlow ? (
           <View style={styles.mainCardModern}>
-            <View style={[styles.modernTagPillEdge, { backgroundColor: "rgba(22, 101, 52, 0.08)", borderColor: "rgba(22, 101, 52, 0.15)" }]}>
+            <View
+              style={[
+                styles.modernTagPillEdge,
+                {
+                  backgroundColor: "rgba(22, 101, 52, 0.08)",
+                  borderColor: "rgba(22, 101, 52, 0.15)",
+                },
+              ]}
+            >
               <Text style={styles.modernTagTextEdge}>
                 {isQuickBitesFlow ? "QUICK BITES ORDER" : "HOMEMADE ORDER"}
               </Text>
@@ -678,7 +677,7 @@ export default function CheckOutScreen() {
               </View>
             </View>
 
-            {(dynamicHomemadeDateLabel || dynamicHomemadeSlotLabel) ? (
+            {dynamicHomemadeDateLabel || dynamicHomemadeSlotLabel ? (
               <View style={styles.homemadeDeliveryStripContainer}>
                 {!!dynamicHomemadeDateLabel && (
                   <View style={styles.homemadeDeliveryCell}>
@@ -693,11 +692,9 @@ export default function CheckOutScreen() {
                     </View>
                   </View>
                 )}
-
                 {!!dynamicHomemadeDateLabel && !!dynamicHomemadeSlotLabel && (
                   <View style={styles.homemadeDeliveryDivider} />
                 )}
-
                 {!!dynamicHomemadeSlotLabel && (
                   <View style={styles.homemadeDeliveryCell}>
                     <View style={styles.homemadeDeliveryIconCircle}>
@@ -724,16 +721,24 @@ export default function CheckOutScreen() {
                         style={styles.homemadeDishThumbnail}
                       />
                       <View style={{ flex: 1, marginLeft: 14, justifyContent: "center" }}>
-                        <Text style={styles.homemadeDishName} numberOfLines={2}>{dishItem.name}</Text>
-
+                        <Text style={styles.homemadeDishName} numberOfLines={2}>
+                          {dishItem.name}
+                        </Text>
                         <View style={styles.portionPillTag}>
-                          <Ionicons name="layers-outline" size={11} color="#0F382A" style={{ marginRight: 4 }} />
-                          <Text style={styles.portionPillText}>{dishItem.selectedQtyConfig || "Standard Serving"}</Text>
+                          <Ionicons
+                            name="layers-outline"
+                            size={11}
+                            color="#0F382A"
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text style={styles.portionPillText}>
+                            {dishItem.selectedQtyConfig || "Standard Serving"}
+                          </Text>
                         </View>
-
                         <View style={styles.homemadePriceQtyRow}>
                           <Text style={styles.homemadeQtyLabel}>
-                            Qty: <Text style={styles.homemadeQtyValue}>{dishItem.quantity || 1}</Text>
+                            Qty:{" "}
+                            <Text style={styles.homemadeQtyValue}>{dishItem.quantity || 1}</Text>
                           </Text>
                           <Text style={styles.homemadeDishPrice}>
                             ₹{(Number(dishItem.price) || 0) * (Number(dishItem.quantity) || 1)}
@@ -741,7 +746,6 @@ export default function CheckOutScreen() {
                         </View>
                       </View>
                     </View>
-
                     {idx !== parsedItems.length - 1 && (
                       <View style={styles.separatorHorizontalDotted} />
                     )}
@@ -751,7 +755,9 @@ export default function CheckOutScreen() {
                 <View style={styles.modernHeaderRow}>
                   <Image source={{ uri: menuImage }} style={styles.modernHeroImage} />
                   <View style={styles.modernTitleBlock}>
-                    <Text style={styles.modernMainTitle} numberOfLines={2}>{menuName}</Text>
+                    <Text style={styles.modernMainTitle} numberOfLines={2}>
+                      {menuName}
+                    </Text>
                     <Text style={styles.modernChefSubtitle}>Fresh Chef Preparations</Text>
                   </View>
                 </View>
@@ -773,27 +779,39 @@ export default function CheckOutScreen() {
                     </TouchableOpacity>
                   </View>
                   {isLoadingAddress ? (
-                    <ActivityIndicator size="small" color="#166538" style={{ alignSelf: "flex-start", marginTop: 4 }} />
+                    <ActivityIndicator
+                      size="small"
+                      color="#166538"
+                      style={{ alignSelf: "flex-start", marginTop: 4 }}
+                    />
                   ) : (
-                    <Text style={styles.modernAddressText} numberOfLines={2}>{addressDetails}</Text>
+                    <Text style={styles.modernAddressText} numberOfLines={2}>
+                      {addressDetails}
+                    </Text>
                   )}
                 </View>
               </View>
             </View>
 
             <View style={styles.divider} />
-
             <View style={styles.priceRow}>
               <Text style={styles.priceLabel}>Items Subtotal</Text>
-              <Text style={styles.priceValue}>₹{subtotal}</Text>
+              <Text style={styles.priceValue}>₹ {subtotal}</Text>
             </View>
           </View>
         ) : isCateringFlow ? (
           <View style={styles.mainCardModern}>
-            <View style={[styles.modernTagPillEdge, { backgroundColor: 'rgba(15, 56, 42, 0.08)', borderColor: 'rgba(15, 56, 42, 0.12)' }]}>
-              <Text style={[styles.modernTagTextEdge, { color: '#0F382A' }]}>CATERING PLATTER</Text>
+            <View
+              style={[
+                styles.modernTagPillEdge,
+                {
+                  backgroundColor: "rgba(15, 56, 42, 0.08)",
+                  borderColor: "rgba(15, 56, 42, 0.12)",
+                },
+              ]}
+            >
+              <Text style={[styles.modernTagTextEdge, { color: "#0F382A" }]}>CATERING PLATTER</Text>
             </View>
-
             <View style={styles.modernHeaderRow}>
               <Image source={{ uri: menuImage }} style={styles.modernHeroImage} />
               <View style={styles.modernTitleBlock}>
@@ -809,11 +827,11 @@ export default function CheckOutScreen() {
                 <View style={styles.modernInfoCell}>
                   <Ionicons name="people-outline" size={14} color="#0F382A" />
                   <Text style={styles.modernCellLabel}>Event Guests</Text>
-                  <Text style={styles.modernCellValue}>{guests} Guests ({occasion})</Text>
+                  <Text style={styles.modernCellValue}>
+                    {guests} Guests ({occasion})
+                  </Text>
                 </View>
-
                 <View style={styles.separatorVerticalDotted} />
-
                 <View style={styles.modernInfoCell}>
                   <Ionicons name="car-outline" size={14} color="#0F382A" />
                   <Text style={styles.modernCellLabel}>Delivery Mode</Text>
@@ -836,15 +854,17 @@ export default function CheckOutScreen() {
 
             <View style={styles.modernStartDateBanner}>
               <Text style={styles.modernStartDateText}>
-                Date & Time: <Text style={{ fontWeight: "700", color: "#0B261D" }}>{eventDate} • {eventTime}</Text>
+                Date & Time:{" "}
+                <Text style={{ fontWeight: "700", color: "#0B261D" }}>
+                  {eventDate} • {eventTime}
+                </Text>
               </Text>
             </View>
 
             <View style={styles.divider} />
-
             <View style={styles.priceRow}>
               <Text style={styles.priceLabel}>Price Per Plate</Text>
-              <Text style={styles.priceValue}>₹{pricePerPlate}</Text>
+              <Text style={styles.priceValue}>₹ {pricePerPlate}</Text>
             </View>
 
             {(parsedSelections || parsedAddons.length > 0) && (
@@ -866,7 +886,6 @@ export default function CheckOutScreen() {
             <View style={styles.modernTagPillEdge}>
               <Text style={styles.modernTagTextEdge}>MEALBOX PLAN</Text>
             </View>
-
             <View style={styles.modernHeaderRow}>
               <Image source={{ uri: menuImage }} style={styles.modernHeroImage} />
               <View style={styles.modernTitleBlock}>
@@ -884,9 +903,7 @@ export default function CheckOutScreen() {
                   <Text style={styles.modernCellLabel}>Plan Duration</Text>
                   <Text style={styles.modernCellValue}>{durationType}</Text>
                 </View>
-
                 <View style={styles.separatorVerticalDotted} />
-
                 <View style={styles.modernInfoCell}>
                   <Ionicons name="time-outline" size={14} color="#0F382A" />
                   <Text style={styles.modernCellLabel}>Delivery Slot</Text>
@@ -909,7 +926,8 @@ export default function CheckOutScreen() {
 
             <View style={styles.modernStartDateBanner}>
               <Text style={styles.modernStartDateText}>
-                Starts: <Text style={{ fontWeight: "700", color: "#0B261D" }}>{deliveryDate}</Text>
+                Starts:{" "}
+                <Text style={{ fontWeight: "700", color: "#0B261D" }}>{deliveryDate}</Text>
               </Text>
             </View>
 
@@ -922,7 +940,12 @@ export default function CheckOutScreen() {
                 <View style={styles.upcomingDeliveriesGrid}>
                   {upcomingDeliveriesList.map((deliveryDateItem: string, idx: number) => (
                     <View key={`checkout-upcoming-del-${idx}`} style={styles.upcomingDeliveryPill}>
-                      <Ionicons name="checkmark-circle" size={12} color="#0F382A" style={{ marginRight: 4 }} />
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={12}
+                        color="#0F382A"
+                        style={{ marginRight: 4 }}
+                      />
                       <Text style={styles.upcomingDeliveryPillText}>{deliveryDateItem}</Text>
                     </View>
                   ))}
@@ -931,10 +954,9 @@ export default function CheckOutScreen() {
             )}
 
             <View style={styles.divider} />
-
             <View style={styles.priceRow}>
               <Text style={styles.priceLabel}>Package Pricing Total</Text>
-              <Text style={styles.priceValue}>₹{totalAmount}</Text>
+              <Text style={styles.priceValue}>₹ {totalAmount}</Text>
             </View>
 
             {(parsedSelections || parsedItems.length > 0) && (
@@ -964,7 +986,12 @@ export default function CheckOutScreen() {
           ]}
         >
           <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-            <View style={[styles.radioCircle, selectedPaymentMethod === "upi" && styles.radioCircleActive]}>
+            <View
+              style={[
+                styles.radioCircle,
+                selectedPaymentMethod === "upi" && styles.radioCircleActive,
+              ]}
+            >
               {selectedPaymentMethod === "upi" && <View style={styles.radioInnerDot} />}
             </View>
             <View style={styles.paymentIconBox}>
@@ -992,7 +1019,12 @@ export default function CheckOutScreen() {
           ]}
         >
           <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-            <View style={[styles.radioCircle, selectedPaymentMethod === "card" && styles.radioCircleActive]}>
+            <View
+              style={[
+                styles.radioCircle,
+                selectedPaymentMethod === "card" && styles.radioCircleActive,
+              ]}
+            >
               {selectedPaymentMethod === "card" && <View style={styles.radioInnerDot} />}
             </View>
             <View style={styles.paymentIconBox}>
@@ -1015,7 +1047,12 @@ export default function CheckOutScreen() {
           ]}
         >
           <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-            <View style={[styles.radioCircle, selectedPaymentMethod === "netbanking" && styles.radioCircleActive]}>
+            <View
+              style={[
+                styles.radioCircle,
+                selectedPaymentMethod === "netbanking" && styles.radioCircleActive,
+              ]}
+            >
               {selectedPaymentMethod === "netbanking" && <View style={styles.radioInnerDot} />}
             </View>
             <View style={styles.paymentIconBox}>
@@ -1038,7 +1075,12 @@ export default function CheckOutScreen() {
           ]}
         >
           <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-            <View style={[styles.radioCircle, selectedPaymentMethod === "wallet" && styles.radioCircleActive]}>
+            <View
+              style={[
+                styles.radioCircle,
+                selectedPaymentMethod === "wallet" && styles.radioCircleActive,
+              ]}
+            >
               {selectedPaymentMethod === "wallet" && <View style={styles.radioInnerDot} />}
             </View>
             <View style={styles.paymentIconBox}>
@@ -1062,7 +1104,12 @@ export default function CheckOutScreen() {
             ]}
           >
             <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-              <View style={[styles.radioCircle, selectedPaymentMethod === "cod" && styles.radioCircleActive]}>
+              <View
+                style={[
+                  styles.radioCircle,
+                  selectedPaymentMethod === "cod" && styles.radioCircleActive,
+                ]}
+              >
                 {selectedPaymentMethod === "cod" && <View style={styles.radioInnerDot} />}
               </View>
               <View style={styles.paymentIconBox}>
@@ -1116,24 +1163,23 @@ export default function CheckOutScreen() {
         >
           <View style={styles.modalIndicatorBar} />
           <Text style={styles.breakupHeaderTitle}>Price Breakdown</Text>
-
           {isCateringFlow ? (
             <>
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Price Per Plate</Text>
-                <Text style={styles.breakupLineValue}>₹{pricePerPlate}</Text>
+                <Text style={styles.breakupLineValue}>₹ {pricePerPlate}</Text>
               </View>
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Total Guests</Text>
-                <Text style={styles.breakupLineValue}>× {guests}</Text>
+                <Text style={styles.breakupLineValue}>x {guests}</Text>
               </View>
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Platter Subtotal</Text>
-                <Text style={styles.breakupLineValue}>₹{subtotal}</Text>
+                <Text style={styles.breakupLineValue}>₹ {subtotal}</Text>
               </View>
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Delivery ({deliveryType})</Text>
-                <Text style={styles.breakupLineValue}>₹{deliveryPrice}</Text>
+                <Text style={styles.breakupLineValue}>₹ {deliveryPrice}</Text>
               </View>
             </>
           ) : isHomemadeFlow ? (
@@ -1142,11 +1188,11 @@ export default function CheckOutScreen() {
                 <Text style={styles.breakupLineLabel}>
                   {isQuickBitesFlow ? "Quick Bites Subtotal" : "Dishes Subtotal"}
                 </Text>
-                <Text style={styles.breakupLineValue}>₹{subtotal}</Text>
+                <Text style={styles.breakupLineValue}>₹ {subtotal}</Text>
               </View>
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Delivery & Kitchen Handling</Text>
-                <Text style={styles.breakupLineValue}>₹{deliveryPrice}</Text>
+                <Text style={styles.breakupLineValue}>₹ {deliveryPrice}</Text>
               </View>
             </>
           ) : (
@@ -1155,11 +1201,11 @@ export default function CheckOutScreen() {
                 <Text style={styles.breakupLineLabel}>
                   {isMealBoxFlow ? "MealBox Plan Base Subtotal" : "Plan Base Amount"}
                 </Text>
-                <Text style={styles.breakupLineValue}>₹{subtotal}</Text>
+                <Text style={styles.breakupLineValue}>₹ {subtotal}</Text>
               </View>
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Delivery & Kitchen Charges</Text>
-                <Text style={styles.breakupLineValue}>₹{deliveryPrice}</Text>
+                <Text style={styles.breakupLineValue}>₹ {deliveryPrice}</Text>
               </View>
             </>
           )}
@@ -1186,7 +1232,7 @@ export default function CheckOutScreen() {
                 </View>
                 <View style={styles.breakupLineRow}>
                   <Text style={styles.breakupLineLabel}>Pay on Delivery</Text>
-                  <Text style={styles.breakupLineValue}>₹{totalAmount}</Text>
+                  <Text style={styles.breakupLineValue}>₹ {totalAmount}</Text>
                 </View>
               </>
             ) : (
@@ -1209,13 +1255,12 @@ export default function CheckOutScreen() {
               </View>
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Balance Upon Delivery</Text>
-                <Text style={styles.breakupLineValue}>₹{balanceAmount}</Text>
+                <Text style={styles.breakupLineValue}>₹ {balanceAmount}</Text>
               </View>
             </>
           )}
 
           <View style={styles.breakupDividerLine} />
-
           <View style={styles.breakupLineRow}>
             <Text style={[styles.breakupLineLabel, { fontWeight: "800", color: "#0B261D" }]}>
               Total Payable
@@ -1259,14 +1304,12 @@ export default function CheckOutScreen() {
           ) : (
             <>
               <Ionicons
-                name={"checkmark-circle"}
+                name="checkmark-circle"
                 size={15}
                 color="#FAF8F5"
                 style={{ marginRight: 6 }}
               />
-              <Text style={styles.payNowSolidButtonText}>
-                {"Place Order"}
-              </Text>
+              <Text style={styles.payNowSolidButtonText}>Place Order</Text>
             </>
           )}
         </TouchableOpacity>
@@ -1288,7 +1331,6 @@ export default function CheckOutScreen() {
       >
         <View style={styles.confirmModalOverlay}>
           <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFillObject} />
-
           <TouchableOpacity
             style={StyleSheet.absoluteFillObject}
             activeOpacity={1}
@@ -1312,31 +1354,37 @@ export default function CheckOutScreen() {
             <View style={styles.confirmIconCircle}>
               <Ionicons name="receipt-outline" size={28} color="#FAF8F5" />
             </View>
-
             <Text style={styles.confirmTitle}>{confirmModalTitle}</Text>
-
             <Text style={styles.confirmSubtitle}>
               {isHomemadeFlow && selectedPaymentMethod === "cod" ? (
                 <>
                   You'll pay the full amount of{" "}
-                  <Text style={{ fontWeight: "900", color: "#166538" }}>₹{totalAmount}</Text> in cash upon delivery.
+                  <Text style={{ fontWeight: "900", color: "#166538" }}>₹{totalAmount}</Text> in cash
+                  upon delivery.
                   {"\n"}
                   No online payment is required right now.
                 </>
               ) : isHomemadeFlow ? (
                 <>
                   You'll pay the full amount of{" "}
-                  <Text style={{ fontWeight: "900", color: "#166538" }}>₹{totalAmount}</Text> online now.
+                  <Text style={{ fontWeight: "900", color: "#166538" }}>₹{totalAmount}</Text> online
+                  now.
                   {"\n"}
                   Nothing is due on delivery.
                 </>
               ) : (
                 <>
                   You need to pay an advance amount of{" "}
-                  <Text style={{ fontWeight: "900", color: "#166538" }}>₹{advanceAmount} (45%)</Text> online now.
+                  <Text style={{ fontWeight: "900", color: "#166538" }}>
+                    ₹{advanceAmount} (45%)
+                  </Text>{" "}
+                  online now.
                   {"\n"}
                   Balance amount of{" "}
-                  <Text style={{ fontWeight: "800", color: "#0B261D" }}>₹{balanceAmount} (55%)</Text> will be collected upon delivery.
+                  <Text style={{ fontWeight: "800", color: "#0B261D" }}>
+                    ₹{balanceAmount} (55%)
+                  </Text>{" "}
+                  will be collected upon delivery.
                 </>
               )}
             </Text>
@@ -1369,7 +1417,11 @@ export default function CheckOutScreen() {
                 ) : (
                   <>
                     <Ionicons
-                      name={isHomemadeFlow && selectedPaymentMethod === "cod" ? "checkmark-circle-outline" : "qr-code-outline"}
+                      name={
+                        isHomemadeFlow && selectedPaymentMethod === "cod"
+                          ? "checkmark-circle-outline"
+                          : "qr-code-outline"
+                      }
                       size={16}
                       color="#FAF8F5"
                       style={{ marginRight: 6 }}
@@ -1402,7 +1454,6 @@ export default function CheckOutScreen() {
             activeOpacity={1}
             onPress={() => setShowChangeAddressModal(false)}
           />
-
           <View style={styles.changeAddressModalContainer}>
             <View style={styles.drawerHandle} />
             <TouchableOpacity
@@ -1412,10 +1463,10 @@ export default function CheckOutScreen() {
             >
               <Ionicons name="close" size={20} color="#FAF8F5" />
             </TouchableOpacity>
-
             <Text style={styles.changeAddressModalTitle}>Enter Delivery Address</Text>
-            <Text style={styles.changeAddressModalSubtitle}>Provide accurate address for prompt chef delivery</Text>
-
+            <Text style={styles.changeAddressModalSubtitle}>
+              Provide accurate address for prompt chef delivery
+            </Text>
             <ScrollView showsVerticalScrollIndicator={false} style={{ width: "100%", marginTop: 12 }}>
               <View style={styles.addressInputGroup}>
                 <Text style={styles.addressInputLabel}>Flat / House / Floor No.</Text>
@@ -1477,7 +1528,6 @@ export default function CheckOutScreen() {
       <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closeSheet}>
         <BlurView intensity={30} tint="dark" style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeSheet} />
-
           <Animated.View
             style={[
               styles.previewModalContent,
@@ -1495,7 +1545,11 @@ export default function CheckOutScreen() {
                   Selections Summary
                 </Text>
                 <Text style={{ fontSize: 12.5, color: "#5B756C", marginLeft: 2, fontWeight: "500" }}>
-                  {isCateringFlow ? "Review your platter menu & add-ons" : (isHomemadeFlow ? "Review your homemade dishes" : "Tap pills to inspect or confirm choices")}
+                  {isCateringFlow
+                    ? "Review your platter menu & add-ons"
+                    : isHomemadeFlow
+                    ? "Review your homemade dishes"
+                    : "Tap pills to inspect or confirm choices"}
                 </Text>
               </View>
             </View>
@@ -1557,30 +1611,30 @@ export default function CheckOutScreen() {
                 <>
                   {Array.isArray(parsedSelections) &&
                     parsedSelections.map((cat: any, index: number) => {
-                      const allSelected = [
-                        ...(cat.selected || []),
-                        ...(cat.extraSelected || []),
-                      ];
+                      const allSelected = [...(cat.selected || []), ...(cat.extraSelected || [])];
                       if (!allSelected.length) return null;
-
                       return (
                         <View key={`cat-${index}`} style={styles.previewCategoryCard}>
                           <View style={styles.previewCategoryHeader}>
                             <Text style={styles.previewCategoryTitle}>{cat.category}</Text>
                           </View>
-
                           {allSelected.map((item: any, i: number) => {
                             const isExtra = cat.max ? i >= cat.max : false;
                             return (
                               <View key={`cat-item-${i}`} style={styles.previewItemCard}>
                                 <Image
-                                  source={{ uri: item.imageUrl || item.image || "https://via.placeholder.com/80?text=Food" }}
+                                  source={{
+                                    uri:
+                                      item.imageUrl ||
+                                      item.image ||
+                                      "https://via.placeholder.com/80?text=Food",
+                                  }}
                                   style={styles.previewItemImage}
                                 />
                                 <Text style={styles.previewItemName}>{item.name}</Text>
                                 {isExtra && (
                                   <View style={styles.extraTag}>
-                                    <Text style={styles.extraTagText}>+₹{item.price || 0}/plate</Text>
+                                    <Text style={styles.extraTagText}>+{item.price || 0}/plate</Text>
                                   </View>
                                 )}
                                 <Ionicons
@@ -1604,14 +1658,21 @@ export default function CheckOutScreen() {
                       {parsedAddons.map((addon: any, idx: number) => (
                         <View key={`addon-item-${idx}`} style={styles.previewItemCard}>
                           <Image
-                            source={{ uri: addon.imageUrl || addon.image || "https://via.placeholder.com/80?text=Food" }}
+                            source={{
+                              uri:
+                                addon.imageUrl ||
+                                addon.image ||
+                                "https://via.placeholder.com/80?text=Food",
+                            }}
                             style={styles.previewItemImage}
                           />
                           <Text style={styles.previewItemName}>
-                            {addon.name} × {addon.count}
+                            {addon.name} x {addon.count}
                           </Text>
                           <View style={styles.extraTag}>
-                            <Text style={styles.extraTagText}>+₹{addon.price * addon.count}/plate</Text>
+                            <Text style={styles.extraTagText}>
+                              +{addon.price * addon.count}/plate
+                            </Text>
                           </View>
                           <Ionicons
                             name="checkmark-circle"
@@ -1627,17 +1688,23 @@ export default function CheckOutScreen() {
               ) : isHomemadeFlow ? (
                 <View style={styles.previewCategoryCard}>
                   <View style={styles.previewCategoryHeader}>
-                    <Text style={styles.previewCategoryTitle}>Order Summary ({parsedItems.length} Dishes)</Text>
+                    <Text style={styles.previewCategoryTitle}>
+                      Order Summary ({parsedItems.length} Dishes)
+                    </Text>
                   </View>
                   {parsedItems.map((dish: any, dIdx: number) => (
                     <View key={`homemade-modal-dish-${dIdx}`} style={styles.previewItemCard}>
                       <Image
-                        source={{ uri: dish.image || "https://via.placeholder.com/80?text=Food" }}
+                        source={{
+                          uri: dish.image || "https://via.placeholder.com/80?text=Food",
+                        }}
                         style={styles.previewItemImage}
                       />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.previewItemName}>{dish.name}</Text>
-                        <Text style={styles.previewItemSubdetail}>{dish.selectedQtyConfig || "Standard Serving"} • Qty: {dish.quantity || 1}</Text>
+                        <Text style={styles.previewItemSubdetail}>
+                          {dish.selectedQtyConfig || "Standard Serving"} Qty: {dish.quantity || 1}
+                        </Text>
                       </View>
                       <Text style={styles.previewItemPriceTag}>
                         ₹{(Number(dish.price) || 0) * (Number(dish.quantity) || 1)}
@@ -1665,59 +1732,69 @@ export default function CheckOutScreen() {
                       No items configured for this weekday.
                     </Text>
                   ) : (
-                    Object.entries(groupedPreviewDayItemsMap).map(([sectionTitle, dishesGroupArray]) => {
-                      if (!dishesGroupArray || dishesGroupArray.length === 0) return null;
-                      return (
-                        <View key={`checkout-preview-section-${sectionTitle}`} style={{ marginTop: 14 }}>
-                          <View style={styles.sectionHeaderLabelContainerTag}>
-                            <Text style={styles.sectionHeaderLabelContainerTagText}>{sectionTitle}</Text>
-                          </View>
+                    Object.entries(groupedPreviewDayItemsMap).map(
+                      ([sectionTitle, dishesGroupArray]) => {
+                        if (!dishesGroupArray || dishesGroupArray.length === 0) return null;
+                        return (
+                          <View
+                            key={`checkout-preview-section-${sectionTitle}`}
+                            style={{ marginTop: 14 }}
+                          >
+                            <View style={styles.sectionHeaderLabelContainerTag}>
+                              <Text style={styles.sectionHeaderLabelContainerTagText}>
+                                {sectionTitle}
+                              </Text>
+                            </View>
 
-                          {dishesGroupArray.map((dishItem: any, idx: number) => {
-                            const isExtraItemAddon = sectionTitle === "ADD ON'S" || dishItem.type === "addon";
-                            return (
-                              <View
-                                key={`checkout-dish-item-${idx}`}
-                                style={styles.previewSelectionRowItemBlock}
-                              >
-                                <Image
-                                  source={
-                                    dishItem.image
-                                      ? { uri: dishItem.image }
-                                      : { uri: "https://via.placeholder.com/80?text=Food" }
-                                  }
-                                  style={styles.modalCircularFoodThumbGraphic}
-                                />
-                                <View style={{ flex: 1, paddingLeft: 12 }}>
-                                  <Text style={styles.modalItemNameTextString}>{dishItem.name}</Text>
-                                </View>
+                            {dishesGroupArray.map((dishItem: any, idx: number) => {
+                              const isExtraItemAddon =
+                                sectionTitle === "ADD ON'S" || dishItem.type === "addon";
+                              return (
                                 <View
-                                  style={[
-                                    styles.includedBadgePillBox,
-                                    isExtraItemAddon
-                                      ? styles.includedBadgePillBoxExtra
-                                      : styles.includedBadgePillBoxStandard,
-                                  ]}
+                                  key={`checkout-dish-item-${idx}`}
+                                  style={styles.previewSelectionRowItemBlock}
                                 >
-                                  <Text
+                                  <Image
+                                    source={
+                                      dishItem.image
+                                        ? { uri: dishItem.image }
+                                        : { uri: "https://via.placeholder.com/80?text=Food" }
+                                    }
+                                    style={styles.modalCircularFoodThumbGraphic}
+                                  />
+                                  <View style={{ flex: 1, paddingLeft: 12 }}>
+                                    <Text style={styles.modalItemNameTextString}>
+                                      {dishItem.name}
+                                    </Text>
+                                  </View>
+                                  <View
                                     style={[
-                                      styles.includedBadgePillBoxText,
+                                      styles.includedBadgePillBox,
                                       isExtraItemAddon
-                                        ? styles.includedBadgePillBoxTextExtra
-                                        : styles.includedBadgePillBoxTextStandard,
+                                        ? styles.includedBadgePillBoxExtra
+                                        : styles.includedBadgePillBoxStandard,
                                     ]}
                                   >
-                                    {isExtraItemAddon
-                                      ? `Extra ×${dishItem.qty || dishItem.quantity || 1}`
-                                      : "Included"}
-                                  </Text>
+                                    <Text
+                                      style={[
+                                        styles.includedBadgePillBoxText,
+                                        isExtraItemAddon
+                                          ? styles.includedBadgePillBoxTextExtra
+                                          : styles.includedBadgePillBoxTextStandard,
+                                      ]}
+                                    >
+                                      {isExtraItemAddon
+                                        ? `Extra x${dishItem.qty || dishItem.quantity || 1}`
+                                        : "Included"}
+                                    </Text>
+                                  </View>
                                 </View>
-                              </View>
-                            );
-                          })}
-                        </View>
-                      );
-                    })
+                              );
+                            })}
+                          </View>
+                        );
+                      }
+                    )
                   )}
                 </View>
               ) : (
@@ -1812,11 +1889,11 @@ const styles = StyleSheet.create({
     elevation: 5,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
-    position: 'relative',
-    overflow: 'hidden',
+    position: "relative",
+    overflow: "hidden",
   },
   modernTagPillEdge: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     left: 0,
     backgroundColor: "rgba(15, 56, 42, 0.08)",
@@ -1830,8 +1907,8 @@ const styles = StyleSheet.create({
   },
   modernTagTextEdge: {
     fontSize: 10,
-    fontWeight: '900',
-    color: '#0F382A',
+    fontWeight: "900",
+    color: "#0F382A",
     letterSpacing: 0.8,
   },
   modernHeaderRow: {
@@ -1852,19 +1929,19 @@ const styles = StyleSheet.create({
   },
   modernMainTitle: {
     fontSize: 17,
-    fontWeight: '900',
-    color: '#0B261D',
+    fontWeight: "900",
+    color: "#0B261D",
     letterSpacing: -0.3,
     lineHeight: 22,
     marginBottom: 4,
   },
   modernChefSubtitle: {
     fontSize: 12.5,
-    fontWeight: '700',
-    color: '#0F382A',
+    fontWeight: "700",
+    color: "#0F382A",
   },
   groupedMetaSectionContainer: {
-    backgroundColor: '#FAF8F5',
+    backgroundColor: "#FAF8F5",
     borderRadius: 18,
     padding: 14,
     marginBottom: 12,
@@ -1872,45 +1949,45 @@ const styles = StyleSheet.create({
     borderColor: "rgba(15, 56, 42, 0.08)",
   },
   modernInfoGrid: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   modernInfoCell: {
     flex: 1,
-    alignItems: 'flex-start',
+    alignItems: "flex-start",
   },
   separatorVerticalDotted: {
     width: 1,
     height: 32,
-    borderStyle: 'dashed',
+    borderStyle: "dashed",
     borderRightWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.15)",
     marginHorizontal: 10,
   },
   separatorHorizontalDotted: {
     height: 1,
-    borderStyle: 'dashed',
+    borderStyle: "dashed",
     borderBottomWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.15)",
     marginVertical: 12,
   },
   modernCellLabel: {
     fontSize: 10.5,
-    fontWeight: '700',
-    color: '#5B756C',
+    fontWeight: "700",
+    color: "#5B756C",
     marginTop: 4,
     marginBottom: 2,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     letterSpacing: 0.4,
   },
   modernCellValue: {
     fontSize: 13,
-    fontWeight: '800',
-    color: '#0B261D',
+    fontWeight: "800",
+    color: "#0B261D",
   },
   modernAddressBlockNested: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    alignItems: "flex-start",
   },
   addressHeaderRowWithChange: {
     flexDirection: "row",
@@ -1927,19 +2004,19 @@ const styles = StyleSheet.create({
   },
   modernAddressLabel: {
     fontSize: 10.5,
-    fontWeight: '700',
-    color: '#5B756C',
-    textTransform: 'uppercase',
+    fontWeight: "700",
+    color: "#5B756C",
+    textTransform: "uppercase",
     letterSpacing: 0.4,
   },
   modernAddressText: {
     fontSize: 12.5,
-    fontWeight: '700',
-    color: '#0B261D',
+    fontWeight: "700",
+    color: "#0B261D",
     lineHeight: 18,
   },
   modernStartDateBanner: {
-    backgroundColor: '#FAF8F5',
+    backgroundColor: "#FAF8F5",
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 14,
@@ -1949,15 +2026,15 @@ const styles = StyleSheet.create({
   },
   modernStartDateText: {
     fontSize: 12.5,
-    color: '#5B756C',
-    fontWeight: '500',
+    color: "#5B756C",
+    fontWeight: "500",
   },
   modernViewItemsBtn: {
     marginTop: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#166534',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#166534",
     paddingVertical: 14,
     borderRadius: 18,
     shadowColor: "#166534",
@@ -1967,8 +2044,8 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   modernViewItemsText: {
-    color: '#FAF8F5',
-    fontWeight: '800',
+    color: "#FAF8F5",
+    fontWeight: "800",
     fontSize: 14,
     letterSpacing: 0.2,
   },
@@ -2154,10 +2231,27 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0F382A",
   },
-  divider: { height: 1, backgroundColor: "rgba(15, 56, 42, 0.08)", marginVertical: 16 },
-  priceRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  priceLabel: { color: "#5B756C", fontSize: 13.5, fontWeight: "600" },
-  priceValue: { fontSize: 20, fontWeight: "900", color: "#0B261D", letterSpacing: -0.4 },
+  divider: {
+    height: 1,
+    backgroundColor: "rgba(15, 56, 42, 0.08)",
+    marginVertical: 16,
+  },
+  priceRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  priceLabel: {
+    color: "#5B756C",
+    fontSize: 13.5,
+    fontWeight: "600",
+  },
+  priceValue: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#0B261D",
+    letterSpacing: -0.4,
+  },
   choosePaymentHeaderLabel: {
     fontSize: 16,
     fontWeight: "800",
@@ -2441,7 +2535,14 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 20,
   },
-  drawerHandle: { width: 40, height: 4.5, backgroundColor: "rgba(15, 56, 42, 0.15)", borderRadius: 2.5, alignSelf: "center", marginBottom: 16 },
+  drawerHandle: {
+    width: 40,
+    height: 4.5,
+    backgroundColor: "rgba(15, 56, 42, 0.15)",
+    borderRadius: 2.5,
+    alignSelf: "center",
+    marginBottom: 16,
+  },
   previewCloseBtn: {
     position: "absolute",
     top: -22,
@@ -2461,7 +2562,12 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 5,
   },
-  previewHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  previewHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
   previewTitle: {
     fontSize: 19,
     fontWeight: "900",
@@ -2639,7 +2745,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 10,
   },
-  previewCategoryTitle: { fontSize: 14.5, fontWeight: "800", color: "#0B261D", letterSpacing: -0.2 },
+  previewCategoryTitle: {
+    fontSize: 14.5,
+    fontWeight: "800",
+    color: "#0B261D",
+    letterSpacing: -0.2,
+  },
   previewItemCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -2651,10 +2762,33 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.06)",
   },
-  previewItemImage: { width: 40, height: 40, borderRadius: 10, marginRight: 12, backgroundColor: "#E5ECE8" },
-  previewItemName: { fontSize: 13.5, fontWeight: "700", color: "#0B261D", flex: 1 },
-  extraTag: { backgroundColor: "rgba(15, 56, 42, 0.08)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginLeft: 8, borderWidth: 1, borderColor: "rgba(15, 56, 42, 0.12)" },
-  extraTagText: { fontSize: 10.5, fontWeight: "800", color: "#0F382A" },
+  previewItemImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    marginRight: 12,
+    backgroundColor: "#E5ECE8",
+  },
+  previewItemName: {
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#0B261D",
+    flex: 1,
+  },
+  extraTag: {
+    backgroundColor: "rgba(15, 56, 42, 0.08)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.12)",
+  },
+  extraTagText: {
+    fontSize: 10.5,
+    fontWeight: "800",
+    color: "#0F382A",
+  },
   modalAbsoluteFooterCTAWrapper: {
     position: "absolute",
     bottom: 0,
