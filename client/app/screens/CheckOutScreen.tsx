@@ -29,10 +29,10 @@ import {
   getCachedPushToken,
 } from "@/src/lib/authStorage";
 import { useDeliveryLocationStore } from "@/src/store/deliveryLocationStore";
-// ✅ FIX: import from /lib/, not /types/ — /types/ contains only .d.ts
-//         type declarations which are erased at bundle time, causing
-//         "Unable to resolve module @/src/types/cashfree" errors.
-import { startCashfreePayment } from "@/src/lib/cashfree";
+// ✅ FIX: the Cashfree helper is exported as an object, not a callable function.
+//         Use the runtime object method that wraps the SDK flow.
+import cashfreeLib from "@/src/lib/cashfree";
+import { startCashfreePayment } from "@/src/types/cashfree";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
