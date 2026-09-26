@@ -69,7 +69,7 @@
         "android.permission.USE_EXACT_ALARM"
       ],
       "notification": {
-        "icon": "./assets/images/notification-icon.png",
+        "icon": "./assets/images/icon.png",
         "color": "#073B1E",
         "channelId": "orders-alarm-admin",
         "sounds": [
