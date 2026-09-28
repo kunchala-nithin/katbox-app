@@ -671,7 +671,11 @@ export default function CheckOutScreen() {
     formData.append("balanceAmountToCollect", String(balanceAmount));
     formData.append("paymentMethod", selectedPaymentMethod);
 
-    // ✅ NEW: Persist delivery type on the order document for all flows
+    // ✅ NEW: Persist delivery type on the order document for all flows.
+    //    NOTE: This is the ONLY place `deliveryType` is appended. Do NOT
+    //    append it again inside the catering branch below — duplicate keys
+    //    cause multer/Express to deliver the value as an Array, which
+    //    Mongoose then rejects with "Cast to string failed".
     formData.append("deliveryType", resolvedDeliveryOption || "");
 
     // ✅ NEW: Persist special instructions on the order document for all flows
@@ -710,7 +714,12 @@ export default function CheckOutScreen() {
       formData.append("occasion", occasion);
       formData.append("eventDate", eventDate);
       formData.append("eventTime", eventTime);
-      formData.append("deliveryType", deliveryType);
+      // ✅ NOTE: deliveryType is ALREADY appended once above (the general
+      //    `formData.append("deliveryType", resolvedDeliveryOption || "");`).
+      //    We intentionally do NOT append it here again — duplicates cause
+      //    Express/multer to deliver the value as an Array, and Mongoose
+      //    then rejects the save with:
+      //      "Cast to string failed for value [ 'Standard', 'Standard' ]".
       formData.append("pricePerPlate", String(pricePerPlate));
       if (parsedSelections) formData.append("selections", JSON.stringify(parsedSelections));
       if (parsedAddons) formData.append("addons", JSON.stringify(parsedAddons));

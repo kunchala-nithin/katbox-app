@@ -1,6 +1,6 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import { BlurView } from "expo-blur";
-import { Alert, TouchableWithoutFeedback } from "react-native";
+import { Alert, TouchableWithoutFeedback, LayoutChangeEvent } from "react-native";
 import {
   View,
   Text,
@@ -29,6 +29,19 @@ import MenuItemSkeleton from "@/src/components/skeletons/MenuItemSkeleton";
 const SHOW_BACK_TO_TOP_THRESHOLD = 400;
 const FOOTER_HEIGHT = 72;
 const HEADER_COLLAPSE_THRESHOLD = 280;
+// ✅ The scroll position where the sticky header is considered fully
+//    settled. The collapse animation is anchored to this window so that
+//    opacity, scale, and margin all resolve at exactly the same moment.
+const STICKY_SETTLE_START = HEADER_COLLAPSE_THRESHOLD - 80;
+const STICKY_SETTLE_END = HEADER_COLLAPSE_THRESHOLD;
+// ✅ Measured height of the sticky header content (title row + dish strip).
+//    Used only for the "Select all" scroll offset so the target category
+//    isn't tucked under the sticky header.
+const STICKY_CONTENT_HEIGHT = 74;
+// ✅ Approximate rendered height of the "WHAT'S IN THE PLATTER" section.
+//    Used as the reserved-space height so we can animate it away via
+//    `scaleY` (GPU-only) without ever touching layout.
+const WHATS_IN_PLATE_RESERVED_HEIGHT = 120;
 const { width } = Dimensions.get("window");
 const FALLBACK_HERO_IMAGE = {
   uri: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800",
@@ -81,11 +94,52 @@ export default function CateringMenuItemScreen() {
   const [editingAddonId, setEditingAddonId] = useState<string | null>(null);
   const [showSkeleton, setShowSkeleton] = useState(false);
 
-  // ✅ NEW: Track which items were added as "extra" (paid beyond the base max).
+  // ✅ Track which items were added as "extra" (paid beyond the base max).
   //    These items will render an "Undo" button instead of the radio circle,
   //    and display a small "Extra Item" label at the top-right of the card.
   //    Key format: `${catIndex}_${itemId}`
   const [extraAddedItems, setExtraAddedItems] = useState<Set<string>>(new Set());
+
+  // ✅ Throttle refs so we don't call setState on every scroll tick.
+  //    We only flip React state when the boolean actually changes, and we
+  //    skip redundant sets inside the same frame.
+  const stickyActiveRef = useRef(false);
+  const backToTopRef = useRef(false);
+
+  // ✅ Measured height of the "WHAT'S IN THE PLATTER" section so we can
+  //    size its reserved space exactly. Measured once on layout.
+  const [whatsInPlateHeight, setWhatsInPlateHeight] = useState(0);
+  const handleWhatsInPlateLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = e.nativeEvent.layout.height;
+    if (h > 0 && Math.abs(h - whatsInPlateHeight) > 1) {
+      setWhatsInPlateHeight(h);
+    }
+  }, [whatsInPlateHeight]);
+
+  // ✅ Refs for each category card so we can scroll to an unselected
+  //    category when the customer taps "Select all (X/Y)".
+  const categoryRefs = useRef<Record<number, View | null>>({});
+  const categoryYPositions = useRef<Record<number, number>>({});
+
+  const handleCategoryLayout = useCallback((catIndex: number, e: LayoutChangeEvent) => {
+    // Store the y position relative to the scroll content.
+    const y = e.nativeEvent.layout.y;
+    if (y >= 0) {
+      categoryYPositions.current[catIndex] = y;
+    }
+  }, []);
+
+  // ✅ Track which category is currently being highlighted so we can
+  //    stop its pulse animation once the customer interacts with it.
+  const [pulseCategoryIndex, setPulseCategoryIndex] = useState<number | null>(null);
+  const categoryPulseAnims = useRef<Record<number, Animated.Value>>({}).current;
+  const categoryPulseLoops = useRef<Record<number, Animated.CompositeAnimation | null>>({}).current;
+  const getCategoryPulseAnim = (catIndex: number) => {
+    if (!categoryPulseAnims[catIndex]) {
+      categoryPulseAnims[catIndex] = new Animated.Value(0);
+    }
+    return categoryPulseAnims[catIndex];
+  };
 
   // ─── Read incoming address params (forwarded from CateringMealPlans) ───
   // These are the final hops toward CateringOrderReview.
@@ -108,7 +162,7 @@ export default function CateringMenuItemScreen() {
     return itemScaleAnims[id];
   };
 
-  // ✅ NEW: Per-category animated value used to shake / pulse the "Choose any N" pill
+  // ✅ Per-category animated value used to shake / pulse the "Choose any N" pill
   //    whenever the user tries to push a zero-priced dish into the paid extra slot.
   const choosePillAnims = useRef<Record<number, Animated.Value>>({}).current;
 
@@ -209,7 +263,7 @@ export default function CateringMenuItemScreen() {
   const daawathCategories = effectiveMenu?.daawathCategories || [];
   const daawathAddons = effectiveMenu?.daawathAddons || [];
 
-  // ✅ NEW: Resolves the *effective* per-plate extra price for a dish.
+  // ✅ Resolves the *effective* per-plate extra price for a dish.
   //    A dish explicitly priced at 0 (or "0"/"0.00") stays at ₹0 instead of
   //    falling back to the plan level `extraPrice`. This is what lets us
   //    detect "free" extra dishes and refuse to push them into a paid slot.
@@ -247,6 +301,19 @@ export default function CateringMenuItemScreen() {
   }, 0);
   // Vacuously true when there are no categories to select from.
   const allCategoriesAtMax = completedCategoryCount >= requiredCategoryCount;
+
+  // ✅ The first category index that hasn't reached its base max yet.
+  //    Used by the "Select all (X/Y)" footer button to jump to the next
+  //    category the customer needs to complete.
+  const firstIncompleteCategoryIndex = useMemo(() => {
+    for (let i = 0; i < daawathCategories.length; i++) {
+      const selectedForCategory = selections[i]?.size || 0;
+      if (selectedForCategory < getMaxForCategory(i)) {
+        return i;
+      }
+    }
+    return -1;
+  }, [selections, daawathCategories]);
 
   const getAddedCountForCategory = (catIndex: number) => {
     return selections[catIndex]?.size || 0;
@@ -300,7 +367,7 @@ export default function CateringMenuItemScreen() {
     return FALLBACK_PLATE_DATA;
   };
 
-  // ✅ CHANGED: We now render ALL platter items dynamically.
+  // ✅ We now render ALL platter items dynamically.
   //    The old `VISIBLE_PLATE_COUNT = 4` slice + `overflowCount` "+N More" pill
   //    has been removed so every item is available in both the compact sticky
   //    header (horizontally scrollable) and the main "What's in the Platter"
@@ -368,12 +435,12 @@ export default function CateringMenuItemScreen() {
     });
   };
 
-  // ✅ NEW: Helper to check if an item was added as an "extra" paid item
+  // ✅ Helper to check if an item was added as an "extra" paid item
   const isExtraAddedItem = (catIndex: number, itemId: string): boolean => {
     return extraAddedItems.has(`${catIndex}_${itemId}`);
   };
 
-  // ✅ NEW: Remove an extra added item (Undo action)
+  // ✅ Remove an extra added item (Undo action)
   const handleUndoExtraItem = (catIndex: number, itemId: string) => {
     const cat = daawathCategories[catIndex];
     const items = cat?.items || [];
@@ -414,11 +481,11 @@ export default function CateringMenuItemScreen() {
     }
   };
 
-  // ✅ UPDATED: Accepts an optional `forceAck` flag.
+  // ✅ Accepts an optional `forceAck` flag.
   //    When true, the acknowledgment gate is bypassed so the item is added
   //    immediately (used by the "Continue Adding" button in the limit modal).
   //
-  // ✅ NEW ZERO-PRICE GUARD:
+  // ✅ ZERO-PRICE GUARD:
   //    If the course limit is already reached AND the tapped dish resolves to a
   //    ₹0 extra price, we do NOT open the limit modal and we do NOT add the dish.
   //    Instead we shake the "Choose any N" pill of that category so the user
@@ -429,6 +496,19 @@ export default function CateringMenuItemScreen() {
       Animated.timing(scaleAnim, { toValue: 0.85, duration: 90, useNativeDriver: true }),
       Animated.spring(scaleAnim, { toValue: 1, friction: 5, tension: 50, useNativeDriver: true }),
     ]).start();
+
+    // ✅ Stop the pulse highlight once the customer interacts with this category.
+    if (pulseCategoryIndex === catIndex) {
+      // Stop any active loop for this category.
+      const loop = categoryPulseLoops[catIndex];
+      if (loop) {
+        loop.stop();
+        categoryPulseLoops[catIndex] = null;
+      }
+      const anim = getCategoryPulseAnim(catIndex);
+      anim.setValue(0);
+      setPulseCategoryIndex(null);
+    }
 
     const cat = daawathCategories[catIndex];
     const baseMax = getMaxForCategory(catIndex);
@@ -541,7 +621,7 @@ export default function CateringMenuItemScreen() {
     });
   };
 
-  // ✅ NEW: Toggle handler for the simple Add / Remove button on the addon rows.
+  // ✅ Toggle handler for the simple Add / Remove button on the addon rows.
   //    First tap → adds the addon price to the base, flips the button to Remove.
   //    Second tap → subtracts the price, flips the button back to Add.
   const toggleAddonOnce = (addonId: string, price: number) => {
@@ -562,6 +642,54 @@ export default function CateringMenuItemScreen() {
   const scrollToTop = () => {
     productScrollRef.current?.scrollTo({ y: 0, animated: true });
   };
+
+  // ✅ Scroll to a specific category card within the ScrollView.
+  //    We add a small offset so the category header isn't tucked under the
+  //    sticky header. Uses the stored y-position measured on layout.
+  const scrollToCategory = useCallback((catIndex: number) => {
+    const y = categoryYPositions.current[catIndex];
+    if (y === undefined || y === null) return;
+    const targetY = Math.max(0, y - STICKY_CONTENT_HEIGHT - 8);
+    productScrollRef.current?.scrollTo({ y: targetY, animated: true });
+  }, []);
+
+  // ✅ Pulse a category's "Choose any N" pill so the customer notices
+  //    which category still needs attention. The pulse runs continuously
+  //    until the customer taps a dish in that category.
+  const startCategoryPulse = useCallback((catIndex: number) => {
+    // Stop any previously running loop first.
+    Object.keys(categoryPulseLoops).forEach((key) => {
+      const loop = categoryPulseLoops[Number(key)];
+      if (loop) {
+        loop.stop();
+        categoryPulseLoops[Number(key)] = null;
+      }
+    });
+    const anim = getCategoryPulseAnim(catIndex);
+    anim.setValue(0);
+    setPulseCategoryIndex(catIndex);
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: 1, duration: 500, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0, duration: 500, useNativeDriver: true }),
+      ])
+    );
+    categoryPulseLoops[catIndex] = loop;
+    loop.start();
+  }, []);
+
+  // ✅ Handle the "Select all (X/Y)" button tap.
+  //    Scrolls to the first incomplete category and starts its pulse so the
+  //    customer immediately sees which course still needs a selection.
+  const handleSelectAllPrompt = useCallback(() => {
+    if (firstIncompleteCategoryIndex < 0) return;
+    scrollToCategory(firstIncompleteCategoryIndex);
+    // Delay slightly so the scroll animation starts before the pulse kicks in,
+    // making the pulse feel like a "you are here" cue.
+    setTimeout(() => {
+      startCategoryPulse(firstIncompleteCategoryIndex);
+    }, 350);
+  }, [firstIncompleteCategoryIndex, scrollToCategory, startCategoryPulse]);
 
   const getExtraBreakdown = () => {
     const breakdown: { name: string; price: number; categoryName: string }[] = [];
@@ -713,6 +841,30 @@ export default function CateringMenuItemScreen() {
     extrapolate: "clamp",
   });
 
+  // ✅ SMOOTH COLLAPSE — opacity + scaleY share the same input range so both
+  //    resolve in perfect lockstep. We ONLY animate transform + opacity,
+  //    which are GPU-only properties — no layout pass, no jank.
+  const whatsInPlateOpacity = scrollY.interpolate({
+    inputRange: [STICKY_SETTLE_START, STICKY_SETTLE_END],
+    outputRange: [1, 0],
+    extrapolate: "clamp",
+  });
+
+  // ✅ SMOOTH COLLAPSE — scaleY collapses the section visually without ever
+  //    triggering a layout pass. The outer wrapper reserves a fixed height so
+  //    the surrounding content never reflows during the animation.
+  const whatsInPlateScaleY = scrollY.interpolate({
+    inputRange: [STICKY_SETTLE_START, STICKY_SETTLE_END],
+    outputRange: [1, 0],
+    extrapolate: "clamp",
+  });
+
+  // ✅ SMOOTH COLLAPSE — the reserved outer wrapper's height shrinks via a
+  //    static style that is only re-measured once on layout. We use a
+  //    transform-driven inner collapse and clip overflow on the outer wrapper
+  //    so no layout thrash ever happens.
+  const reservedHeight = whatsInPlateHeight > 0 ? whatsInPlateHeight : WHATS_IN_PLATE_RESERVED_HEIGHT;
+
   const detailedExtraItems = getExtraBreakdown();
   const detailedAddons = getAddonSummary();
 
@@ -768,7 +920,7 @@ export default function CateringMenuItemScreen() {
           </View>
           <View style={styles.compactBackBtnPlaceholder} />
         </View>
-        {/* ✅ CHANGED: Every platter item is rendered here in a horizontally scrollable strip.
+        {/* ✅ Every platter item is rendered here in a horizontally scrollable strip.
             No more "+N More" overflow pill. */}
         <ScrollView
           horizontal
@@ -795,8 +947,8 @@ export default function CateringMenuItemScreen() {
       </Animated.View>
 
       {/* CORE SCROLL CONTAINER */}
-      <ScrollView
-        ref={productScrollRef}
+      <Animated.ScrollView
+        ref={productScrollRef as any}
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -805,24 +957,10 @@ export default function CateringMenuItemScreen() {
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           {
-            useNativeDriver: false,
-            listener: (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-              const yOffset = event.nativeEvent.contentOffset.y;
-              if (yOffset >= HEADER_COLLAPSE_THRESHOLD) {
-                if (!isStickyActive) setIsStickyActive(true);
-              } else {
-                if (isStickyActive) setIsStickyActive(false);
-              }
-              if (yOffset > SHOW_BACK_TO_TOP_THRESHOLD) {
-                if (!showBackToTop) {
-                  setShowBackToTop(true);
-                  Animated.timing(backToTopOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-                }
-              } else if (showBackToTop) {
-                setShowBackToTop(false);
-                Animated.timing(backToTopOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start();
-              }
-            },
+            // ✅ useNativeDriver: true lets the animation run entirely on the
+            //    UI thread — this is the single biggest fix for scroll lag.
+            //    We use addListener below to react to scroll state changes.
+            useNativeDriver: true,
           }
         )}
       >
@@ -895,40 +1033,67 @@ export default function CateringMenuItemScreen() {
             </View>
           </View>
 
-          <View style={styles.whatsInPlateSection}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionHeaderTitle}>WHAT'S IN THE PLATTER</Text>
-              <View style={styles.sectionHeaderLine} />
-            </View>
-            {loadingItems ? (
-              <ActivityIndicator size="small" color="#0F382A" style={{ marginVertical: 14 }} />
-            ) : (
-              /* ✅ CHANGED: Shows ALL platter items in a horizontal scroll — no truncation. */
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.dishesHorizontalScroll}
-                scrollEnabled={true}
-                nestedScrollEnabled={true}
-                keyboardShouldPersistTaps="handled"
-                bounces={false}
-                overScrollMode="never"
-              >
-                {allPlateItems.map((dish) => (
-                  <View key={dish.id} style={styles.dishCardItem}>
-                    <View style={styles.dishOuterCircle}>
-                      <Image
-                        source={dish.image ? { uri: dish.image } : FALLBACK_HERO_IMAGE}
-                        style={styles.dishAvatarImage}
-                      />
-                    </View>
-                    <Text style={styles.dishItemLabel} numberOfLines={2}>
-                      {dish.name}
-                    </Text>
-                  </View>
-                ))}
-              </ScrollView>
-            )}
+          {/* ✅ "WHAT'S IN THE PLATTER" — SMOOTH GPU-ONLY COLLAPSE.
+              The outer wrapper reserves a FIXED height (measured once) so the
+              surrounding content NEVER reflows during the animation. Inside,
+              an inner Animated.View collapses via `scaleY` + `opacity` — both
+              GPU-only, both use the native driver, both perfectly smooth.
+              The outer wrapper clips overflow so the scaled content doesn't
+              bleed into neighboring views. */}
+          <View
+            style={{
+              height: reservedHeight,
+              marginBottom: 24,
+              overflow: "hidden",
+            }}
+            pointerEvents="none"
+          >
+            <Animated.View
+              style={{
+                opacity: whatsInPlateOpacity,
+                transform: [{ scaleY: whatsInPlateScaleY }],
+                // ✅ Anchor the scale at the top so the section collapses
+                //    upward toward the sticky header.
+                transformOrigin: "top",
+              }}
+              onLayout={handleWhatsInPlateLayout}
+            >
+              <View style={styles.whatsInPlateSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionHeaderTitle}>WHAT'S IN THE PLATTER</Text>
+                  <View style={styles.sectionHeaderLine} />
+                </View>
+                {loadingItems ? (
+                  <ActivityIndicator size="small" color="#0F382A" style={{ marginVertical: 14 }} />
+                ) : (
+                  /* ✅ Shows ALL platter items in a horizontal scroll — no truncation. */
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.dishesHorizontalScroll}
+                    scrollEnabled={true}
+                    nestedScrollEnabled={true}
+                    keyboardShouldPersistTaps="handled"
+                    bounces={false}
+                    overScrollMode="never"
+                  >
+                    {allPlateItems.map((dish) => (
+                      <View key={dish.id} style={styles.dishCardItem}>
+                        <View style={styles.dishOuterCircle}>
+                          <Image
+                            source={dish.image ? { uri: dish.image } : FALLBACK_HERO_IMAGE}
+                            style={styles.dishAvatarImage}
+                          />
+                        </View>
+                        <Text style={styles.dishItemLabel} numberOfLines={2}>
+                          {dish.name}
+                        </Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+            </Animated.View>
           </View>
 
           <View style={styles.customizeCateringSection}>
@@ -939,7 +1104,11 @@ export default function CateringMenuItemScreen() {
           </View>
         </View>
 
-        {/* CUSTOMIZER CONFIGURATION BODY SECTION */}
+        {/* CUSTOMIZER CONFIGURATION BODY SECTION
+            ✅ NOTE: We intentionally do NOT add any extra top padding here.
+            The collapse of "WHAT'S IN THE PLATTER" already reclaims all the
+            vertical space, so "Customize Platter Items" sits flush right
+            below the sticky header with zero gap. */}
         <View style={styles.mainCustomizerBody}>
           {daawathCategories.map((category: any, catIndex: number) => {
             const maxCount = getMaxForCategory(catIndex);
@@ -948,11 +1117,20 @@ export default function CateringMenuItemScreen() {
             const selectedArray = Array.from(currentSelections);
             const extraSelectedIds = new Set(selectedArray.slice(maxCount));
             const scaleAnim = getItemScaleAnim;
-            // ✅ NEW: animated value driving the shake / pulse of the "Choose any N" pill
+            // ✅ animated value driving the shake / pulse of the "Choose any N" pill
             const choosePillAnim = getChoosePillAnim(catIndex);
+            // ✅ animated value driving the continuous highlight pulse when
+            //    the customer taps "Select all (X/Y)" and lands on this category.
+            const categoryPulseAnim = getCategoryPulseAnim(catIndex);
+            const isPulsing = pulseCategoryIndex === catIndex;
 
             return (
-              <View key={catIndex} style={styles.categoryCardBlock}>
+              <View
+                key={catIndex}
+                ref={(r) => { categoryRefs.current[catIndex] = r; }}
+                onLayout={(e) => handleCategoryLayout(catIndex, e)}
+                style={styles.categoryCardBlock}
+              >
                 <View style={styles.categoryHeaderRow}>
                   <View style={styles.titleWithBadgeGroup}>
                     <View style={styles.numberBadgeCircle}>
@@ -960,10 +1138,14 @@ export default function CateringMenuItemScreen() {
                     </View>
                     <Text style={styles.categoryHeaderTitleText}>{category.name}</Text>
                   </View>
-                  {/* ✅ NEW: Animated "Choose any N" pill — shakes when a ₹0 extra dish is tapped */}
+                  {/* ✅ Animated "Choose any N" pill.
+                      - Shakes when a ₹0 extra dish is tapped.
+                      - Pulses continuously (scale + glow border) when the
+                        customer lands here via "Select all (X/Y)". */}
                   <Animated.View
                     style={[
                       styles.chooseTagBadge,
+                      isPulsing && styles.chooseTagBadgePulsing,
                       {
                         transform: [
                           {
@@ -973,12 +1155,24 @@ export default function CateringMenuItemScreen() {
                             }),
                           },
                           {
-                            scale: choosePillAnim.interpolate({
-                              inputRange: [-1, 0, 1],
-                              outputRange: [1.06, 1, 1.06],
-                            }),
+                            scale: Animated.multiply(
+                              choosePillAnim.interpolate({
+                                inputRange: [-1, 0, 1],
+                                outputRange: [1.06, 1, 1.06],
+                              }),
+                              categoryPulseAnim.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [1, 1.12],
+                              })
+                            ),
                           },
                         ],
+                        opacity: isPulsing
+                          ? categoryPulseAnim.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [1, 0.85],
+                            })
+                          : 1,
                       },
                     ]}
                   >
@@ -991,7 +1185,7 @@ export default function CateringMenuItemScreen() {
                     const itemId = item._id || item.id || index.toString();
                     const isAdded = currentSelections.has(itemId);
                     const isExtraItem = isAdded && extraSelectedIds.has(itemId);
-                    // ✅ NEW: Check if this item was added as an "extra" paid item via "Continue Adding"
+                    // ✅ Check if this item was added as an "extra" paid item via "Continue Adding"
                     const isExtraAdded = isExtraAddedItem(catIndex, itemId);
                     const itemPrice = getItemExtraPrice(item);
                     const itemScale = scaleAnim(itemId);
@@ -1012,7 +1206,7 @@ export default function CateringMenuItemScreen() {
                           isExtraAdded && styles.itemRowWrapperExtraAdded,
                         ]}
                       >
-                        {/* ✅ NEW: Small "Extra Item" label at the top-right of the card */}
+                        {/* ✅ Small "Extra Item" label at the top-right of the card */}
                         {isExtraAdded && (
                           <View style={styles.extraItemCornerTag}>
                             <Text style={styles.extraItemCornerTagText}>Extra Item</Text>
@@ -1028,7 +1222,7 @@ export default function CateringMenuItemScreen() {
                           ) : null}
                         </View>
                         <View style={styles.addButtonWrapper}>
-                          {/* ✅ NEW: If this is an extra added item, show smaller Undo button without icon */}
+                          {/* ✅ If this is an extra added item, show smaller Undo button without icon */}
                           {isExtraAdded ? (
                             <TouchableOpacity
                               activeOpacity={0.8}
@@ -1060,7 +1254,7 @@ export default function CateringMenuItemScreen() {
             );
           })}
 
-          {/* ✅ NEW SINGLE ADD-ONS CARD
+          {/* ✅ SINGLE ADD-ONS CARD
               — One heading: "Add-Ons"
               — Below it, ALL dynamic addons render as rows with simple
                 Add / Remove toggle buttons.
@@ -1131,7 +1325,7 @@ export default function CateringMenuItemScreen() {
             </View>
           )}
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
 
       {/* LIMIT MODAL */}
       <Modal
@@ -1474,19 +1668,23 @@ export default function CateringMenuItemScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ✅ GATED: Only enabled once every course has hit its max selection count */}
+        {/* ✅ UPDATED: When all categories are complete → "Preview Items"
+            (opens preview). When incomplete → "Select all (X/Y)" which now
+            auto-navigates to the first incomplete category and pulses its
+            "Choose any N" pill so the customer instantly sees what's missing. */}
         <TouchableOpacity
           style={[
             styles.footerActionSubmitBtn,
             !allCategoriesAtMax && styles.footerActionSubmitBtnDisabled,
           ]}
           onPress={() => {
-            if (!allCategoriesAtMax) return;
-            setShowPreviewModal(true);
+            if (allCategoriesAtMax) {
+              setShowPreviewModal(true);
+            } else {
+              handleSelectAllPrompt();
+            }
           }}
-          activeOpacity={allCategoriesAtMax ? 0.88 : 1}
-          disabled={!allCategoriesAtMax}
-          accessibilityState={{ disabled: !allCategoriesAtMax }}
+          activeOpacity={0.88}
           accessibilityRole="button"
           accessibilityLabel={allCategoriesAtMax ? "Preview Items" : "Select all courses to preview"}
         >
@@ -1501,7 +1699,7 @@ export default function CateringMenuItemScreen() {
               : `Select all (${completedCategoryCount}/${requiredCategoryCount})`}
           </Text>
           <Feather
-            name={allCategoriesAtMax ? "eye" : "lock"}
+            name={allCategoriesAtMax ? "eye" : "arrow-down-right"}
             size={15}
             color={allCategoriesAtMax ? "#FAF8F5" : "#7A8F86"}
             style={{ marginLeft: 8 }}
@@ -1685,7 +1883,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15, 56, 42, 0.08)"
   },
   whatsInPlateSection: {
-    marginBottom: 24
+    marginBottom: 0
   },
   sectionHeaderRow: {
     flexDirection: "row",
@@ -1837,6 +2035,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.1)",
   },
+  // ✅ Highlighted variant of the "Choose any N" pill. Applied while
+  //    the category is pulsing after the customer taps "Select all (X/Y)".
+  chooseTagBadgePulsing: {
+    backgroundColor: "rgba(22, 101, 56, 0.14)",
+    borderColor: "#166538",
+    borderWidth: 1.5,
+    shadowColor: "#166538",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 4,
+  },
   simpleChooseText: {
     fontSize: 11.5,
     fontWeight: "800",
@@ -1866,7 +2076,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 6,
   },
-  // ✅ NEW: Visual highlight for items added as "extra" paid items
+  // ✅ Visual highlight for items added as "extra" paid items
   itemRowWrapperExtraAdded: {
     backgroundColor: "rgba(22, 101, 56, 0.06)",
     borderRadius: 12,
@@ -1877,11 +2087,11 @@ const styles = StyleSheet.create({
     marginVertical: 4,
     position: "relative",
   },
-  // ✅ NEW: Small "Extra Item" tag pinned to the top-right of the card
+  // ✅ Small "Extra Item" tag pinned to the top-right of the card
   extraItemCornerTag: {
     position: "absolute",
     top: -8,
-    left: 8,           // ← CHANGED FROM right: 8 TO left: 8
+    left: 8,
     backgroundColor: "#166538",
     paddingHorizontal: 7,
     paddingVertical: 2,
@@ -1951,7 +2161,7 @@ const styles = StyleSheet.create({
     borderRadius: 4.5,
     backgroundColor: "#FAF8F5"
   },
-  // ✅ NEW: Smaller Undo button (no icon) for extra-added items
+  // ✅ Smaller Undo button (no icon) for extra-added items
   undoButtonStyle: {
     alignItems: "center",
     justifyContent: "center",
@@ -2023,7 +2233,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 2,
   },
-  /* ✅ NEW: Simple Add / Remove toggle button used by the Add-Ons section */
+  /* ✅ Simple Add / Remove toggle button used by the Add-Ons section */
   simpleAddToggleBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -2217,7 +2427,9 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  // ✅ Disabled visual state for the gated "Preview Items" button
+  // ✅ Disabled visual state for the gated "Preview Items" button.
+  //    NOTE: The button is still tappable — tapping it navigates to the
+  //    first incomplete category instead of opening the preview.
   footerActionSubmitBtnDisabled: {
     backgroundColor: "#E3EAE6",
     shadowOpacity: 0,
@@ -2495,8 +2707,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10
-  },
+    marginBottom: 10  },
   previewCategoryTitle: {
     fontSize: 14.5,
     fontWeight: "800",

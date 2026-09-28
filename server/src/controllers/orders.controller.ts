@@ -113,6 +113,26 @@ const parseNumberOrUndefined = (val: any): number | undefined => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Coerce any incoming value (which may be an Array
+   if the client accidentally sent the same multipart/form-data key
+   twice) back into a plain string. Uses the last non-empty entry
+   so that the client's most recent value wins. Never throws.
+   ───────────────────────────────────────────────────────────────── */
+const coerceToString = (val: any): string => {
+  if (val === undefined || val === null) return "";
+  if (Array.isArray(val)) {
+    for (let i = val.length - 1; i >= 0; i--) {
+      const v = val[i];
+      if (v !== undefined && v !== null && String(v).trim() !== "") {
+        return String(v);
+      }
+    }
+    return "";
+  }
+  return String(val);
+};
+
+/* ─────────────────────────────────────────────────────────────────
    ✅ NEW HELPER — Format an absolute Date into "4:30 PM" style string.
    Used to build the delivery slot label. This is the ONLY format
    that will be persisted for QuickBites / homemade delivery slots.
@@ -367,6 +387,11 @@ setInterval(async () => {
  *    ✅ Special instructions and delivery type are now persisted
  *       on the order document for ALL flows.
  *
+ *    ✅ DEFENSIVE: All scalar string fields are passed through
+ *       `coerceToString()` so that if a client sends the same
+ *       multipart/form-data key twice (delivering an Array to
+ *       Express), Mongoose never sees an array for a String field.
+ *
  *    ✅ After the order is saved, EVERY user with isAdmin === true
  *       receives an Expo push with the bundled alarm.mp3 sound +
  *       admin_orders_alarm channel + data.role = "admin". This makes
@@ -436,6 +461,29 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     const resolvedLatitude = parseNumberOrUndefined(latitude);
     const resolvedLongitude = parseNumberOrUndefined(longitude);
 
+    // ✅ DEFENSIVE: Coerce all scalar string fields back to plain strings.
+    //    This is the SAFETY NET that prevents the 500 error:
+    //      "Cast to string failed for value [ 'Standard', 'Standard' ]"
+    //    which occurs when a multipart key is sent twice.
+    const safeServiceType = coerceToString(serviceType);
+    const safeMenuName = coerceToString(menuName);
+    const safeMenuImage = coerceToString(menuImage);
+    const safeDurationType = coerceToString(durationType);
+    const safeDeliveryTimeSlot = coerceToString(deliveryTimeSlot);
+    const safeDeliverySlot = coerceToString(deliverySlot);
+    const safeAddressDetails = coerceToString(addressDetails);
+    const safeDeliveryAddress = coerceToString(deliveryAddress);
+    const safeDeliveryDate = coerceToString(deliveryDate);
+    const safeAppliedCoupon = coerceToString(appliedCoupon);
+    const safeUtrNumber = coerceToString(utrNumber);
+    const safePaymentMethod = coerceToString(paymentMethod);
+    const safeRestaurantName = coerceToString(restaurantName);
+    const safeRestaurantImage = coerceToString(restaurantImage);
+    const safeOccasion = coerceToString(occasion);
+    const safeEventDate = coerceToString(eventDate);
+    const safeEventTime = coerceToString(eventTime);
+    const safeDeliveryType = coerceToString(deliveryType);
+
     // ✅ Defensive parsing of specialInstruction — never throws, never leaks null
     let parsedSpecialInstruction: any = null;
     try {
@@ -460,19 +508,19 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     // ✅ Resolve special instruction fields with fallbacks (always strings)
     const resolvedSpecialInstructionTag = String(
-      specialInstructionTag ||
+      coerceToString(specialInstructionTag) ||
       (parsedSpecialInstruction && parsedSpecialInstruction.tag) ||
       ""
     ).trim();
 
     const resolvedSpecialInstructionLabel = String(
-      specialInstructionLabel ||
+      coerceToString(specialInstructionLabel) ||
       (parsedSpecialInstruction && parsedSpecialInstruction.label) ||
       ""
     ).trim();
 
     const resolvedSpecialInstructionText = String(
-      specialInstructionText ||
+      coerceToString(specialInstructionText) ||
       (parsedSpecialInstruction && parsedSpecialInstruction.text) ||
       ""
     ).trim();
@@ -486,7 +534,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     const finalUserId = String(rawUserId || userId || "");
 
-    let finalUserPhone = String(
+    let finalUserPhone = coerceToString(
       userPhone ||
       phone ||
       orderDetails?.contactPhone ||
@@ -496,7 +544,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       ""
     );
 
-    let finalAlternatePhone = String(
+    let finalAlternatePhone = coerceToString(
       alternatePhone ||
       orderDetails?.alternatePhone ||
       cart?.alternatePhone ||
@@ -516,10 +564,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
         if (userCart) {
           if (!finalUserPhone) {
-            finalUserPhone = String(userCart.userPhone || userCart.orderDetails?.contactPhone || "");
+            finalUserPhone = coerceToString(userCart.userPhone || userCart.orderDetails?.contactPhone || "");
           }
           if (!finalAlternatePhone) {
-            finalAlternatePhone = String(userCart.alternatePhone || userCart.orderDetails?.alternatePhone || "");
+            finalAlternatePhone = coerceToString(userCart.alternatePhone || userCart.orderDetails?.alternatePhone || "");
           }
         }
       }
@@ -527,7 +575,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       if (!finalUserPhone) {
         const userObj = await User.findById(finalUserId);
         if (userObj && userObj.phone) {
-          finalUserPhone = userObj.phone;
+          finalUserPhone = coerceToString(userObj.phone);
         }
       }
     }
@@ -549,15 +597,15 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     const generatedOrderId = "KB" + Date.now().toString().slice(-8);
     const sortedDeliveries = Array.isArray(upcomingDeliveries) ? sortDatesAscending(upcomingDeliveries) : [];
-    const effectiveChefId = String(chefId || "");
-    const effectiveChefName = chefName || restaurantName || "";
-    const effectiveRestaurantName = restaurantName || chefName || "";
+    const effectiveChefId = coerceToString(chefId);
+    const effectiveChefName = coerceToString(chefName) || safeRestaurantName || "";
+    const effectiveRestaurantName = safeRestaurantName || coerceToString(chefName) || "";
 
     // ✅ Normalize the incoming serviceType to lowercase so we always
     // compare apples-to-apples when choosing the correct discriminator.
-    const resolvedServiceType = serviceType ? String(serviceType).toLowerCase() : "mealbox";
+    const resolvedServiceType = safeServiceType ? safeServiceType.toLowerCase() : "mealbox";
 
-    const resolvedAddress = String(deliveryAddress || addressDetails || "");
+    const resolvedAddress = String(safeDeliveryAddress || safeAddressDetails || "");
 
     const numericTotal = Number(totalAmount) || 0;
     const finalAdvance = advancePaidAmount !== undefined ? Number(advancePaidAmount) : Math.round(numericTotal * 0.40 * 100) / 100;
@@ -620,8 +668,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     //
     // ✅ The slot label is now ALWAYS just the time — "4:30 PM" —
     // never the long "ASAP (Within 75 minutes…)" string.
-    let finalDeliverySlotLabel = String(deliverySlot || deliveryTimeSlot || "").trim();
-    let finalDeliveryDateLabel = String(deliveryDate || "").trim();
+    let finalDeliverySlotLabel = String(safeDeliverySlot || safeDeliveryTimeSlot || "").trim();
+    let finalDeliveryDateLabel = String(safeDeliveryDate || "").trim();
 
     if (resolvedEstimatedDeliveryAt) {
       const timeStr = formatTimeShort(resolvedEstimatedDeliveryAt);
@@ -680,7 +728,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       const newHomemadeOrder = new ModelToUse({
         orderId: generatedOrderId,
         userId: finalUserId,
-        userName: userName || "",
+        userName: coerceToString(userName),
         userPhone: finalUserPhone,
         alternatePhone: finalAlternatePhone,
         chefId: effectiveChefId,
@@ -707,14 +755,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
-        appliedCoupon: appliedCoupon || "",
+        appliedCoupon: safeAppliedCoupon,
         totalAmount: numericTotal,
         advancePaidAmount: finalAdvance,
         balanceAmountToCollect: finalBalance,
-        utrNumber: utrNumber || "",
+        utrNumber: safeUtrNumber,
         advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: false,
-        paymentMethod: paymentMethod || "cod",
+        paymentMethod: safePaymentMethod || "cod",
         paymentStatus: "Verification Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for homemade / quickbites flow
@@ -723,9 +771,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         specialInstructionLabel: resolvedSpecialInstructionLabel,
         specialInstructionText: resolvedSpecialInstructionText,
         // ✅ Persist delivery type for homemade / quickbites flow
-        deliveryType: deliveryType || "",
+        deliveryType: safeDeliveryType,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -738,23 +786,23 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       const newCateringOrder = new CateringOrderModel({
         orderId: generatedOrderId,
         userId: finalUserId,
-        userName: userName || "",
+        userName: coerceToString(userName),
         userPhone: finalUserPhone,
         alternatePhone: finalAlternatePhone,
         chefId: effectiveChefId,
         chefName: effectiveChefName,
         chefPhone: resolvedChefPhone,
         serviceType: "catering",
-        menuName: menuName || "Catering Platter",
-        menuImage: menuImage || restaurantImage || "",
+        menuName: safeMenuName || "Catering Platter",
+        menuImage: safeMenuImage || safeRestaurantImage || "",
         addressDetails: resolvedAddress,
         restaurantName: effectiveRestaurantName,
-        restaurantImage: restaurantImage || menuImage || "",
-        occasion: occasion || "Event",
+        restaurantImage: safeRestaurantImage || safeMenuImage || "",
+        occasion: safeOccasion || "Event",
         guests: Number(guests) || 0,
-        eventDate: eventDate || deliveryDate || "",
-        eventTime: eventTime || deliveryTimeSlot || "",
-        deliveryType: deliveryType || "Standard",
+        eventDate: safeEventDate || safeDeliveryDate || "",
+        eventTime: safeEventTime || safeDeliveryTimeSlot || "",
+        deliveryType: safeDeliveryType || "Standard",
         pricePerPlate: Number(pricePerPlate) || 0,
         addons: Array.isArray(addons) ? addons : [],
         selections: selections || null,
@@ -769,14 +817,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
-        appliedCoupon: appliedCoupon || "",
+        appliedCoupon: safeAppliedCoupon,
         totalAmount: numericTotal,
         advancePaidAmount: finalAdvance,
         balanceAmountToCollect: finalBalance,
-        utrNumber: utrNumber || "",
+        utrNumber: safeUtrNumber,
         advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: false,
-        paymentMethod: paymentMethod || "cod",
+        paymentMethod: safePaymentMethod || "cod",
         paymentStatus: "Verification Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for catering flow
@@ -785,7 +833,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         specialInstructionLabel: resolvedSpecialInstructionLabel,
         specialInstructionText: resolvedSpecialInstructionText,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -800,7 +848,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       const initialSchedules = sortedDeliveries.map((dateItem: string) => ({
         date: dateItem,
         status: "Scheduled",
-        timeSlot: deliveryTimeSlot || "7:00 PM - 9:00 PM",
+        timeSlot: safeDeliveryTimeSlot || "7:00 PM - 9:00 PM",
         address: resolvedAddress,
         ...(safeLat !== undefined ? { latitude: safeLat } : {}),
         ...(safeLng !== undefined ? { longitude: safeLng } : {}),
@@ -812,19 +860,19 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       const newMealBoxOrder = new MealBoxOrderModel({
         orderId: generatedOrderId,
         userId: finalUserId,
-        userName: userName || "",
+        userName: coerceToString(userName),
         userPhone: finalUserPhone,
         alternatePhone: finalAlternatePhone,
         chefId: effectiveChefId,
         chefName: effectiveChefName,
         chefPhone: resolvedChefPhone,
         serviceType: "mealbox",
-        menuName: menuName || "Meal Plan",
-        menuImage: menuImage || "",
-        durationType: durationType || "",
-        deliveryTimeSlot: deliveryTimeSlot || "7:00 PM - 9:00 PM",
+        menuName: safeMenuName || "Meal Plan",
+        menuImage: safeMenuImage || "",
+        durationType: safeDurationType || "",
+        deliveryTimeSlot: safeDeliveryTimeSlot || "7:00 PM - 9:00 PM",
         addressDetails: resolvedAddress,
-        deliveryDate: deliveryDate || "",
+        deliveryDate: safeDeliveryDate || "",
         upcomingDeliveries: sortedDeliveries,
         deliverySchedules: initialSchedules,
         pausedDates: [],
@@ -840,14 +888,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
-        appliedCoupon: appliedCoupon || "",
+        appliedCoupon: safeAppliedCoupon,
         totalAmount: numericTotal,
         advancePaidAmount: finalAdvance,
         balanceAmountToCollect: finalBalance,
-        utrNumber: utrNumber || "",
+        utrNumber: safeUtrNumber,
         advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: false,
-        paymentMethod: paymentMethod || "cod",
+        paymentMethod: safePaymentMethod || "cod",
         paymentStatus: "Verification Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for mealbox flow
@@ -856,9 +904,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         specialInstructionLabel: resolvedSpecialInstructionLabel,
         specialInstructionText: resolvedSpecialInstructionText,
         // ✅ Persist delivery type for mealbox flow
-        deliveryType: deliveryType || "",
+        deliveryType: safeDeliveryType,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
