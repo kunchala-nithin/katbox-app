@@ -364,6 +364,9 @@ setInterval(async () => {
  *       on each delivery schedule so downstream map actions can pin
  *       the exact location.
  *
+ *    ✅ Special instructions and delivery type are now persisted
+ *       on the order document for ALL flows.
+ *
  *    ✅ After the order is saved, EVERY user with isAdmin === true
  *       receives an Expo push with the bundled alarm.mp3 sound +
  *       admin_orders_alarm channel + data.role = "admin". This makes
@@ -422,11 +425,64 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       // ✅ geo coordinates for map pinning
       latitude,
       longitude,
+      // ✅ Special instruction fields
+      specialInstruction,
+      specialInstructionTag,
+      specialInstructionLabel,
+      specialInstructionText,
     } = req.body;
 
     // ✅ Normalize coordinates once (works for JSON and multipart/form-data)
     const resolvedLatitude = parseNumberOrUndefined(latitude);
     const resolvedLongitude = parseNumberOrUndefined(longitude);
+
+    // ✅ Defensive parsing of specialInstruction — never throws, never leaks null
+    let parsedSpecialInstruction: any = null;
+    try {
+      if (
+        specialInstruction !== undefined &&
+        specialInstruction !== null &&
+        specialInstruction !== ""
+      ) {
+        if (typeof specialInstruction === "string") {
+          const trimmed = specialInstruction.trim();
+          if (trimmed.length > 0) {
+            parsedSpecialInstruction = JSON.parse(trimmed);
+          }
+        } else if (typeof specialInstruction === "object") {
+          parsedSpecialInstruction = specialInstruction;
+        }
+      }
+    } catch (parseErr) {
+      console.log("specialInstruction parse warning:", parseErr);
+      parsedSpecialInstruction = null;
+    }
+
+    // ✅ Resolve special instruction fields with fallbacks (always strings)
+    const resolvedSpecialInstructionTag = String(
+      specialInstructionTag ||
+      (parsedSpecialInstruction && parsedSpecialInstruction.tag) ||
+      ""
+    ).trim();
+
+    const resolvedSpecialInstructionLabel = String(
+      specialInstructionLabel ||
+      (parsedSpecialInstruction && parsedSpecialInstruction.label) ||
+      ""
+    ).trim();
+
+    const resolvedSpecialInstructionText = String(
+      specialInstructionText ||
+      (parsedSpecialInstruction && parsedSpecialInstruction.text) ||
+      ""
+    ).trim();
+
+    // ✅ Build the specialInstruction object for persistence (always an object)
+    const resolvedSpecialInstruction = {
+      tag: resolvedSpecialInstructionTag,
+      label: resolvedSpecialInstructionLabel,
+      text: resolvedSpecialInstructionText,
+    };
 
     const finalUserId = String(rawUserId || userId || "");
 
@@ -617,6 +673,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         ? QuickBitesOrderModel
         : HomemadeOrderModel;
 
+      // ✅ Build a safe numeric coordinate (never NaN, never undefined -> use null)
+      const safeLat = Number.isFinite(resolvedLatitude as number) ? (resolvedLatitude as number) : undefined;
+      const safeLng = Number.isFinite(resolvedLongitude as number) ? (resolvedLongitude as number) : undefined;
+
       const newHomemadeOrder = new ModelToUse({
         orderId: generatedOrderId,
         userId: finalUserId,
@@ -641,9 +701,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
         deliveryWindowMinutes: resolvedWindowMinutes,
-        // ✅ Persist geo coordinates for map pinning
-        latitude: resolvedLatitude,
-        longitude: resolvedLongitude,
+        // ✅ Persist geo coordinates for map pinning (only if valid numbers)
+        ...(safeLat !== undefined ? { latitude: safeLat } : {}),
+        ...(safeLng !== undefined ? { longitude: safeLng } : {}),
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
@@ -657,6 +717,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         paymentMethod: paymentMethod || "cod",
         paymentStatus: "Verification Pending",
         orderStatus: "Placed",
+        // ✅ Persist special instructions for homemade / quickbites flow
+        specialInstruction: resolvedSpecialInstruction,
+        specialInstructionTag: resolvedSpecialInstructionTag,
+        specialInstructionLabel: resolvedSpecialInstructionLabel,
+        specialInstructionText: resolvedSpecialInstructionText,
+        // ✅ Persist delivery type for homemade / quickbites flow
+        deliveryType: deliveryType || "",
         statusTimeline: [
           { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
@@ -665,6 +732,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       savedOrder = await newHomemadeOrder.save();
     }
     else if (resolvedServiceType === "catering") {
+      const safeLat = Number.isFinite(resolvedLatitude as number) ? (resolvedLatitude as number) : undefined;
+      const safeLng = Number.isFinite(resolvedLongitude as number) ? (resolvedLongitude as number) : undefined;
+
       const newCateringOrder = new CateringOrderModel({
         orderId: generatedOrderId,
         userId: finalUserId,
@@ -693,9 +763,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
         deliveryWindowMinutes: resolvedWindowMinutes,
-        // ✅ Persist geo coordinates for map pinning
-        latitude: resolvedLatitude,
-        longitude: resolvedLongitude,
+        // ✅ Persist geo coordinates for map pinning (only if valid numbers)
+        ...(safeLat !== undefined ? { latitude: safeLat } : {}),
+        ...(safeLng !== undefined ? { longitude: safeLng } : {}),
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
@@ -709,6 +779,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         paymentMethod: paymentMethod || "cod",
         paymentStatus: "Verification Pending",
         orderStatus: "Placed",
+        // ✅ Persist special instructions for catering flow
+        specialInstruction: resolvedSpecialInstruction,
+        specialInstructionTag: resolvedSpecialInstructionTag,
+        specialInstructionLabel: resolvedSpecialInstructionLabel,
+        specialInstructionText: resolvedSpecialInstructionText,
         statusTimeline: [
           { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
@@ -719,13 +794,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     else {
       // ✅ Copy coordinates onto each schedule as well so per-schedule
       // map actions can pin the exact drop location.
+      const safeLat = Number.isFinite(resolvedLatitude as number) ? (resolvedLatitude as number) : undefined;
+      const safeLng = Number.isFinite(resolvedLongitude as number) ? (resolvedLongitude as number) : undefined;
+
       const initialSchedules = sortedDeliveries.map((dateItem: string) => ({
         date: dateItem,
         status: "Scheduled",
         timeSlot: deliveryTimeSlot || "7:00 PM - 9:00 PM",
         address: resolvedAddress,
-        latitude: resolvedLatitude,
-        longitude: resolvedLongitude,
+        ...(safeLat !== undefined ? { latitude: safeLat } : {}),
+        ...(safeLng !== undefined ? { longitude: safeLng } : {}),
         statusTimeline: [
           { status: "Scheduled", timestamp: orderPlacedAt, note: `Delivery scheduled for ${dateItem}` },
         ],
@@ -756,9 +834,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
         deliveryWindowMinutes: resolvedWindowMinutes,
-        // ✅ Persist geo coordinates for map pinning
-        latitude: resolvedLatitude,
-        longitude: resolvedLongitude,
+        // ✅ Persist geo coordinates for map pinning (only if valid numbers)
+        ...(safeLat !== undefined ? { latitude: safeLat } : {}),
+        ...(safeLng !== undefined ? { longitude: safeLng } : {}),
         subtotal: Number(subtotal) || 0,
         deliveryPrice: Number(deliveryPrice) || 0,
         discount: Number(discount) || 0,
@@ -772,6 +850,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         paymentMethod: paymentMethod || "cod",
         paymentStatus: "Verification Pending",
         orderStatus: "Placed",
+        // ✅ Persist special instructions for mealbox flow
+        specialInstruction: resolvedSpecialInstruction,
+        specialInstructionTag: resolvedSpecialInstructionTag,
+        specialInstructionLabel: resolvedSpecialInstructionLabel,
+        specialInstructionText: resolvedSpecialInstructionText,
+        // ✅ Persist delivery type for mealbox flow
+        deliveryType: deliveryType || "",
         statusTimeline: [
           { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${utrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
@@ -877,10 +962,20 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     });
   } catch (error: any) {
     console.error("Error placing order:", error);
+    console.error("Error name:", error?.name);
+    console.error("Error message:", error?.message);
+    console.error("Error stack:", error?.stack);
+    try {
+      console.error("Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+    } catch (jsonErr) {
+      console.error("Error details (non-serializable):", error);
+    }
     return res.status(500).json({
       success: false,
       message: "Failed to place order",
       error: error.message,
+      errorName: error?.name,
+      errorStack: error?.stack,
     });
   }
 };

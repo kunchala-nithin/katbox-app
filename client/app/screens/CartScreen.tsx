@@ -48,6 +48,56 @@ const getServiceLabel = (raw: string) => {
   return SERVICE_TYPE_LABELS[s] || s.toUpperCase();
 };
 
+// ✅ Delivery option info with respective emojis
+const DELIVERY_OPTION_INFO: Record<
+  string,
+  { emoji: string; title: string; description: string; includes: string[] }
+> = {
+  Standard: {
+    emoji: "📦",
+    title: "Standard Delivery",
+    description:
+      "Order delivered to your building gate or apartment entrance.",
+    includes: [
+      "Delivery to building gate / entrance",
+      "Best for apartments & gated communities",
+      "No floor delivery included",
+    ],
+  },
+  Doorstep: {
+    emoji: "🚪",
+    title: "Doorstep Delivery",
+    description:
+      "Delivered to your doorstep, any floor, no extra hassle.",
+    includes: [
+      "Delivery right to your door",
+      "Any floor covered",
+      "No setup or serving included",
+    ],
+  },
+  "Doorstep + Service": {
+    emoji: "🛎️",
+    title: "Doorstep + Service",
+    description:
+      "End to end support: our staff will deliver, take care of setup, and serve for 3 hours.",
+    includes: [
+      "Doorstep delivery on any floor",
+      "Full setup by our staff",
+      "Serving support for 3 hours",
+    ],
+  },
+};
+
+// ✅ Simple spice label → emoji mapping
+const resolveSpiceEmoji = (label: string): string => {
+  const l = String(label || "").toLowerCase();
+  if (l.includes("less")) return "❄️";
+  if (l.includes("medium")) return "🌶️";
+  if (l.includes("very")) return "🔥";
+  if (l.includes("no onion")) return "🚫🧄";
+  return "🍽️";
+};
+
 export default function CartScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
@@ -80,6 +130,14 @@ export default function CartScreen() {
     message: string;
   } | null>(null);
   const notApplicableAnim = useRef(new Animated.Value(0)).current;
+
+  // ✅ NEW: Delivery option info popup (flag + explanation) state
+  const [deliveryInfoVisible, setDeliveryInfoVisible] = useState(false);
+  const deliveryInfoAnim = useRef(new Animated.Value(0)).current;
+
+  // ✅ Simple Special Instructions collapsible state
+  const [specialInstructionsExpanded, setSpecialInstructionsExpanded] = useState(false);
+  const specialInstructionsAnim = useRef(new Animated.Value(0)).current;
 
   // Track scroll changes for dynamic collapsing of price breakup
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -163,6 +221,47 @@ export default function CartScreen() {
       easing: Easing.in(Easing.cubic),
       useNativeDriver: true,
     }).start(() => setNotApplicable(null));
+  };
+
+  // ✅ NEW: show / hide the delivery info flag popup
+  const showDeliveryInfo = () => {
+    setDeliveryInfoVisible(true);
+    deliveryInfoAnim.setValue(0);
+    Animated.spring(deliveryInfoAnim, {
+      toValue: 1,
+      tension: 70,
+      friction: 9,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const hideDeliveryInfo = () => {
+    Animated.timing(deliveryInfoAnim, {
+      toValue: 0,
+      duration: 200,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(() => setDeliveryInfoVisible(false));
+  };
+
+  // ✅ Simple toggle for special instructions collapsible panel
+  const toggleSpecialInstructions = () => {
+    if (specialInstructionsExpanded) {
+      Animated.timing(specialInstructionsAnim, {
+        toValue: 0,
+        duration: 240,
+        easing: Easing.bezier(0.25, 1, 0.5, 1),
+        useNativeDriver: false,
+      }).start(() => setSpecialInstructionsExpanded(false));
+    } else {
+      setSpecialInstructionsExpanded(true);
+      Animated.timing(specialInstructionsAnim, {
+        toValue: 1,
+        duration: 280,
+        easing: Easing.bezier(0.25, 1, 0.5, 1),
+        useNativeDriver: false,
+      }).start();
+    }
   };
 
   // Load coupons strictly scoped to the active chef
@@ -267,6 +366,57 @@ export default function CartScreen() {
   const restaurant = cartData?.restaurant || {};
   const orderDetails = cartData?.orderDetails || {};
   const cartAddons = cartData?.addons || [];
+
+  // ✅ Resolve the special instruction block from the cart (orderDetails or top-level)
+  const resolvedSpecialInstruction = React.useMemo(() => {
+    const nested = orderDetails?.specialInstruction;
+    const nestedLabel =
+      nested?.label || orderDetails?.specialInstructionLabel || "";
+    const nestedTag = nested?.tag || orderDetails?.specialInstructionTag || "";
+    const nestedText =
+      nested?.text || orderDetails?.specialInstructionText || "";
+    const spiceRaw = orderDetails?.selectedSpice || "";
+    const noOnion = !!orderDetails?.noOnionsGarlic;
+    const notesRaw = orderDetails?.notes || "";
+
+    let label = String(nestedLabel || "").trim();
+    if (!label && spiceRaw) {
+      const s = String(spiceRaw).toLowerCase().trim();
+      if (s === "less") label = "Less spicy";
+      else if (s === "medium") label = "Medium spicy";
+      else if (s === "very") label = "Very spicy";
+      else if (s === "noonion") label = "No onion & garlic";
+      else label = String(spiceRaw);
+    }
+
+    const tag = String(nestedTag || spiceRaw || "").trim();
+    const text = String(nestedText || notesRaw || "").trim();
+
+    const spiceEmoji = label ? resolveSpiceEmoji(label) : "";
+    const hasAny = !!(label || text || noOnion);
+
+    return {
+      tag,
+      label,
+      spiceEmoji,
+      text,
+      noOnion,
+      hasAny,
+    };
+  }, [orderDetails]);
+
+  // ✅ Resolve delivery option from cart
+  const resolvedDeliveryOption: string = React.useMemo(() => {
+    return String(
+      orderDetails?.delivery ||
+        cartData?.orderDetails?.delivery ||
+        ""
+    ).trim();
+  }, [orderDetails, cartData]);
+
+  const deliveryInfo = resolvedDeliveryOption
+    ? DELIVERY_OPTION_INFO[resolvedDeliveryOption] || null
+    : null;
 
   const upcomingDeliveriesList: string[] = React.useMemo(() => {
     if (orderDetails?.scheduledDatesFormatted && Array.isArray(orderDetails.scheduledDatesFormatted)) {
@@ -810,6 +960,23 @@ export default function CartScreen() {
     outputRange: ["0deg", "180deg"],
   });
 
+  // ✅ Chevron rotation for special instructions collapsible
+  const specialInstructionsChevronRotate = specialInstructionsAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
+
+  // ✅ Height interpolation for the collapsible content
+  const specialInstructionsContentHeight = specialInstructionsAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 200],
+  });
+
+  const specialInstructionsContentOpacity = specialInstructionsAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0, 0.5, 1],
+  });
+
   /* -------------------------------------------------------------------------- */
   /*  SKELETON LOADING STATE                                                     */
   /* -------------------------------------------------------------------------- */
@@ -1129,6 +1296,30 @@ export default function CartScreen() {
                   <Text style={styles.modernChefSubtitle}>
                     Chef: {restaurant?.name || cartData?.chefName || "Expert Caterer"}
                   </Text>
+
+                  {/* ✅ Simple delivery option line below chef name with respective emoji + info icon */}
+                  {!!resolvedDeliveryOption && (
+                    <View style={styles.deliveryOptionRowInline}>
+                      <Text style={styles.deliveryOptionEmojiInline}>
+                        {deliveryInfo?.emoji || "📦"}
+                      </Text>
+                      <Text style={styles.deliveryOptionTextInline}>
+                        {resolvedDeliveryOption}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={showDeliveryInfo}
+                        activeOpacity={0.7}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        style={styles.deliveryInfoBtnInline}
+                      >
+                        <Ionicons
+                          name="information-circle-outline"
+                          size={15}
+                          color="#0F382A"
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               </View>
 
@@ -1203,6 +1394,86 @@ export default function CartScreen() {
                   </View>
                 </View>
               </View>
+
+              {/* ✅ Simple Special Instructions row — icon + underlined text + chevron, left aligned, below meta section */}
+              {resolvedSpecialInstruction.hasAny && (
+                <View style={styles.simpleSpecialInstrWrapper}>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={toggleSpecialInstructions}
+                    style={styles.simpleSpecialInstrTrigger}
+                  >
+                    <Ionicons
+                      name="restaurant-outline"
+                      size={14}
+                      color="#0F382A"
+                    />
+                    <Text style={styles.simpleSpecialInstrTriggerText}>
+                      Special Instructions
+                    </Text>
+                    <Animated.View
+                      style={{
+                        transform: [
+                          { rotate: specialInstructionsChevronRotate },
+                        ],
+                        marginLeft: 4,
+                      }}
+                    >
+                      <Ionicons
+                        name="chevron-down"
+                        size={14}
+                        color="#0F382A"
+                      />
+                    </Animated.View>
+                  </TouchableOpacity>
+
+                  {specialInstructionsExpanded && (
+                    <Animated.View
+                      style={[
+                        styles.simpleSpecialInstrBody,
+                        {
+                          maxHeight: specialInstructionsContentHeight,
+                          opacity: specialInstructionsContentOpacity,
+                          overflow: "hidden",
+                        },
+                      ]}
+                    >
+                      {!!resolvedSpecialInstruction.label && (
+                        <View style={styles.simpleSpecialInstrRow}>
+                          <Text style={styles.simpleSpecialInstrEmoji}>
+                            {resolvedSpecialInstruction.spiceEmoji}
+                          </Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>
+                            {resolvedSpecialInstruction.label}
+                          </Text>
+                        </View>
+                      )}
+
+                      {resolvedSpecialInstruction.noOnion &&
+                        !String(resolvedSpecialInstruction.label || "")
+                          .toLowerCase()
+                          .includes("no onion") && (
+                          <View style={styles.simpleSpecialInstrRow}>
+                            <Text style={styles.simpleSpecialInstrEmoji}>
+                              🚫🧄
+                            </Text>
+                            <Text style={styles.simpleSpecialInstrRowText}>
+                              No onion & garlic
+                            </Text>
+                          </View>
+                        )}
+
+                      {!!resolvedSpecialInstruction.text && (
+                        <View style={styles.simpleSpecialInstrNoteBox}>
+                          <Text style={styles.simpleSpecialInstrNoteText}>
+                            {resolvedSpecialInstruction.text}
+                          </Text>
+                        </View>
+                      )}
+                    </Animated.View>
+                  )}
+                </View>
+              )}
 
               <View style={styles.divider} />
               <View style={styles.priceRow}>
@@ -2000,6 +2271,92 @@ export default function CartScreen() {
         </Animated.View>
       </Modal>
 
+      {/* ✅ NEW: Delivery option info flag popup */}
+      <Modal
+        visible={deliveryInfoVisible}
+        transparent
+        animationType="none"
+        onRequestClose={hideDeliveryInfo}
+      >
+        <Animated.View style={[styles.modalOverlayAnimated, { opacity: deliveryInfoAnim }]}>
+          <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFillObject} />
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={hideDeliveryInfo}
+          />
+          {deliveryInfo && (
+            <Animated.View
+              style={[
+                styles.deliveryInfoPopupCard,
+                {
+                  transform: [
+                    {
+                      scale: deliveryInfoAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.88, 1],
+                      }),
+                    },
+                    {
+                      translateY: deliveryInfoAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [14, 0],
+                      }),
+                    },
+                  ],
+                  opacity: deliveryInfoAnim,
+                },
+              ]}
+            >
+              <View style={styles.deliveryInfoFlagRow}>
+                <View style={styles.deliveryInfoFlagBadge}>
+                  <Text style={styles.deliveryInfoFlagEmoji}>
+                    {deliveryInfo.emoji}
+                  </Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.deliveryInfoTitle}>
+                    {deliveryInfo.title}
+                  </Text>
+                  <Text style={styles.deliveryInfoSubtitle}>
+                    Delivery option chosen for this order
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.deliveryInfoDescription}>
+                {deliveryInfo.description}
+              </Text>
+
+              <View style={styles.deliveryInfoIncludesBox}>
+                <Text style={styles.deliveryInfoIncludesTitle}>
+                  What's included
+                </Text>
+                {deliveryInfo.includes.map((line, idx) => (
+                  <View key={`delivery-inc-${idx}`} style={styles.deliveryInfoIncludeRow}>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={13}
+                      color="#166534"
+                      style={{ marginTop: 1 }}
+                    />
+                    <Text style={styles.deliveryInfoIncludeText}>{line}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={styles.deliveryInfoCta}
+                activeOpacity={0.88}
+                onPress={hideDeliveryInfo}
+              >
+                <Text style={styles.deliveryInfoCtaText}>Got it</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+        </Animated.View>
+      </Modal>
+
       {showHurray && (
         <Animated.View style={[styles.hurrayOverlay, { opacity: overallOpacity }]}>
           <Animated.View
@@ -2207,6 +2564,83 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0F382A",
   },
+
+  // ✅ Simple delivery option line under chef name (emoji + text + info icon)
+  deliveryOptionRowInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 5,
+    alignSelf: "flex-start",
+    gap: 4,
+  },
+  deliveryOptionEmojiInline: {
+    fontSize: 13,
+    marginRight: 1,
+  },
+  deliveryOptionTextInline: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0F382A",
+    letterSpacing: 0.1,
+  },
+  deliveryInfoBtnInline: {
+    marginLeft: 2,
+    padding: 1,
+  },
+
+  // ✅ Simple Special Instructions row — icon + underlined text + chevron on the left
+  simpleSpecialInstrWrapper: {
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  simpleSpecialInstrTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+    gap: 5,
+  },
+  simpleSpecialInstrTriggerText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#0F382A",
+    textDecorationLine: "underline",
+    letterSpacing: 0.1,
+  },
+  simpleSpecialInstrBody: {
+    marginTop: 8,
+    paddingLeft: 2,
+  },
+  simpleSpecialInstrRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  simpleSpecialInstrEmoji: {
+    fontSize: 15,
+    marginRight: 8,
+  },
+  simpleSpecialInstrRowText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0B261D",
+  },
+  simpleSpecialInstrNoteBox: {
+    backgroundColor: "#FAF8F5",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.06)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 2,
+  },
+  simpleSpecialInstrNoteText: {
+    fontSize: 12.5,
+    fontWeight: "500",
+    color: "#4F6B61",
+    lineHeight: 18,
+  },
+
   groupedMetaSectionContainer: {
     backgroundColor: "#FAF8F5",
     borderRadius: 18,
@@ -3183,6 +3617,113 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   katboxCtaText: {
+    color: "#FAF8F5",
+    fontSize: 14.5,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+
+  // ✅ Delivery info flag popup styles (emoji now on transparent bg, no green chip)
+  deliveryInfoPopupCard: {
+    position: "absolute",
+    alignSelf: "center",
+    top: "26%",
+    left: 20,
+    right: 20,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 18,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.10)",
+    shadowColor: "#0F382A",
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.26,
+    shadowRadius: 20,
+    elevation: 28,
+  },
+  deliveryInfoFlagRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  deliveryInfoFlagBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: "rgba(15, 56, 42, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  deliveryInfoFlagEmoji: {
+    fontSize: 22,
+  },
+  deliveryInfoTitle: {
+    fontSize: 16.5,
+    fontWeight: "900",
+    color: "#0B261D",
+    letterSpacing: -0.2,
+  },
+  deliveryInfoSubtitle: {
+    fontSize: 11.5,
+    fontWeight: "600",
+    color: "#5B756C",
+    marginTop: 2,
+  },
+  deliveryInfoDescription: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#0B261D",
+    lineHeight: 19,
+    marginBottom: 14,
+  },
+  deliveryInfoIncludesBox: {
+    backgroundColor: "#F8FAF5",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.08)",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  deliveryInfoIncludesTitle: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#0F382A",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  deliveryInfoIncludeRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: 6,
+  },
+  deliveryInfoIncludeText: {
+    fontSize: 12.5,
+    fontWeight: "600",
+    color: "#0B261D",
+    marginLeft: 6,
+    flex: 1,
+    lineHeight: 17,
+  },
+  deliveryInfoCta: {
+    width: "100%",
+    backgroundColor: "#166534",
+    paddingVertical: 13,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#166534",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  deliveryInfoCtaText: {
     color: "#FAF8F5",
     fontSize: 14.5,
     fontWeight: "800",

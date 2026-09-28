@@ -57,6 +57,63 @@ const formatTimeShortLocal = (d: Date | null): string => {
   }
 };
 
+// ✅ Delivery option info with respective emojis (mirrors CartScreen)
+const DELIVERY_OPTION_INFO: Record<
+  string,
+  { emoji: string; title: string; description: string; includes: string[] }
+> = {
+  Standard: {
+    emoji: "📦",
+    title: "Standard Delivery",
+    description:
+      "Order delivered to your building gate or apartment entrance.",
+    includes: [
+      "Delivery to building gate / entrance",
+      "Best for apartments & gated communities",
+      "No floor delivery included",
+    ],
+  },
+  Doorstep: {
+    emoji: "🚪",
+    title: "Doorstep Delivery",
+    description:
+      "Delivered to your doorstep, any floor, no extra hassle.",
+    includes: [
+      "Delivery right to your door",
+      "Any floor covered",
+      "No setup or serving included",
+    ],
+  },
+  "Doorstep + Service": {
+    emoji: "🛎️",
+    title: "Doorstep + Service",
+    description:
+      "End to end support: our staff will deliver, take care of setup, and serve for 3 hours.",
+    includes: [
+      "Doorstep delivery on any floor",
+      "Full setup by our staff",
+      "Serving support for 3 hours",
+    ],
+  },
+};
+
+// ✅ Simple spice label → emoji mapping (mirrors CartScreen)
+const resolveSpiceEmoji = (label: string): string => {
+  const l = String(label || "").toLowerCase();
+  if (l.includes("less")) return "❄️";
+  if (l.includes("medium")) return "🌶️";
+  if (l.includes("very")) return "🔥";
+  if (l.includes("no onion")) return "🚫🧄";
+  return "🍽️";
+};
+
+// ✅ NEW: UTR — strict 12-digit numeric sanitizer (UPI RRN format in India)
+const UTR_MAX_DIGITS = 12;
+const sanitizeUtrInput = (raw: string): string => {
+  const digitsOnly = String(raw || "").replace(/[^0-9]/g, "");
+  return digitsOnly.slice(0, UTR_MAX_DIGITS);
+};
+
 export default function CheckOutScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
@@ -173,6 +230,14 @@ export default function CheckOutScreen() {
   const [utrNumber, setUtrNumber] = useState("");
   const [paymentScreenshotUri, setPaymentScreenshotUri] = useState<string | null>(null);
 
+  // ✅ NEW: Delivery option info popup (flag + explanation) state
+  const [deliveryInfoVisible, setDeliveryInfoVisible] = useState(false);
+  const deliveryInfoAnim = useRef(new Animated.Value(0)).current;
+
+  // ✅ NEW: Special instructions collapsible state
+  const [specialInstructionsExpanded, setSpecialInstructionsExpanded] = useState(false);
+  const specialInstructionsAnim = useRef(new Animated.Value(0)).current;
+
   // 5-MINUTE COUNTDOWN TIMER STATE (300 seconds)
   const [timeLeft, setTimeLeft] = useState(300);
 
@@ -196,10 +261,31 @@ export default function CheckOutScreen() {
     return () => clearInterval(timer);
   }, [showScannerModal, timeLeft]);
 
+  // ✅ Simple real-timer format (MM:SS, zero-padded)
   const formatTimer = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+    return `${mins < 10 ? "0" : ""}${mins}:${secs < 10 ? "0" : ""}${secs}`;
+  };
+
+  // ✅ NEW: Confirm-before-cancel handler for the scanner modal
+  const handleRequestCloseScannerModal = () => {
+    Alert.alert(
+      "Cancel Payment?",
+      "Are you sure you want to cancel this advance payment? Your progress will be lost.",
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, Cancel",
+          style: "destructive",
+          onPress: () => {
+            setShowScannerModal(false);
+            setTimeLeft(300);
+          },
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -406,12 +492,135 @@ export default function CheckOutScreen() {
     }
   };
 
+  // ✅ NEW: Dynamic delivery option resolution (mirrors CartScreen)
+  const resolvedDeliveryOption: string = useMemo(() => {
+    return String(deliveryType || "").trim();
+  }, [deliveryType]);
+
+  const deliveryInfo = resolvedDeliveryOption
+    ? DELIVERY_OPTION_INFO[resolvedDeliveryOption] || null
+    : null;
+
+  // ✅ NEW: Special instructions resolution from orderDetails param / params
+  const resolvedSpecialInstruction = useMemo(() => {
+    // Try to parse orderDetails from params if present
+    let orderDetails: any = null;
+    const rawOrderDetails = params.orderDetails;
+    if (rawOrderDetails) {
+      try {
+        orderDetails =
+          typeof rawOrderDetails === "string"
+            ? JSON.parse(rawOrderDetails)
+            : rawOrderDetails;
+      } catch (e) {
+        orderDetails = null;
+      }
+    }
+
+    const nested = orderDetails?.specialInstruction;
+    const nestedLabel =
+      nested?.label || orderDetails?.specialInstructionLabel || "";
+    const nestedTag = nested?.tag || orderDetails?.specialInstructionTag || "";
+    const nestedText =
+      nested?.text || orderDetails?.specialInstructionText || "";
+    const spiceRaw = orderDetails?.selectedSpice || "";
+    const noOnion = !!orderDetails?.noOnionsGarlic;
+    const notesRaw = orderDetails?.notes || "";
+
+    let label = String(nestedLabel || "").trim();
+    if (!label && spiceRaw) {
+      const s = String(spiceRaw).toLowerCase().trim();
+      if (s === "less") label = "Less spicy";
+      else if (s === "medium") label = "Medium spicy";
+      else if (s === "very") label = "Very spicy";
+      else if (s === "noonion") label = "No onion & garlic";
+      else label = String(spiceRaw);
+    }
+
+    const tag = String(nestedTag || spiceRaw || "").trim();
+    const text = String(nestedText || notesRaw || "").trim();
+
+    const spiceEmoji = label ? resolveSpiceEmoji(label) : "";
+    const hasAny = !!(label || text || noOnion);
+
+    return {
+      tag,
+      label,
+      spiceEmoji,
+      text,
+      noOnion,
+      hasAny,
+    };
+  }, [params.orderDetails]);
+
+  // ✅ NEW: Toggle special instructions collapsible
+  const toggleSpecialInstructions = () => {
+    if (specialInstructionsExpanded) {
+      Animated.timing(specialInstructionsAnim, {
+        toValue: 0,
+        duration: 240,
+        easing: undefined,
+        useNativeDriver: false,
+      }).start(() => setSpecialInstructionsExpanded(false));
+    } else {
+      setSpecialInstructionsExpanded(true);
+      Animated.timing(specialInstructionsAnim, {
+        toValue: 1,
+        duration: 280,
+        easing: undefined,
+        useNativeDriver: false,
+      }).start();
+    }
+  };
+
+  const specialInstructionsChevronRotate = specialInstructionsAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
+
+  const specialInstructionsContentHeight = specialInstructionsAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 200],
+  });
+
+  const specialInstructionsContentOpacity = specialInstructionsAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0, 0.5, 1],
+  });
+
+  // ✅ NEW: show / hide delivery info popup
+  const showDeliveryInfo = () => {
+    setDeliveryInfoVisible(true);
+    deliveryInfoAnim.setValue(0);
+    Animated.spring(deliveryInfoAnim, {
+      toValue: 1,
+      tension: 70,
+      friction: 9,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const hideDeliveryInfo = () => {
+    Animated.timing(deliveryInfoAnim, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => setDeliveryInfoVisible(false));
+  };
+
   const submitAdvanceProofAndPlaceOrder = async (proofType: "utr" | "screenshot", proofValue: string | null) => {
     if (loading) return;
 
-    if (proofType === "utr" && (!proofValue || proofValue.trim().length < 6)) {
-      Alert.alert("Invalid UTR", "Please enter a valid UTR transaction reference number.");
-      return;
+    // ✅ STRICT: UTR must be exactly 12 digits (UPI RRN format in India)
+    if (proofType === "utr") {
+      const cleanUtr = String(proofValue || "").replace(/[^0-9]/g, "");
+      if (cleanUtr.length !== UTR_MAX_DIGITS) {
+        Alert.alert(
+          "Invalid UTR",
+          `Please enter the complete ${UTR_MAX_DIGITS}-digit UTR / UPI reference number.`
+        );
+        return;
+      }
     }
     if (proofType === "screenshot" && !proofValue) {
       Alert.alert("Missing Screenshot", "Please upload a screenshot of your successful advance payment.");
@@ -462,8 +671,25 @@ export default function CheckOutScreen() {
     formData.append("balanceAmountToCollect", String(balanceAmount));
     formData.append("paymentMethod", selectedPaymentMethod);
 
+    // ✅ NEW: Persist delivery type on the order document for all flows
+    formData.append("deliveryType", resolvedDeliveryOption || "");
+
+    // ✅ NEW: Persist special instructions on the order document for all flows
+    if (resolvedSpecialInstruction.hasAny) {
+      formData.append("specialInstruction", JSON.stringify({
+        tag: resolvedSpecialInstruction.tag || "",
+        label: resolvedSpecialInstruction.label || "",
+        text: resolvedSpecialInstruction.text || "",
+      }));
+      formData.append("specialInstructionTag", resolvedSpecialInstruction.tag || "");
+      formData.append("specialInstructionLabel", resolvedSpecialInstruction.label || "");
+      formData.append("specialInstructionText", resolvedSpecialInstruction.text || "");
+    }
+
     if (proofType === "utr") {
-      formData.append("utrNumber", proofValue || "");
+      // ✅ Send the sanitized 12-digit UTR
+      const cleanUtr = String(proofValue || "").replace(/[^0-9]/g, "").slice(0, UTR_MAX_DIGITS);
+      formData.append("utrNumber", cleanUtr);
     } else if (proofType === "screenshot" && proofValue) {
       const filename = proofValue.split("/").pop() || "payment_screenshot.jpg";
       const match = /\.(\w+)$/.exec(filename);
@@ -543,8 +769,25 @@ export default function CheckOutScreen() {
         Alert.alert("Order Error", res.data?.message || "Failed to place order.");
       }
     } catch (error: any) {
+      // ✅ IMPROVED LOGGING: surface the actual backend 500 error body so we
+      // can debug the exact cause directly from the terminal.
       console.error("Error creating order:", error);
-      Alert.alert("Order Error", error.response?.data?.message || "Failed to place order. Please try again.");
+      console.error("Backend status:", error?.response?.status);
+      console.error(
+        "Backend response data:",
+        JSON.stringify(error?.response?.data, null, 2)
+      );
+      console.error("Backend error message:", error?.response?.data?.error);
+      console.error("Backend errorName:", error?.response?.data?.errorName);
+      console.error("Backend errorStack:", error?.response?.data?.errorStack);
+
+      Alert.alert(
+        "Order Error",
+        error?.response?.data?.error ||
+          error?.response?.data?.message ||
+          error?.message ||
+          "Failed to place order. Please try again."
+      );
     } finally {
       setLoading(false);
     }
@@ -664,6 +907,30 @@ export default function CheckOutScreen() {
               </View>
             ) : null}
 
+            {/* ✅ NEW: Simple delivery option line with emoji + info icon (for homemade flow too) */}
+            {!!resolvedDeliveryOption && (
+              <View style={styles.deliveryOptionRowInline}>
+                <Text style={styles.deliveryOptionEmojiInline}>
+                  {deliveryInfo?.emoji || "📦"}
+                </Text>
+                <Text style={styles.deliveryOptionTextInline}>
+                  {resolvedDeliveryOption}
+                </Text>
+                <TouchableOpacity
+                  onPress={showDeliveryInfo}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  style={styles.deliveryInfoBtnInline}
+                >
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={15}
+                    color="#0F382A"
+                  />
+                </TouchableOpacity>
+              </View>
+            )}
+
             <View style={styles.groupedMetaSectionContainer}>
               {parsedItems && parsedItems.length > 0 ? (
                 parsedItems.map((dishItem: any, idx: number) => (
@@ -731,6 +998,86 @@ export default function CheckOutScreen() {
               </View>
             </View>
 
+            {/* ✅ NEW: Simple Special Instructions row for homemade flow */}
+            {resolvedSpecialInstruction.hasAny && (
+              <View style={styles.simpleSpecialInstrWrapper}>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={toggleSpecialInstructions}
+                  style={styles.simpleSpecialInstrTrigger}
+                >
+                  <Ionicons
+                    name="restaurant-outline"
+                    size={14}
+                    color="#0F382A"
+                  />
+                  <Text style={styles.simpleSpecialInstrTriggerText}>
+                    Special Instructions
+                  </Text>
+                  <Animated.View
+                    style={{
+                      transform: [
+                        { rotate: specialInstructionsChevronRotate },
+                      ],
+                      marginLeft: 4,
+                    }}
+                  >
+                    <Ionicons
+                      name="chevron-down"
+                      size={14}
+                      color="#0F382A"
+                    />
+                  </Animated.View>
+                </TouchableOpacity>
+
+                {specialInstructionsExpanded && (
+                  <Animated.View
+                    style={[
+                      styles.simpleSpecialInstrBody,
+                      {
+                        maxHeight: specialInstructionsContentHeight,
+                        opacity: specialInstructionsContentOpacity,
+                        overflow: "hidden",
+                      },
+                    ]}
+                  >
+                    {!!resolvedSpecialInstruction.label && (
+                      <View style={styles.simpleSpecialInstrRow}>
+                        <Text style={styles.simpleSpecialInstrEmoji}>
+                          {resolvedSpecialInstruction.spiceEmoji}
+                        </Text>
+                        <Text style={styles.simpleSpecialInstrRowText}>
+                          {resolvedSpecialInstruction.label}
+                        </Text>
+                      </View>
+                    )}
+
+                    {resolvedSpecialInstruction.noOnion &&
+                      !String(resolvedSpecialInstruction.label || "")
+                        .toLowerCase()
+                        .includes("no onion") && (
+                        <View style={styles.simpleSpecialInstrRow}>
+                          <Text style={styles.simpleSpecialInstrEmoji}>
+                            🚫🧄
+                          </Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>
+                            No onion & garlic
+                          </Text>
+                        </View>
+                      )}
+
+                    {!!resolvedSpecialInstruction.text && (
+                      <View style={styles.simpleSpecialInstrNoteBox}>
+                        <Text style={styles.simpleSpecialInstrNoteText}>
+                          {resolvedSpecialInstruction.text}
+                        </Text>
+                      </View>
+                    )}
+                  </Animated.View>
+                )}
+              </View>
+            )}
+
             <View style={styles.divider} />
 
             <View style={styles.priceRow}>
@@ -751,6 +1098,30 @@ export default function CheckOutScreen() {
                   {menuName}
                 </Text>
                 <Text style={styles.modernChefSubtitle}>Chef: {restaurantName}</Text>
+
+                {/* ✅ NEW: Simple delivery option line below chef name with emoji + info icon */}
+                {!!resolvedDeliveryOption && (
+                  <View style={styles.deliveryOptionRowInline}>
+                    <Text style={styles.deliveryOptionEmojiInline}>
+                      {deliveryInfo?.emoji || "📦"}
+                    </Text>
+                    <Text style={styles.deliveryOptionTextInline}>
+                      {resolvedDeliveryOption}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={showDeliveryInfo}
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      style={styles.deliveryInfoBtnInline}
+                    >
+                      <Ionicons
+                        name="information-circle-outline"
+                        size={15}
+                        color="#0F382A"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             </View>
 
@@ -790,6 +1161,86 @@ export default function CheckOutScreen() {
               </Text>
             </View>
 
+            {/* ✅ NEW: Simple Special Instructions row for catering flow */}
+            {resolvedSpecialInstruction.hasAny && (
+              <View style={styles.simpleSpecialInstrWrapper}>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={toggleSpecialInstructions}
+                  style={styles.simpleSpecialInstrTrigger}
+                >
+                  <Ionicons
+                    name="restaurant-outline"
+                    size={14}
+                    color="#0F382A"
+                  />
+                  <Text style={styles.simpleSpecialInstrTriggerText}>
+                    Special Instructions
+                  </Text>
+                  <Animated.View
+                    style={{
+                      transform: [
+                        { rotate: specialInstructionsChevronRotate },
+                      ],
+                      marginLeft: 4,
+                    }}
+                  >
+                    <Ionicons
+                      name="chevron-down"
+                      size={14}
+                      color="#0F382A"
+                    />
+                  </Animated.View>
+                </TouchableOpacity>
+
+                {specialInstructionsExpanded && (
+                  <Animated.View
+                    style={[
+                      styles.simpleSpecialInstrBody,
+                      {
+                        maxHeight: specialInstructionsContentHeight,
+                        opacity: specialInstructionsContentOpacity,
+                        overflow: "hidden",
+                      },
+                    ]}
+                  >
+                    {!!resolvedSpecialInstruction.label && (
+                      <View style={styles.simpleSpecialInstrRow}>
+                        <Text style={styles.simpleSpecialInstrEmoji}>
+                          {resolvedSpecialInstruction.spiceEmoji}
+                        </Text>
+                        <Text style={styles.simpleSpecialInstrRowText}>
+                          {resolvedSpecialInstruction.label}
+                        </Text>
+                      </View>
+                    )}
+
+                    {resolvedSpecialInstruction.noOnion &&
+                      !String(resolvedSpecialInstruction.label || "")
+                        .toLowerCase()
+                        .includes("no onion") && (
+                        <View style={styles.simpleSpecialInstrRow}>
+                          <Text style={styles.simpleSpecialInstrEmoji}>
+                            🚫🧄
+                          </Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>
+                            No onion & garlic
+                          </Text>
+                        </View>
+                      )}
+
+                    {!!resolvedSpecialInstruction.text && (
+                      <View style={styles.simpleSpecialInstrNoteBox}>
+                        <Text style={styles.simpleSpecialInstrNoteText}>
+                          {resolvedSpecialInstruction.text}
+                        </Text>
+                      </View>
+                    )}
+                  </Animated.View>
+                )}
+              </View>
+            )}
+
             <View style={styles.divider} />
 
             <View style={styles.priceRow}>
@@ -824,6 +1275,30 @@ export default function CheckOutScreen() {
                   {menuName}
                 </Text>
                 <Text style={styles.modernChefSubtitle}>Chef: {chefName}</Text>
+
+                {/* ✅ NEW: Simple delivery option line below chef name with emoji + info icon */}
+                {!!resolvedDeliveryOption && (
+                  <View style={styles.deliveryOptionRowInline}>
+                    <Text style={styles.deliveryOptionEmojiInline}>
+                      {deliveryInfo?.emoji || "📦"}
+                    </Text>
+                    <Text style={styles.deliveryOptionTextInline}>
+                      {resolvedDeliveryOption}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={showDeliveryInfo}
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      style={styles.deliveryInfoBtnInline}
+                    >
+                      <Ionicons
+                        name="information-circle-outline"
+                        size={15}
+                        color="#0F382A"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             </View>
 
@@ -877,6 +1352,86 @@ export default function CheckOutScreen() {
                     </View>
                   ))}
                 </View>
+              </View>
+            )}
+
+            {/* ✅ NEW: Simple Special Instructions row for mealbox flow */}
+            {resolvedSpecialInstruction.hasAny && (
+              <View style={styles.simpleSpecialInstrWrapper}>
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={toggleSpecialInstructions}
+                  style={styles.simpleSpecialInstrTrigger}
+                >
+                  <Ionicons
+                    name="restaurant-outline"
+                    size={14}
+                    color="#0F382A"
+                  />
+                  <Text style={styles.simpleSpecialInstrTriggerText}>
+                    Special Instructions
+                  </Text>
+                  <Animated.View
+                    style={{
+                      transform: [
+                        { rotate: specialInstructionsChevronRotate },
+                      ],
+                      marginLeft: 4,
+                    }}
+                  >
+                    <Ionicons
+                      name="chevron-down"
+                      size={14}
+                      color="#0F382A"
+                    />
+                  </Animated.View>
+                </TouchableOpacity>
+
+                {specialInstructionsExpanded && (
+                  <Animated.View
+                    style={[
+                      styles.simpleSpecialInstrBody,
+                      {
+                        maxHeight: specialInstructionsContentHeight,
+                        opacity: specialInstructionsContentOpacity,
+                        overflow: "hidden",
+                      },
+                    ]}
+                  >
+                    {!!resolvedSpecialInstruction.label && (
+                      <View style={styles.simpleSpecialInstrRow}>
+                        <Text style={styles.simpleSpecialInstrEmoji}>
+                          {resolvedSpecialInstruction.spiceEmoji}
+                        </Text>
+                        <Text style={styles.simpleSpecialInstrRowText}>
+                          {resolvedSpecialInstruction.label}
+                        </Text>
+                      </View>
+                    )}
+
+                    {resolvedSpecialInstruction.noOnion &&
+                      !String(resolvedSpecialInstruction.label || "")
+                        .toLowerCase()
+                        .includes("no onion") && (
+                        <View style={styles.simpleSpecialInstrRow}>
+                          <Text style={styles.simpleSpecialInstrEmoji}>
+                            🚫🧄
+                          </Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>
+                            No onion & garlic
+                          </Text>
+                        </View>
+                      )}
+
+                    {!!resolvedSpecialInstruction.text && (
+                      <View style={styles.simpleSpecialInstrNoteBox}>
+                        <Text style={styles.simpleSpecialInstrNoteText}>
+                          {resolvedSpecialInstruction.text}
+                        </Text>
+                      </View>
+                    )}
+                  </Animated.View>
+                )}
               </View>
             )}
 
@@ -1280,7 +1835,7 @@ export default function CheckOutScreen() {
         visible={showScannerModal}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowScannerModal(false)}
+        onRequestClose={handleRequestCloseScannerModal}
       >
         <View style={styles.modalOverlay}>
           <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFillObject} />
@@ -1293,7 +1848,7 @@ export default function CheckOutScreen() {
             <View style={styles.drawerHandle} />
             <TouchableOpacity 
               style={styles.previewCloseBtn} 
-              onPress={() => setShowScannerModal(false)}
+              onPress={handleRequestCloseScannerModal}
               activeOpacity={0.85}
             >
               <Ionicons name="close" size={20} color="#FAF8F5" />
@@ -1301,10 +1856,6 @@ export default function CheckOutScreen() {
 
             <View style={styles.scannerHeaderRow}>
               <Text style={styles.scannerModalTitle}>Scan & Pay Advance (₹{advanceAmount})</Text>
-              <View style={styles.timerBadgeContainer}>
-                <Ionicons name="time-outline" size={14} color="#D97706" style={{ marginRight: 4 }} />
-                <Text style={styles.timerBadgeText}>{formatTimer(timeLeft)}</Text>
-              </View>
             </View>
             <Text style={styles.scannerModalSubtitle}>Choose how you want to submit your payment proof</Text>
 
@@ -1340,30 +1891,65 @@ export default function CheckOutScreen() {
                 />
               </View>
 
+              {/* ✅ Simple, real-timer pill below the image card */}
+              <View style={styles.realTimerPill}>
+                <Ionicons name="time-outline" size={14} color="#166534" />
+                <Text style={styles.realTimerText}>{formatTimer(timeLeft)}</Text>
+                <Text style={styles.realTimerLabel}>left</Text>
+              </View>
+
               {verificationMode === "utr" ? (
                 <>
                   <View style={styles.scannerUtrNoticeBox}>
                     <Ionicons name="information-circle-outline" size={16} color="#166538" style={{ marginRight: 6 }} />
                     <Text style={styles.scannerUtrNoticeText}>
-                      After paying via your UPI app, enter your 12-digit UTR reference number below for verification.
+                      After paying via your UPI app, enter the 12-digit UTR / UPI reference number below for verification.
                     </Text>
                   </View>
 
                   <View style={styles.addressInputGroup}>
-                    <Text style={styles.addressInputLabel}>UTR / Transaction Reference No.</Text>
+                    <View style={styles.utrLabelRow}>
+                      <Text style={styles.addressInputLabel}>UTR / Transaction Reference No.</Text>
+                      <Text style={styles.utrCounterText}>
+                        {utrNumber.length}/12
+                      </Text>
+                    </View>
                     <TextInput
-                      style={styles.addressTextInput}
+                      style={[
+                        styles.addressTextInput,
+                        utrNumber.length === UTR_MAX_DIGITS && styles.utrInputComplete,
+                      ]}
                       placeholder="e.g. 435261789012"
                       placeholderTextColor="#9EA8A3"
                       value={utrNumber}
-                      onChangeText={setUtrNumber}
+                      onChangeText={(text) => {
+                        // ✅ Strict: strip non-digits AND hard cap at 12 digits
+                        const sanitized = sanitizeUtrInput(text);
+                        setUtrNumber(sanitized);
+                      }}
                       keyboardType="numeric"
+                      maxLength={UTR_MAX_DIGITS}
+                      returnKeyType="done"
                     />
+                    {utrNumber.length > 0 && utrNumber.length < UTR_MAX_DIGITS && (
+                      <Text style={styles.utrHelperText}>
+                        Enter the remaining {UTR_MAX_DIGITS - utrNumber.length} digit{UTR_MAX_DIGITS - utrNumber.length === 1 ? "" : "s"}.
+                      </Text>
+                    )}
+                    {utrNumber.length === UTR_MAX_DIGITS && (
+                      <Text style={styles.utrSuccessText}>
+                        ✓ Valid 12-digit UTR format
+                      </Text>
+                    )}
                   </View>
 
                   <TouchableOpacity
-                    style={styles.addAddressSolidCTA}
+                    style={[
+                      styles.addAddressSolidCTA,
+                      utrNumber.length !== UTR_MAX_DIGITS && { opacity: 0.55 },
+                    ]}
                     activeOpacity={0.88}
+                    disabled={utrNumber.length !== UTR_MAX_DIGITS}
                     onPress={() => submitAdvanceProofAndPlaceOrder("utr", utrNumber)}
                   >
                     <Text style={styles.addAddressSolidCTAText}>Submit UTR & Place Order</Text>
@@ -1495,6 +2081,92 @@ export default function CheckOutScreen() {
             </ScrollView>
           </KeyboardAvoidingView>
         </View>
+      </Modal>
+
+      {/* ✅ NEW: Delivery option info flag popup */}
+      <Modal
+        visible={deliveryInfoVisible}
+        transparent
+        animationType="none"
+        onRequestClose={hideDeliveryInfo}
+      >
+        <Animated.View style={[styles.modalOverlay, { opacity: deliveryInfoAnim }]}>
+          <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFillObject} />
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={hideDeliveryInfo}
+          />
+          {deliveryInfo && (
+            <Animated.View
+              style={[
+                styles.deliveryInfoPopupCard,
+                {
+                  transform: [
+                    {
+                      scale: deliveryInfoAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.88, 1],
+                      }),
+                    },
+                    {
+                      translateY: deliveryInfoAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [14, 0],
+                      }),
+                    },
+                  ],
+                  opacity: deliveryInfoAnim,
+                },
+              ]}
+            >
+              <View style={styles.deliveryInfoFlagRow}>
+                <View style={styles.deliveryInfoFlagBadge}>
+                  <Text style={styles.deliveryInfoFlagEmoji}>
+                    {deliveryInfo.emoji}
+                  </Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.deliveryInfoTitle}>
+                    {deliveryInfo.title}
+                  </Text>
+                  <Text style={styles.deliveryInfoSubtitle}>
+                    Delivery option chosen for this order
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.deliveryInfoDescription}>
+                {deliveryInfo.description}
+              </Text>
+
+              <View style={styles.deliveryInfoIncludesBox}>
+                <Text style={styles.deliveryInfoIncludesTitle}>
+                  What's included
+                </Text>
+                {deliveryInfo.includes.map((line, idx) => (
+                  <View key={`delivery-inc-${idx}`} style={styles.deliveryInfoIncludeRow}>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={13}
+                      color="#166534"
+                      style={{ marginTop: 1 }}
+                    />
+                    <Text style={styles.deliveryInfoIncludeText}>{line}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={styles.deliveryInfoCta}
+                activeOpacity={0.88}
+                onPress={hideDeliveryInfo}
+              >
+                <Text style={styles.deliveryInfoCtaText}>Got it</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+        </Animated.View>
       </Modal>
 
       {/* Dynamic Selections Preview Modal */}
@@ -1887,6 +2559,83 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F382A',
   },
+
+  // ✅ Simple delivery option line under chef name (emoji + text + info icon)
+  deliveryOptionRowInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 5,
+    alignSelf: "flex-start",
+    gap: 4,
+  },
+  deliveryOptionEmojiInline: {
+    fontSize: 13,
+    marginRight: 1,
+  },
+  deliveryOptionTextInline: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0F382A",
+    letterSpacing: 0.1,
+  },
+  deliveryInfoBtnInline: {
+    marginLeft: 2,
+    padding: 1,
+  },
+
+  // ✅ Simple Special Instructions row — icon + underlined text + chevron on the left
+  simpleSpecialInstrWrapper: {
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  simpleSpecialInstrTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+    gap: 5,
+  },
+  simpleSpecialInstrTriggerText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#0F382A",
+    textDecorationLine: "underline",
+    letterSpacing: 0.1,
+  },
+  simpleSpecialInstrBody: {
+    marginTop: 8,
+    paddingLeft: 2,
+  },
+  simpleSpecialInstrRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  simpleSpecialInstrEmoji: {
+    fontSize: 15,
+    marginRight: 8,
+  },
+  simpleSpecialInstrRowText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0B261D",
+  },
+  simpleSpecialInstrNoteBox: {
+    backgroundColor: "#FAF8F5",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.06)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 2,
+  },
+  simpleSpecialInstrNoteText: {
+    fontSize: 12.5,
+    fontWeight: "500",
+    color: "#4F6B61",
+    lineHeight: 18,
+  },
+
   groupedMetaSectionContainer: {
     backgroundColor: '#FAF8F5',
     borderRadius: 18,
@@ -2478,6 +3227,36 @@ const styles = StyleSheet.create({
     color: "#0B261D",
     letterSpacing: -0.3,
   },
+
+  // ✅ Simple, real-timer pill below the image card
+  realTimerPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(22, 101, 52, 0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(22, 101, 52, 0.15)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginTop: -4,
+    marginBottom: 16,
+    alignSelf: "center",
+  },
+  realTimerText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#166534",
+    marginLeft: 6,
+    fontVariant: ["tabular-nums"],
+    letterSpacing: 0.5,
+  },
+  realTimerLabel: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#5B756C",
+    marginLeft: 5,
+  },
   timerBadgeContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -2535,7 +3314,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(15, 56, 42, 0.15)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 14,
+    marginBottom: 8,
     padding: 12,
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: 6 },
@@ -2587,6 +3366,41 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     width: "100%",
   },
+
+  // ✅ UTR strict 12-digit helpers
+  utrLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  utrCounterText: {
+    fontSize: 11.5,
+    fontWeight: "800",
+    color: "#166534",
+    fontVariant: ["tabular-nums"],
+    letterSpacing: 0.4,
+  },
+  utrInputComplete: {
+    borderColor: "#166538",
+    borderWidth: 1.5,
+    backgroundColor: "#F2FBF4",
+  },
+  utrHelperText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#D97706",
+    marginTop: 6,
+    paddingLeft: 2,
+  },
+  utrSuccessText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#166534",
+    marginTop: 6,
+    paddingLeft: 2,
+  },
+
   addAddressSolidCTA: {
     backgroundColor: "#166538",
     flexDirection: "row",
@@ -3050,6 +3864,113 @@ const styles = StyleSheet.create({
   confirmOkBtnText: {
     color: "#FAF8F5",
     fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+
+  // ✅ Delivery info flag popup styles (emoji on neutral bg, no green chip)
+  deliveryInfoPopupCard: {
+    position: "absolute",
+    alignSelf: "center",
+    top: "26%",
+    left: 20,
+    right: 20,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 18,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.10)",
+    shadowColor: "#0F382A",
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.26,
+    shadowRadius: 20,
+    elevation: 28,
+  },
+  deliveryInfoFlagRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  deliveryInfoFlagBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: "rgba(15, 56, 42, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  deliveryInfoFlagEmoji: {
+    fontSize: 22,
+  },
+  deliveryInfoTitle: {
+    fontSize: 16.5,
+    fontWeight: "900",
+    color: "#0B261D",
+    letterSpacing: -0.2,
+  },
+  deliveryInfoSubtitle: {
+    fontSize: 11.5,
+    fontWeight: "600",
+    color: "#5B756C",
+    marginTop: 2,
+  },
+  deliveryInfoDescription: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#0B261D",
+    lineHeight: 19,
+    marginBottom: 14,
+  },
+  deliveryInfoIncludesBox: {
+    backgroundColor: "#F8FAF5",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.08)",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  deliveryInfoIncludesTitle: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#0F382A",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  deliveryInfoIncludeRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: 6,
+  },
+  deliveryInfoIncludeText: {
+    fontSize: 12.5,
+    fontWeight: "600",
+    color: "#0B261D",
+    marginLeft: 6,
+    flex: 1,
+    lineHeight: 17,
+  },
+  deliveryInfoCta: {
+    width: "100%",
+    backgroundColor: "#166534",
+    paddingVertical: 13,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#166534",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  deliveryInfoCtaText: {
+    color: "#FAF8F5",
+    fontSize: 14.5,
     fontWeight: "800",
     letterSpacing: 0.2,
   },

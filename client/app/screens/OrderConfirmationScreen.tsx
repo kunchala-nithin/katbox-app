@@ -79,6 +79,56 @@ const formatDateShortLocal = (d: Date | null): string => {
   }
 };
 
+// ✅ NEW: Resolve spice emoji from label
+const resolveSpiceEmoji = (labelStr: string): string => {
+  const l = String(labelStr || "").toLowerCase();
+  if (l.includes("less")) return "❄️";
+  if (l.includes("medium")) return "🌶️";
+  if (l.includes("very")) return "🔥";
+  if (l.includes("no onion")) return "🚫🧄";
+  return "🍽️";
+};
+
+// ✅ NEW: Delivery option info with emojis (mirrors CheckOutScreen)
+const DELIVERY_OPTION_INFO: Record<
+  string,
+  { emoji: string; title: string; description: string; includes: string[] }
+> = {
+  Standard: {
+    emoji: "📦",
+    title: "Standard Delivery",
+    description:
+      "Order delivered to your building gate or apartment entrance.",
+    includes: [
+      "Delivery to building gate / entrance",
+      "Best for apartments & gated communities",
+      "No floor delivery included",
+    ],
+  },
+  Doorstep: {
+    emoji: "🚪",
+    title: "Doorstep Delivery",
+    description:
+      "Delivered to your doorstep, any floor, no extra hassle.",
+    includes: [
+      "Delivery right to your door",
+      "Any floor covered",
+      "No setup or serving included",
+    ],
+  },
+  "Doorstep + Service": {
+    emoji: "🛎️",
+    title: "Doorstep + Service",
+    description:
+      "End to end support: our staff will deliver, take care of setup, and serve for 3 hours.",
+    includes: [
+      "Doorstep delivery on any floor",
+      "Full setup by our staff",
+      "Serving support for 3 hours",
+    ],
+  },
+};
+
 // Heavy Ribbon & Confetti Particle Definitions (Matching luxury palette accents)
 const PREMIUM_COLORS = [
   "#0F382A",
@@ -295,6 +345,77 @@ export default function OrderConfirmationScreen() {
   }, [dbOrder, params.addons]);
 
   const isMealBoxFlow = serviceType === "mealbox" || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
+
+  // ✅ NEW: Resolve special instruction from the persisted order
+  const resolvedSpecialInstruction = useMemo(() => {
+    // Try to get from dbOrder first
+    const nested = dbOrder?.specialInstruction;
+    const nestedLabel = nested?.label || dbOrder?.specialInstructionLabel || "";
+    const nestedTag = nested?.tag || dbOrder?.specialInstructionTag || "";
+    const nestedText = nested?.text || dbOrder?.specialInstructionText || "";
+
+    const label = String(nestedLabel || "").trim();
+    const tag = String(nestedTag || "").trim();
+    const text = String(nestedText || "").trim();
+
+    const spiceEmoji = label ? resolveSpiceEmoji(label) : "";
+    const hasAny = !!(label || text || tag);
+
+    return {
+      tag,
+      label,
+      spiceEmoji,
+      text,
+      hasAny,
+    };
+  }, [dbOrder]);
+
+  // ✅ NEW: Resolve delivery type from the persisted order
+  const resolvedDeliveryType = useMemo(() => {
+    return String(dbOrder?.deliveryType || (params.deliveryType as string) || "").trim();
+  }, [dbOrder, params.deliveryType]);
+
+  // ✅ NEW: Get delivery info based on resolved delivery type
+  const deliveryInfo = resolvedDeliveryType
+    ? DELIVERY_OPTION_INFO[resolvedDeliveryType] || null
+    : null;
+
+  // ✅ NEW: Special instructions collapsible state for confirmation screen
+  const [specialInstructionsExpanded, setSpecialInstructionsExpanded] = useState(false);
+  const specialInstructionsAnim = useRef(new Animated.Value(0)).current;
+
+  // ✅ NEW: Toggle special instructions collapsible
+  const toggleSpecialInstructions = () => {
+    if (specialInstructionsExpanded) {
+      Animated.timing(specialInstructionsAnim, {
+        toValue: 0,
+        duration: 240,
+        useNativeDriver: false,
+      }).start(() => setSpecialInstructionsExpanded(false));
+    } else {
+      setSpecialInstructionsExpanded(true);
+      Animated.timing(specialInstructionsAnim, {
+        toValue: 1,
+        duration: 280,
+        useNativeDriver: false,
+      }).start();
+    }
+  };
+
+  const specialInstructionsChevronRotate = specialInstructionsAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "180deg"],
+  });
+
+  const specialInstructionsContentHeight = specialInstructionsAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 200],
+  });
+
+  const specialInstructionsContentOpacity = specialInstructionsAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0, 0.5, 1],
+  });
 
   // Selected Preview Modal State
   const [showPreviewModal, setShowPreviewModal] = useState(false);
@@ -647,6 +768,82 @@ export default function OrderConfirmationScreen() {
                 </View>
               ) : null}
 
+              {/* ✅ NEW: Delivery Type Display for Homemade Flow */}
+              {!!resolvedDeliveryType && deliveryInfo && (
+                <View style={styles.deliveryOptionRowInline}>
+                  <Text style={styles.deliveryOptionEmojiInline}>
+                    {deliveryInfo.emoji}
+                  </Text>
+                  <Text style={styles.deliveryOptionTextInline}>
+                    {resolvedDeliveryType}
+                  </Text>
+                </View>
+              )}
+
+              {/* ✅ NEW: Special Instructions Display for Homemade Flow */}
+              {resolvedSpecialInstruction.hasAny && (
+                <View style={styles.simpleSpecialInstrWrapper}>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={toggleSpecialInstructions}
+                    style={styles.simpleSpecialInstrTrigger}
+                  >
+                    <Ionicons
+                      name="restaurant-outline"
+                      size={14}
+                      color="#0F382A"
+                    />
+                    <Text style={styles.simpleSpecialInstrTriggerText}>
+                      Special Instructions
+                    </Text>
+                    <Animated.View
+                      style={{
+                        transform: [{ rotate: specialInstructionsChevronRotate }],
+                        marginLeft: 4,
+                      }}
+                    >
+                      <Ionicons
+                        name="chevron-down"
+                        size={14}
+                        color="#0F382A"
+                      />
+                    </Animated.View>
+                  </TouchableOpacity>
+
+                  {specialInstructionsExpanded && (
+                    <Animated.View
+                      style={[
+                        styles.simpleSpecialInstrBody,
+                        {
+                          maxHeight: specialInstructionsContentHeight,
+                          opacity: specialInstructionsContentOpacity,
+                          overflow: "hidden",
+                        },
+                      ]}
+                    >
+                      {!!resolvedSpecialInstruction.label && (
+                        <View style={styles.simpleSpecialInstrRow}>
+                          <Text style={styles.simpleSpecialInstrEmoji}>
+                            {resolvedSpecialInstruction.spiceEmoji}
+                          </Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>
+                            {resolvedSpecialInstruction.label}
+                          </Text>
+                        </View>
+                      )}
+
+                      {!!resolvedSpecialInstruction.text && (
+                        <View style={styles.simpleSpecialInstrNoteBox}>
+                          <Text style={styles.simpleSpecialInstrNoteText}>
+                            {resolvedSpecialInstruction.text}
+                          </Text>
+                        </View>
+                      )}
+                    </Animated.View>
+                  )}
+                </View>
+              )}
+
               <View style={styles.homemadeDishesContainer}>
                 {parsedItems.map((dishItem: any, idx: number) => {
                   const isLastDish = idx === parsedItems.length - 1;
@@ -772,6 +969,82 @@ export default function OrderConfirmationScreen() {
                 </View>
               </View>
 
+              {/* ✅ NEW: Delivery Type Display for Catering Flow */}
+              {!!resolvedDeliveryType && deliveryInfo && (
+                <View style={styles.deliveryOptionRowInline}>
+                  <Text style={styles.deliveryOptionEmojiInline}>
+                    {deliveryInfo.emoji}
+                  </Text>
+                  <Text style={styles.deliveryOptionTextInline}>
+                    {resolvedDeliveryType}
+                  </Text>
+                </View>
+              )}
+
+              {/* ✅ NEW: Special Instructions Display for Catering Flow */}
+              {resolvedSpecialInstruction.hasAny && (
+                <View style={styles.simpleSpecialInstrWrapper}>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={toggleSpecialInstructions}
+                    style={styles.simpleSpecialInstrTrigger}
+                  >
+                    <Ionicons
+                      name="restaurant-outline"
+                      size={14}
+                      color="#0F382A"
+                    />
+                    <Text style={styles.simpleSpecialInstrTriggerText}>
+                      Special Instructions
+                    </Text>
+                    <Animated.View
+                      style={{
+                        transform: [{ rotate: specialInstructionsChevronRotate }],
+                        marginLeft: 4,
+                      }}
+                    >
+                      <Ionicons
+                        name="chevron-down"
+                        size={14}
+                        color="#0F382A"
+                      />
+                    </Animated.View>
+                  </TouchableOpacity>
+
+                  {specialInstructionsExpanded && (
+                    <Animated.View
+                      style={[
+                        styles.simpleSpecialInstrBody,
+                        {
+                          maxHeight: specialInstructionsContentHeight,
+                          opacity: specialInstructionsContentOpacity,
+                          overflow: "hidden",
+                        },
+                      ]}
+                    >
+                      {!!resolvedSpecialInstruction.label && (
+                        <View style={styles.simpleSpecialInstrRow}>
+                          <Text style={styles.simpleSpecialInstrEmoji}>
+                            {resolvedSpecialInstruction.spiceEmoji}
+                          </Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>
+                            {resolvedSpecialInstruction.label}
+                          </Text>
+                        </View>
+                      )}
+
+                      {!!resolvedSpecialInstruction.text && (
+                        <View style={styles.simpleSpecialInstrNoteBox}>
+                          <Text style={styles.simpleSpecialInstrNoteText}>
+                            {resolvedSpecialInstruction.text}
+                          </Text>
+                        </View>
+                      )}
+                    </Animated.View>
+                  )}
+                </View>
+              )}
+
               {(parsedSelections || parsedItems.length > 0 || parsedAddons.length > 0) && (
                 <TouchableOpacity
                   style={styles.cateringViewMenuCTA}
@@ -847,6 +1120,82 @@ export default function OrderConfirmationScreen() {
                 </View>
                 <Text style={styles.summaryPriceText}>₹{totalAmount}</Text>
               </View>
+
+              {/* ✅ NEW: Delivery Type Display for MealBox Flow */}
+              {!!resolvedDeliveryType && deliveryInfo && (
+                <View style={styles.deliveryOptionRowInline}>
+                  <Text style={styles.deliveryOptionEmojiInline}>
+                    {deliveryInfo.emoji}
+                  </Text>
+                  <Text style={styles.deliveryOptionTextInline}>
+                    {resolvedDeliveryType}
+                  </Text>
+                </View>
+              )}
+
+              {/* ✅ NEW: Special Instructions Display for MealBox Flow */}
+              {resolvedSpecialInstruction.hasAny && (
+                <View style={styles.simpleSpecialInstrWrapper}>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={toggleSpecialInstructions}
+                    style={styles.simpleSpecialInstrTrigger}
+                  >
+                    <Ionicons
+                      name="restaurant-outline"
+                      size={14}
+                      color="#0F382A"
+                    />
+                    <Text style={styles.simpleSpecialInstrTriggerText}>
+                      Special Instructions
+                    </Text>
+                    <Animated.View
+                      style={{
+                        transform: [{ rotate: specialInstructionsChevronRotate }],
+                        marginLeft: 4,
+                      }}
+                    >
+                      <Ionicons
+                        name="chevron-down"
+                        size={14}
+                        color="#0F382A"
+                      />
+                    </Animated.View>
+                  </TouchableOpacity>
+
+                  {specialInstructionsExpanded && (
+                    <Animated.View
+                      style={[
+                        styles.simpleSpecialInstrBody,
+                        {
+                          maxHeight: specialInstructionsContentHeight,
+                          opacity: specialInstructionsContentOpacity,
+                          overflow: "hidden",
+                        },
+                      ]}
+                    >
+                      {!!resolvedSpecialInstruction.label && (
+                        <View style={styles.simpleSpecialInstrRow}>
+                          <Text style={styles.simpleSpecialInstrEmoji}>
+                            {resolvedSpecialInstruction.spiceEmoji}
+                          </Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>
+                            {resolvedSpecialInstruction.label}
+                          </Text>
+                        </View>
+                      )}
+
+                      {!!resolvedSpecialInstruction.text && (
+                        <View style={styles.simpleSpecialInstrNoteBox}>
+                          <Text style={styles.simpleSpecialInstrNoteText}>
+                            {resolvedSpecialInstruction.text}
+                          </Text>
+                        </View>
+                      )}
+                    </Animated.View>
+                  )}
+                </View>
+              )}
 
               {(parsedSelections || parsedItems.length > 0) && (
                 <TouchableOpacity
@@ -1409,9 +1758,9 @@ const styles = StyleSheet.create({
     color: "#FAF8F5",
     letterSpacing: -0.4,
     marginBottom: 6,
-    textAlign: "center",   // ✅ ensures the title text is centered
-    width: "100%",         // ✅ takes full width of parent so centering is visible
-    alignSelf: "center",   // ✅ safety net for cross-axis alignment
+    textAlign: "center",
+    width: "100%",
+    alignSelf: "center",
   },
   orderConfirmedSubtitle: {
     fontSize: 13,
@@ -1645,6 +1994,80 @@ const styles = StyleSheet.create({
     height: 32,
     backgroundColor: "rgba(22, 101, 52, 0.15)",
     marginHorizontal: 10,
+  },
+
+  /* ✅ NEW: Delivery option display styles */
+  deliveryOptionRowInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 5,
+    marginBottom: 10,
+    alignSelf: "flex-start",
+    gap: 4,
+    paddingHorizontal: 2,
+  },
+  deliveryOptionEmojiInline: {
+    fontSize: 14,
+    marginRight: 2,
+  },
+  deliveryOptionTextInline: {
+    fontSize: 12.5,
+    fontWeight: "700",
+    color: "#0F382A",
+    letterSpacing: 0.1,
+  },
+
+  /* ✅ NEW: Special Instructions styles */
+  simpleSpecialInstrWrapper: {
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  simpleSpecialInstrTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+    gap: 5,
+  },
+  simpleSpecialInstrTriggerText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#0F382A",
+    textDecorationLine: "underline",
+    letterSpacing: 0.1,
+  },
+  simpleSpecialInstrBody: {
+    marginTop: 8,
+    paddingLeft: 2,
+  },
+  simpleSpecialInstrRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  simpleSpecialInstrEmoji: {
+    fontSize: 15,
+    marginRight: 8,
+  },
+  simpleSpecialInstrRowText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0B261D",
+  },
+  simpleSpecialInstrNoteBox: {
+    backgroundColor: "#FAF8F5",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.06)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 2,
+  },
+  simpleSpecialInstrNoteText: {
+    fontSize: 12.5,
+    fontWeight: "500",
+    color: "#4F6B61",
+    lineHeight: 18,
   },
 
   /* Premium Clean User-Friendly Dishes Container */

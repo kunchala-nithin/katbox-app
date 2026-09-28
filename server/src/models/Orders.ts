@@ -26,6 +26,13 @@ export interface IOrderFeedback {
   submittedAt?: Date;
 }
 
+// ✅ NEW: Persisted special-instruction block (mirrors what the review screen builds)
+export interface ISpecialInstruction {
+  tag?: string;
+  label?: string;
+  text?: string;
+}
+
 // Base Interface for Shared Order Properties
 export interface IBaseOrder extends Document {
   orderId: string;
@@ -64,11 +71,11 @@ export interface IBaseOrder extends Document {
   actualDeliveredAt?: Date;
   deliveredOnTime?: boolean;
   gracePeriodMinutes?: number;
-  // ✅ NEW: absolute timestamps computed at order placement time
+  // ✅ absolute timestamps computed at order placement time
   orderPlacedAt?: Date;
   estimatedDeliveryAt?: Date;
   deliveryWindowMinutes?: number;
-  // ✅ NEW: Geo coordinates for accurate map pinning
+  // ✅ Geo coordinates for accurate map pinning
   latitude?: number;
   longitude?: number;
   razorpayOrderId?: string;
@@ -76,6 +83,16 @@ export interface IBaseOrder extends Document {
   razorpaySignature?: string;
   paymentCaptured?: boolean;
   paidAt?: Date;
+
+  // ✅ NEW: Special instructions block (persisted for all flows)
+  specialInstruction?: ISpecialInstruction;
+  specialInstructionTag?: string;
+  specialInstructionLabel?: string;
+  specialInstructionText?: string;
+
+  // ✅ NEW: Delivery service type string (Standard / Doorstep / Doorstep + Service)
+  deliveryType?: string;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -101,7 +118,7 @@ export interface IHomemadeOrder extends IBaseOrder {
   // ✅ New top-level delivery slot label for homemade orders (e.g. "9:00 AM - 11:00 AM")
   deliverySlot?: string;
   deliveryDate?: string;
-  // ✅ NEW: QuickBites flag (persisted for downstream screens to render "arriving by X")
+  // ✅ QuickBites flag (persisted for downstream screens to render "arriving by X")
   isQuickBites?: boolean;
 }
 
@@ -175,6 +192,17 @@ const FeedbackSchema = new Schema(
   { _id: false }
 );
 
+// ✅ NEW: Special instruction sub-schema (used to persist the exact
+// tag/label/text built by the catering review screen)
+const SpecialInstructionSchema = new Schema(
+  {
+    tag: { type: String, default: "" },
+    label: { type: String, default: "" },
+    text: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
 // Base Schema
 const BaseOrderSchema: Schema = new Schema(
   {
@@ -222,11 +250,11 @@ const BaseOrderSchema: Schema = new Schema(
     actualDeliveredAt: { type: Date },
     deliveredOnTime: { type: Boolean, default: true },
     gracePeriodMinutes: { type: Number, default: 0 },
-    // ✅ NEW: absolute timestamps computed at order placement time
+    // ✅ absolute timestamps computed at order placement time
     orderPlacedAt: { type: Date },
     estimatedDeliveryAt: { type: Date },
     deliveryWindowMinutes: { type: Number, default: 0 },
-    // ✅ NEW: Geo coordinates for accurate map pinning
+    // ✅ Geo coordinates for accurate map pinning
     latitude: { type: Number },
     longitude: { type: Number },
     razorpayOrderId: { type: String, default: "" },
@@ -234,6 +262,18 @@ const BaseOrderSchema: Schema = new Schema(
     razorpaySignature: { type: String, default: "" },
     paymentCaptured: { type: Boolean, default: false },
     paidAt: { type: Date },
+
+    // ✅ NEW: Special instruction persistence (all flows)
+    specialInstruction: { type: SpecialInstructionSchema, default: { tag: "", label: "", text: "" } },
+    specialInstructionTag: { type: String, default: "" },
+    specialInstructionLabel: { type: String, default: "" },
+    specialInstructionText: { type: String, default: "" },
+
+    // ✅ NEW: Delivery service type (Standard / Doorstep / Doorstep + Service)
+    // ✅ IMPORTANT: This field MUST ONLY be declared here on the base schema.
+    //    Declaring it again on child discriminator schemas causes Mongoose
+    //    to throw a "Cannot use duplicate schema path" error at save() time.
+    deliveryType: { type: String, default: "" },
   },
   {
     discriminatorKey: "serviceType",
@@ -258,6 +298,8 @@ const HomemadeItemSubSchema = new Schema(
   { _id: false }
 );
 
+// ✅ IMPORTANT: Do NOT redeclare `deliveryType` here — it's already on the
+//    BaseOrderSchema. Redeclaring causes Mongoose discriminator conflicts.
 const HomemadeOrderSchema = new Schema({
   items: { type: [HomemadeItemSubSchema], required: true, default: [] },
   deliveryAddress: { type: String, required: true, default: "" },
@@ -265,11 +307,13 @@ const HomemadeOrderSchema = new Schema({
   // ✅ Human-readable delivery slot label selected by user on the review screen
   deliverySlot: { type: String, default: "" },
   deliveryDate: { type: String, default: "Today" },
-  // ✅ NEW: Persist the QuickBites flag so downstream UIs can render the live "arriving by X" banner
+  // ✅ Persist the QuickBites flag so downstream UIs can render the live "arriving by X" banner
   isQuickBites: { type: Boolean, default: false },
 });
 
 // 4. MEALBOX & CATERING SCHEMA
+// ✅ IMPORTANT: Do NOT redeclare `deliveryType` or `specialInstruction*` here.
+//    They already live on the BaseOrderSchema. Redeclaring causes save() errors.
 const MealBoxOrCateringSchema = new Schema({
   menuName: { type: String, default: "Meal Plan" },
   menuImage: { type: String, default: "" },
@@ -287,7 +331,6 @@ const MealBoxOrCateringSchema = new Schema({
   guests: { type: Number, default: 0 },
   eventDate: { type: String, default: "" },
   eventTime: { type: String, default: "" },
-  deliveryType: { type: String, default: "Standard" },
   pricePerPlate: { type: Number, default: 0 },
   addons: { type: [Schema.Types.Mixed], default: [] },
 });
@@ -298,7 +341,7 @@ export const HomemadeOrderModel =
     ? (Order.discriminators["homemade"] as Model<IHomemadeOrder>)
     : Order.discriminator<IHomemadeOrder>("homemade", HomemadeOrderSchema);
 
-// ✅ NEW: QuickBites is a dedicated discriminator reusing the homemade schema,
+// ✅ QuickBites is a dedicated discriminator reusing the homemade schema,
 // so quickbites orders are stored with serviceType = "quickbites" on the
 // SAME collection, keeping the data model unified.
 export const QuickBitesOrderModel =

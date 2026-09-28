@@ -81,6 +81,12 @@ export default function CateringMenuItemScreen() {
   const [editingAddonId, setEditingAddonId] = useState<string | null>(null);
   const [showSkeleton, setShowSkeleton] = useState(false);
 
+  // ✅ NEW: Track which items were added as "extra" (paid beyond the base max).
+  //    These items will render an "Undo" button instead of the radio circle,
+  //    and display a small "Extra Item" label at the top-right of the card.
+  //    Key format: `${catIndex}_${itemId}`
+  const [extraAddedItems, setExtraAddedItems] = useState<Set<string>>(new Set());
+
   // ─── Read incoming address params (forwarded from CateringMealPlans) ───
   // These are the final hops toward CateringOrderReview.
   const incomingActiveAddressParam =
@@ -131,7 +137,7 @@ export default function CateringMenuItemScreen() {
   try {
     if (params.menu) menuParam = JSON.parse(params.menu as string);
     if (params.chef) chef = JSON.parse(params.chef as string);
-  } catch (e) {}
+  } catch (e) { }
 
   const effectiveChefId = (params.chefId as string) || (params.id as string) || chef?.id || chef?.chefId || "";
   const effectiveMenuId = (params.planId as string) || menuParam?._id || menuParam?.id || "";
@@ -151,7 +157,7 @@ export default function CateringMenuItemScreen() {
     if (params.orderDetails) {
       orderDetailsFromParams = JSON.parse(params.orderDetails as string);
     }
-  } catch (e) {}
+  } catch (e) { }
 
   const [fullMenuData, setFullMenuData] = useState<any>(null);
   const [menuLoading, setMenuLoading] = useState(true);
@@ -268,7 +274,7 @@ export default function CateringMenuItemScreen() {
             image: item.image || item.imageUrl || item.coverimage || "",
           }));
         }
-      } catch (_) {}
+      } catch (_) { }
     }
     if (currentContext?.menu) {
       const ctxMenu = currentContext.menu;
@@ -362,6 +368,52 @@ export default function CateringMenuItemScreen() {
     });
   };
 
+  // ✅ NEW: Helper to check if an item was added as an "extra" paid item
+  const isExtraAddedItem = (catIndex: number, itemId: string): boolean => {
+    return extraAddedItems.has(`${catIndex}_${itemId}`);
+  };
+
+  // ✅ NEW: Remove an extra added item (Undo action)
+  const handleUndoExtraItem = (catIndex: number, itemId: string) => {
+    const cat = daawathCategories[catIndex];
+    const items = cat?.items || [];
+    const item = items.find((p: any, i: number) => (p.id || i.toString()) === itemId);
+    const itemExtraPrice = getItemExtraPrice(item);
+
+    // Remove from selections
+    setSelections((prev) => {
+      const curr = prev[catIndex] || new Set<string>();
+      const newSet = new Set(curr);
+      newSet.delete(itemId);
+      return { ...prev, [catIndex]: newSet };
+    });
+
+    // Decrement extra items count for this category
+    setExtraItemsCount((prev) => ({
+      ...prev,
+      [catIndex]: Math.max(0, (prev[catIndex] || 0) - 1),
+    }));
+
+    // Subtract the price
+    setTotalExtraPrice((prev) => Math.max(0, safeParsePrice(prev) - itemExtraPrice));
+
+    // Remove from extraAddedItems set
+    setExtraAddedItems((prev) => {
+      const newSet = new Set(prev);
+      newSet.delete(`${catIndex}_${itemId}`);
+      return newSet;
+    });
+
+    // Reset limit acknowledgment if we're now at or below base max
+    const remainingCount = (selections[catIndex]?.size || 0) - 1;
+    if (remainingCount <= getMaxForCategory(catIndex)) {
+      setLimitAcknowledged((prevAck) => ({
+        ...prevAck,
+        [catIndex]: false,
+      }));
+    }
+  };
+
   // ✅ UPDATED: Accepts an optional `forceAck` flag.
   //    When true, the acknowledgment gate is bypassed so the item is added
   //    immediately (used by the "Continue Adding" button in the limit modal).
@@ -410,6 +462,12 @@ export default function CateringMenuItemScreen() {
           [catIndex]: (prev[catIndex] || 0) + 1,
         }));
         setTotalExtraPrice((prev) => safeParsePrice(prev) + itemExtraPrice);
+        // ✅ Mark this item as an "extra added" item so it shows Undo + "Extra Item" label
+        setExtraAddedItems((prev) => {
+          const newSet = new Set(prev);
+          newSet.add(`${catIndex}_${itemId}`);
+          return newSet;
+        });
       }
     }
 
@@ -427,6 +485,12 @@ export default function CateringMenuItemScreen() {
             [catIndex]: Math.max(0, (prevExtra[catIndex] || 0) - 1),
           }));
           setTotalExtraPrice((prevExtraTotal) => Math.max(0, safeParsePrice(prevExtraTotal) - removedItemPrice));
+          // ✅ Remove from extraAddedItems set when unselected
+          setExtraAddedItems((prevSet) => {
+            const newSet2 = new Set(prevSet);
+            newSet2.delete(`${catIndex}_${itemId}`);
+            return newSet2;
+          });
         }
         if (newSet.size <= baseMax) {
           setLimitAcknowledged((prevAck) => ({
@@ -474,6 +538,24 @@ export default function CateringMenuItemScreen() {
       const difference = validCount - oldVal;
       setTotalExtraPrice((p) => Math.max(0, safeParsePrice(p) + difference * safeItemPrice));
       return { ...prev, [itemId as any]: validCount };
+    });
+  };
+
+  // ✅ NEW: Toggle handler for the simple Add / Remove button on the addon rows.
+  //    First tap → adds the addon price to the base, flips the button to Remove.
+  //    Second tap → subtracts the price, flips the button back to Add.
+  const toggleAddonOnce = (addonId: string, price: number) => {
+    const safeItemPrice = safeParsePrice(price);
+    setExtraItemsCount((prev) => {
+      const currentVal = prev[addonId as any] || 0;
+      const isCurrentlyAdded = currentVal > 0;
+      const newVal = isCurrentlyAdded ? 0 : 1;
+      if (!isCurrentlyAdded) {
+        setTotalExtraPrice((p) => safeParsePrice(p) + safeItemPrice);
+      } else {
+        setTotalExtraPrice((p) => Math.max(0, safeParsePrice(p) - safeItemPrice));
+      }
+      return { ...prev, [addonId as any]: newVal };
     });
   };
 
@@ -539,6 +621,7 @@ export default function CateringMenuItemScreen() {
   const recalculateExtrasFromSelections = (incomingSelections: any[]) => {
     let extraCounts: Record<number, number> = {};
     let totalExtra = 0;
+    const newExtraAddedSet = new Set<string>();
     incomingSelections.forEach((cat: any, index: number) => {
       const baseMaxLocal = getMaxForCategory(index);
       const selectedItems = cat.selected || [];
@@ -547,11 +630,16 @@ export default function CateringMenuItemScreen() {
         extraCounts[index] = extra;
         selectedItems.slice(baseMaxLocal).forEach((item: any) => {
           totalExtra += getItemExtraPrice(item);
+          const itemId = item._id || item.id || "";
+          if (itemId) {
+            newExtraAddedSet.add(`${index}_${itemId}`);
+          }
         });
       }
     });
     setExtraItemsCount(extraCounts);
     setTotalExtraPrice(totalExtra);
+    setExtraAddedItems(newExtraAddedSet);
   };
 
   useEffect(() => {
@@ -629,12 +717,12 @@ export default function CateringMenuItemScreen() {
   const detailedAddons = getAddonSummary();
 
   return (
-    <KeyboardAvoidingView 
+    <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
-      
+
       {/* BACK TO TOP BUTTON */}
       <Animated.View
         style={[
@@ -762,7 +850,7 @@ export default function CateringMenuItemScreen() {
               <Text style={styles.popularText}>POPULAR</Text>
             </View>
           </View>
-          
+
           {displayPlanPrice && (
             <View style={styles.priceRow}>
               <View style={styles.priceMetaLeft}>
@@ -903,6 +991,8 @@ export default function CateringMenuItemScreen() {
                     const itemId = item._id || item.id || index.toString();
                     const isAdded = currentSelections.has(itemId);
                     const isExtraItem = isAdded && extraSelectedIds.has(itemId);
+                    // ✅ NEW: Check if this item was added as an "extra" paid item via "Continue Adding"
+                    const isExtraAdded = isExtraAddedItem(catIndex, itemId);
                     const itemPrice = getItemExtraPrice(item);
                     const itemScale = scaleAnim(itemId);
 
@@ -910,12 +1000,24 @@ export default function CateringMenuItemScreen() {
                       <TouchableOpacity
                         key={itemId}
                         activeOpacity={0.75}
-                        onPress={() => toggleAdded(catIndex, itemId)}
+                        onPress={() => {
+                          // ✅ If it's an extra added item, do NOT toggle on row press.
+                          //    The user must use the Undo button.
+                          if (isExtraAdded) return;
+                          toggleAdded(catIndex, itemId);
+                        }}
                         style={[
                           styles.itemRowWrapper,
                           isAdded && styles.itemRowWrapperActive,
+                          isExtraAdded && styles.itemRowWrapperExtraAdded,
                         ]}
                       >
+                        {/* ✅ NEW: Small "Extra Item" label at the top-right of the card */}
+                        {isExtraAdded && (
+                          <View style={styles.extraItemCornerTag}>
+                            <Text style={styles.extraItemCornerTagText}>Extra Item</Text>
+                          </View>
+                        )}
                         <Image source={{ uri: item.imageUrl || "https://picsum.photos/100" }} style={styles.itemThumbImage} />
                         <View style={styles.itemMetaMiddle}>
                           <Text style={[styles.rowItemNameTitle, isAdded && styles.rowItemNameTitleActive]}>
@@ -926,11 +1028,22 @@ export default function CateringMenuItemScreen() {
                           ) : null}
                         </View>
                         <View style={styles.addButtonWrapper}>
-                          <Animated.View style={{ transform: [{ scale: itemScale }] }}>
-                            <View style={[styles.radioButtonCircle, isAdded && styles.radioButtonCircleSelected]}>
-                              {isAdded && <View style={styles.radioButtonInnerDot} />}
-                            </View>
-                          </Animated.View>
+                          {/* ✅ NEW: If this is an extra added item, show smaller Undo button without icon */}
+                          {isExtraAdded ? (
+                            <TouchableOpacity
+                              activeOpacity={0.8}
+                              onPress={() => handleUndoExtraItem(catIndex, itemId)}
+                              style={styles.undoButtonStyle}
+                            >
+                              <Text style={styles.undoButtonText}>Undo</Text>
+                            </TouchableOpacity>
+                          ) : (
+                            <Animated.View style={{ transform: [{ scale: itemScale }] }}>
+                              <View style={[styles.radioButtonCircle, isAdded && styles.radioButtonCircleSelected]}>
+                                {isAdded && <View style={styles.radioButtonInnerDot} />}
+                              </View>
+                            </Animated.View>
+                          )}
                         </View>
                       </TouchableOpacity>
                     );
@@ -947,69 +1060,76 @@ export default function CateringMenuItemScreen() {
             );
           })}
 
-          {/* DYNAMIC ADD-ONS SECTION */}
-          {(daawathAddons || []).map((addon: any, aIdx: number) => {
-            const addonId = addon._id || addon.id || `addon-${aIdx}`;
-            const addonPrice = safeParsePrice(addon.price);
-            const currentCount = extraItemsCount[addonId as any] || 0;
-            const isEditing = editingAddonId === addonId;
-
-            return (
-              <View key={addonId} style={styles.categoryCardBlock}>
-                <View style={styles.categoryHeaderRow}>
-                  <View style={styles.titleWithBadgeGroup}>
-                    <View style={styles.addonIconCircle}>
-                      <Feather name="plus" size={13} color="#FAF8F5" />
-                    </View>
-                    <View style={styles.labelSubTextContainer}>
-                      <Text style={styles.categoryHeaderTitleText}>{addon.name || "Addon"}</Text>
-                      <Text style={styles.chooseTextLabel}>Optional add-ons for your platter</Text>
-                    </View>
+          {/* ✅ NEW SINGLE ADD-ONS CARD
+              — One heading: "Add-Ons"
+              — Below it, ALL dynamic addons render as rows with simple
+                Add / Remove toggle buttons.
+              — This replaces the previous two-card layout (Vanilla Ice Cream
+                and Water Bottles sections). */}
+          {daawathAddons.length > 0 && (
+            <View style={styles.categoryCardBlock}>
+              <View style={styles.categoryHeaderRow}>
+                <View style={styles.titleWithBadgeGroup}>
+                  <View style={styles.addonIconCircle}>
+                    <Feather name="plus" size={13} color="#FAF8F5" />
                   </View>
-                </View>
-                <View style={styles.itemListGroup}>
-                  <View style={styles.itemRowWrapper}>
-                    <Image source={{ uri: addon.imageUrl || "https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=100" }} style={styles.itemThumbImage} />
-                    <View style={styles.itemMetaMiddle}>
-                      <Text style={styles.rowItemNameTitle}>{addon.name}</Text>
-                      {addonPrice > 0 ? (
-                        <Text style={styles.rowItemPriceText}>+₹{addonPrice} / Plate</Text>
-                      ) : null}
-                    </View>
-                    <View style={styles.counterActionControlBox}>
-                      <TouchableOpacity onPress={() => handleAddonClick(addonId, 'dec', addonPrice)} style={styles.controlBoxBtn}>
-                        <Feather name="minus" size={13} color="#0F382A" />
-                      </TouchableOpacity>
-                      
-                      {isEditing ? (
-                        <TextInput
-                          keyboardType="numeric"
-                          defaultValue={String(currentCount)}
-                          autoFocus
-                          onBlur={() => setEditingAddonId(null)}
-                          onChangeText={(txt) => handleAddonDirectCountChange(addonId, txt, addonPrice)}
-                          style={styles.controlBoxInput}
-                          selectTextOnFocus
-                        />
-                      ) : (
-                        <TouchableOpacity
-                          activeOpacity={0.7}
-                          onPress={() => setEditingAddonId(addonId)}
-                          style={styles.controlBoxValueTouchable}
-                        >
-                          <Text style={styles.controlBoxValueText}>{currentCount}</Text>
-                        </TouchableOpacity>
-                      )}
-
-                      <TouchableOpacity onPress={() => handleAddonClick(addonId, 'inc', addonPrice)} style={styles.controlBoxBtn}>
-                        <Feather name="plus" size={13} color="#0F382A" />
-                      </TouchableOpacity>
-                    </View>
+                  <View style={styles.labelSubTextContainer}>
+                    <Text style={styles.categoryHeaderTitleText}>Add-Ons</Text>
+                    <Text style={styles.chooseTextLabel}>Optional add-ons for your platter</Text>
                   </View>
                 </View>
               </View>
-            );
-          })}
+
+              <View style={styles.itemListGroup}>
+                {daawathAddons.map((addon: any, aIdx: number) => {
+                  const addonId = addon._id || addon.id || `addon-${aIdx}`;
+                  const addonPrice = safeParsePrice(addon.price);
+                  const currentCount = extraItemsCount[addonId as any] || 0;
+                  const isAdded = currentCount > 0;
+
+                  return (
+                    <View key={addonId} style={styles.itemRowWrapper}>
+                      <Image
+                        source={{ uri: addon.imageUrl || "https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=100" }}
+                        style={styles.itemThumbImage}
+                      />
+                      <View style={styles.itemMetaMiddle}>
+                        <Text style={styles.rowItemNameTitle}>{addon.name}</Text>
+                        {addonPrice > 0 ? (
+                          <Text style={styles.rowItemPriceText}>+₹{addonPrice} / Plate</Text>
+                        ) : null}
+                      </View>
+
+                      {/* ✅ Simple Add / Remove toggle button */}
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        onPress={() => toggleAddonOnce(addonId, addonPrice)}
+                        style={[
+                          styles.simpleAddToggleBtn,
+                          isAdded && styles.simpleAddToggleBtnAdded,
+                        ]}
+                      >
+                        <Feather
+                          name={isAdded ? "check" : "plus"}
+                          size={14}
+                          color={isAdded ? "#FAF8F5" : "#166538"}
+                          style={{ marginRight: 4 }}
+                        />
+                        <Text
+                          style={[
+                            styles.simpleAddToggleText,
+                            isAdded && styles.simpleAddToggleTextAdded,
+                          ]}
+                        >
+                          {isAdded ? "Remove" : "Add"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          )}
         </View>
       </ScrollView>
 
@@ -1079,7 +1199,7 @@ export default function CateringMenuItemScreen() {
             <TouchableOpacity style={styles.previewCloseBtn} onPress={() => setShowPreviewModal(false)} activeOpacity={0.85}>
               <Feather name="x" size={20} color="#FAF8F5" />
             </TouchableOpacity>
-            
+
             <View style={styles.previewHeaderCard}>
               <View style={styles.previewHeaderRow}>
                 <Image source={{ uri: previewHeaderImage }} style={styles.previewHeaderImage} />
@@ -1175,9 +1295,9 @@ export default function CateringMenuItemScreen() {
                     </View>
                     {addonSummary.map((addon: any, idx: number) => (
                       <View key={idx} style={styles.previewItemCard}>
-                        <Image 
-                          source={{ uri: addon.imageUrl }} 
-                          style={styles.previewItemImage} 
+                        <Image
+                          source={{ uri: addon.imageUrl }}
+                          style={styles.previewItemImage}
                         />
                         <Text style={styles.previewItemName}>{addon.name} × {addon.count}</Text>
                         <View style={styles.extraTag}>
@@ -1271,7 +1391,7 @@ export default function CateringMenuItemScreen() {
         <View style={styles.bottomPriceDetailsPopover}>
           <View style={styles.popoverHeaderRow}>
             <Text style={styles.popoverTitle}>Price Breakdown</Text>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => setShowFooterPriceDetails(false)}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
@@ -1289,10 +1409,12 @@ export default function CateringMenuItemScreen() {
               <Text style={styles.popoverValue}>₹{platePrice}</Text>
             </View>
 
-            {/* Extra Items Breakdown */}
-            {detailedExtraItems.length > 0 && (
+            {/* ✅ MERGED: Extra course dishes AND addons are now shown together
+                under one section so every paid extra is named in detail. */}
+            {(detailedExtraItems.length > 0 || detailedAddons.length > 0) && (
               <View style={styles.breakdownSectionGroup}>
-                <Text style={styles.breakdownSectionTitle}>Extra Course Dishes</Text>
+                <Text style={styles.breakdownSectionTitle}>Extra Items & Add-Ons</Text>
+
                 {detailedExtraItems.map((item, idx) => (
                   <View key={`extra-breakdown-${idx}`} style={styles.popoverRow}>
                     <View style={styles.popoverLabelCol}>
@@ -1302,18 +1424,16 @@ export default function CateringMenuItemScreen() {
                     <Text style={styles.popoverExtraValue}>+₹{item.price}</Text>
                   </View>
                 ))}
-              </View>
-            )}
 
-            {/* Addons Breakdown */}
-            {detailedAddons.length > 0 && (
-              <View style={styles.breakdownSectionGroup}>
-                <Text style={styles.breakdownSectionTitle}>Optional Add-ons</Text>
                 {detailedAddons.map((addon, aIdx) => (
                   <View key={`addon-breakdown-${aIdx}`} style={styles.popoverRow}>
                     <View style={styles.popoverLabelCol}>
-                      <Text style={styles.popoverItemName}>{addon.name} × {addon.count}</Text>
-                      <Text style={styles.popoverSubDetail}>₹{addon.price} each</Text>
+                      <Text style={styles.popoverItemName}>
+                        {addon.name}{addon.count > 1 ? ` × ${addon.count}` : ""}
+                      </Text>
+                      <Text style={styles.popoverSubDetail}>
+                        {addon.count > 1 ? `₹${addon.price} each` : "Add-on"}
+                      </Text>
                     </View>
                     <Text style={styles.popoverExtraValue}>+₹{addon.price * addon.count}</Text>
                   </View>
@@ -1339,17 +1459,17 @@ export default function CateringMenuItemScreen() {
       <View style={styles.fixedBottomControlBar}>
         <View style={styles.footerPriceMetaColumn}>
           <Text style={styles.footerFinalPriceText}>₹{finalPrice} <Text style={styles.footerSubUnitText}>/ price per plate</Text></Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             onPress={() => setShowFooterPriceDetails((prev) => !prev)}
             activeOpacity={0.7}
             style={styles.viewDetailsTouchable}
           >
             <Text style={styles.viewDetailsLinkText}>View Details</Text>
-            <Feather 
-              name={showFooterPriceDetails ? "chevron-up" : "chevron-down"} 
-              size={13} 
-              color="#166538" 
-              style={{ marginLeft: 3, marginTop: 1 }} 
+            <Feather
+              name={showFooterPriceDetails ? "chevron-up" : "chevron-down"}
+              size={13}
+              color="#166538"
+              style={{ marginLeft: 3, marginTop: 1 }}
             />
           </TouchableOpacity>
         </View>
@@ -1393,42 +1513,42 @@ export default function CateringMenuItemScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: "#FAF8F5" 
+  container: {
+    flex: 1,
+    backgroundColor: "#FAF8F5"
   },
-  scroll: { 
-    flex: 1, 
-    backgroundColor: "#FAF8F5" 
+  scroll: {
+    flex: 1,
+    backgroundColor: "#FAF8F5"
   },
-  scrollContent: { 
-    paddingBottom: 140 
+  scrollContent: {
+    paddingBottom: 140
   },
-  heroContainer: { 
-    position: "relative", 
-    width: "100%", 
+  heroContainer: {
+    position: "relative",
+    width: "100%",
     height: 270,
     backgroundColor: "#E5ECE8",
   },
-  heroImage: { 
-    width: "100%", 
-    height: "100%" 
+  heroImage: {
+    width: "100%",
+    height: "100%"
   },
   heroImageOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(11, 38, 29, 0.25)",
   },
-  floatingImageBackBtn: { 
-    position: "absolute", 
-    left: 18, 
-    zIndex: 10 
+  floatingImageBackBtn: {
+    position: "absolute",
+    left: 18,
+    zIndex: 10
   },
-  backBtnCircle: { 
-    width: 38, 
-    height: 38, 
-    borderRadius: 19, 
-    backgroundColor: "#FFFFFF", 
-    alignItems: "center", 
+  backBtnCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.12)",
@@ -1438,54 +1558,54 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  mainCardView: { 
-    borderTopLeftRadius: 28, 
-    borderTopRightRadius: 28, 
-    marginTop: -28, 
-    paddingHorizontal: 20, 
-    paddingTop: 24, 
-    backgroundColor: "#FAF8F5" 
+  mainCardView: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    marginTop: -28,
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    backgroundColor: "#FAF8F5"
   },
-  titleRow: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "space-between", 
-    marginBottom: 14 
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14
   },
-  planTitle: { 
-    fontSize: 24, 
-    fontWeight: "900", 
-    color: "#0B261D", 
+  planTitle: {
+    fontSize: 24,
+    fontWeight: "900",
+    color: "#0B261D",
     letterSpacing: -0.5,
     flex: 1,
     marginRight: 12,
   },
-  popularBadge: { 
+  popularBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(15, 56, 42, 0.08)", 
-    borderRadius: 14, 
-    paddingHorizontal: 10, 
+    backgroundColor: "rgba(15, 56, 42, 0.08)",
+    borderRadius: 14,
+    paddingHorizontal: 10,
     paddingVertical: 5,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.15)",
   },
-  popularText: { 
-    fontSize: 10, 
-    fontWeight: "800", 
+  popularText: {
+    fontSize: 10,
+    fontWeight: "800",
     color: "#0F382A",
     letterSpacing: 0.6,
   },
-  priceRow: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "space-between", 
-    backgroundColor: "#FFFFFF", 
-    borderRadius: 16, 
-    paddingHorizontal: 16, 
-    paddingVertical: 12, 
-    marginBottom: 18, 
-    borderWidth: 1, 
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 18,
+    borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: 2 },
@@ -1496,10 +1616,10 @@ const styles = StyleSheet.create({
   priceMetaLeft: {
     justifyContent: "center",
   },
-  priceLabel: { 
-    fontSize: 13, 
-    fontWeight: "700", 
-    color: "#0B261D" 
+  priceLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0B261D"
   },
   priceSubHint: {
     fontSize: 11,
@@ -1507,22 +1627,22 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginTop: 2,
   },
-  priceValue: { 
-    fontSize: 20, 
-    fontWeight: "900", 
+  priceValue: {
+    fontSize: 20,
+    fontWeight: "900",
     color: "#0F382A",
     letterSpacing: -0.3,
   },
-  summaryContainerBox: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "space-between", 
-    backgroundColor: "#FFFFFF", 
-    borderWidth: 1, 
-    borderColor: "rgba(15, 56, 42, 0.08)", 
-    borderRadius: 20, 
-    paddingVertical: 14, 
-    paddingHorizontal: 6, 
+  summaryContainerBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.08)",
+    borderRadius: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 6,
     marginBottom: 24,
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: 3 },
@@ -1530,78 +1650,78 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  summaryColumn: { 
-    flex: 1, 
+  summaryColumn: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  summaryIconCircle: { 
-    width: 32, 
-    height: 32, 
-    borderRadius: 16, 
-    backgroundColor: "rgba(15, 56, 42, 0.06)", 
-    alignItems: "center", 
-    justifyContent: "center", 
+  summaryIconCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(15, 56, 42, 0.06)",
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 6,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
   },
-  summaryValueText: { 
-    fontSize: 11.5, 
-    fontWeight: "800", 
+  summaryValueText: {
+    fontSize: 11.5,
+    fontWeight: "800",
     color: "#0B261D",
     textAlign: "center",
   },
-  summaryLabelText: { 
-    fontSize: 10, 
-    color: "#5B756C", 
+  summaryLabelText: {
+    fontSize: 10,
+    color: "#5B756C",
     marginTop: 2,
     fontWeight: "500",
     textAlign: "center",
   },
-  summaryDividerLine: { 
-    width: 1, 
-    height: 36, 
-    backgroundColor: "rgba(15, 56, 42, 0.08)" 
+  summaryDividerLine: {
+    width: 1,
+    height: 36,
+    backgroundColor: "rgba(15, 56, 42, 0.08)"
   },
-  whatsInPlateSection: { 
-    marginBottom: 24 
+  whatsInPlateSection: {
+    marginBottom: 24
   },
-  sectionHeaderRow: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    marginBottom: 14 
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 14
   },
-  sectionHeaderTitle: { 
-    fontSize: 11.5, 
-    fontWeight: "900", 
-    color: "#0F382A", 
-    letterSpacing: 0.8, 
-    marginRight: 10 
+  sectionHeaderTitle: {
+    fontSize: 11.5,
+    fontWeight: "900",
+    color: "#0F382A",
+    letterSpacing: 0.8,
+    marginRight: 10
   },
-  sectionHeaderLine: { 
-    flex: 1, 
-    height: 1, 
-    backgroundColor: "rgba(15, 56, 42, 0.12)" 
+  sectionHeaderLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "rgba(15, 56, 42, 0.12)"
   },
-  dishesHorizontalScroll: { 
-    flexDirection: "row", 
-    gap: 14, 
-    paddingRight: 16 
+  dishesHorizontalScroll: {
+    flexDirection: "row",
+    gap: 14,
+    paddingRight: 16
   },
-  dishCardItem: { 
-    width: 66, 
-    alignItems: "center" 
+  dishCardItem: {
+    width: 66,
+    alignItems: "center"
   },
-  dishOuterCircle: { 
-    width: 48, 
-    height: 48, 
-    borderRadius: 24, 
-    backgroundColor: "#FFFFFF", 
-    borderWidth: 1, 
-    borderColor: "rgba(15, 56, 42, 0.12)", 
-    alignItems: "center", 
-    justifyContent: "center", 
+  dishOuterCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 6,
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: 2 },
@@ -1609,59 +1729,59 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  dishAvatarImage: { 
-    width: "100%", 
-    height: "100%", 
-    borderRadius: 24 
+  dishAvatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 24
   },
-  moreItemsOuterCircle: { 
-    width: 48, 
-    height: 48, 
-    borderRadius: 24, 
-    backgroundColor: "rgba(15, 56, 42, 0.08)", 
-    borderWidth: 1, 
-    borderColor: "rgba(15, 56, 42, 0.15)", 
-    alignItems: "center", 
-    justifyContent: "center", 
-    marginBottom: 6 
+  moreItemsOuterCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(15, 56, 42, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 6
   },
-  moreItemsCountText: { 
-    fontSize: 13, 
-    fontWeight: "800", 
-    color: "#0F382A" 
+  moreItemsCountText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F382A"
   },
-  dishItemLabel: { 
-    fontSize: 10.5, 
-    fontWeight: "700", 
-    color: "#0B261D", 
+  dishItemLabel: {
+    fontSize: 10.5,
+    fontWeight: "700",
+    color: "#0B261D",
     textAlign: "center",
     lineHeight: 13,
   },
-  customizeCateringSection: { 
-    marginBottom: 14 
+  customizeCateringSection: {
+    marginBottom: 14
   },
-  customizeCateringTitle: { 
-    fontSize: 18, 
-    fontWeight: "900", 
+  customizeCateringTitle: {
+    fontSize: 18,
+    fontWeight: "900",
     color: "#0B261D",
     letterSpacing: -0.3,
   },
-  customizeCateringSubtitle: { 
-    fontSize: 12.5, 
-    color: "#5B756C", 
+  customizeCateringSubtitle: {
+    fontSize: 12.5,
+    color: "#5B756C",
     marginTop: 4,
     fontWeight: "500",
   },
-  mainCustomizerBody: { 
-    paddingHorizontal: 20, 
-    paddingBottom: 120 
+  mainCustomizerBody: {
+    paddingHorizontal: 20,
+    paddingBottom: 120
   },
-  categoryCardBlock: { 
-    backgroundColor: "#FFFFFF", 
-    borderRadius: 22, 
-    padding: 16, 
-    marginBottom: 18, 
-    borderWidth: 1, 
+  categoryCardBlock: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 22,
+    padding: 16,
+    marginBottom: 18,
+    borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: 6 },
@@ -1669,30 +1789,30 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     elevation: 4,
   },
-  categoryHeaderRow: { 
-    flexDirection: "row", 
-    justifyContent: "space-between", 
-    alignItems: "center", 
-    marginBottom: 14 
+  categoryHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14
   },
-  titleWithBadgeGroup: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    flex: 1 
+  titleWithBadgeGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1
   },
-  numberBadgeCircle: { 
-    width: 26, 
-    height: 26, 
-    borderRadius: 13, 
-    backgroundColor: "#166538", 
-    justifyContent: "center", 
-    alignItems: "center", 
-    marginRight: 10 
+  numberBadgeCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#166538",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10
   },
-  numberBadgeText: { 
-    color: "#FAF8F5", 
-    fontSize: 12, 
-    fontWeight: "900" 
+  numberBadgeText: {
+    color: "#FAF8F5",
+    fontSize: 12,
+    fontWeight: "900"
   },
   addonIconCircle: {
     width: 26,
@@ -1703,11 +1823,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 10,
   },
-  categoryHeaderTitleText: { 
-    fontSize: 16, 
-    fontWeight: "800", 
-    color: "#0B261D", 
-    letterSpacing: -0.2 
+  categoryHeaderTitleText: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0B261D",
+    letterSpacing: -0.2
   },
   chooseTagBadge: {
     backgroundColor: "rgba(15, 56, 42, 0.06)",
@@ -1717,28 +1837,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.1)",
   },
-  simpleChooseText: { 
-    fontSize: 11.5, 
-    fontWeight: "800", 
-    color: "#0F382A" 
+  simpleChooseText: {
+    fontSize: 11.5,
+    fontWeight: "800",
+    color: "#0F382A"
   },
-  labelSubTextContainer: { 
-    flexDirection: "column" 
+  labelSubTextContainer: {
+    flexDirection: "column"
   },
-  chooseTextLabel: { 
-    fontSize: 11.5, 
-    color: "#5B756C", 
+  chooseTextLabel: {
+    fontSize: 11.5,
+    color: "#5B756C",
     marginTop: 2,
     fontWeight: "500",
   },
-  itemListGroup: { 
-    flexDirection: "column" 
+  itemListGroup: {
+    flexDirection: "column"
   },
-  itemRowWrapper: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    paddingVertical: 12, 
-    borderBottomWidth: 1, 
+  itemRowWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
     borderBottomColor: "rgba(15, 56, 42, 0.05)",
   },
   itemRowWrapperActive: {
@@ -1746,88 +1866,142 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 6,
   },
-  itemThumbImage: { 
-    width: 48, 
-    height: 48, 
-    borderRadius: 14, 
-    marginRight: 14, 
-    backgroundColor: "#E5ECE8" 
+  // ✅ NEW: Visual highlight for items added as "extra" paid items
+  itemRowWrapperExtraAdded: {
+    backgroundColor: "rgba(22, 101, 56, 0.06)",
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    borderWidth: 1,
+    borderColor: "rgba(22, 101, 56, 0.18)",
+    borderBottomWidth: 1,
+    marginVertical: 4,
+    position: "relative",
   },
-  itemMetaMiddle: { 
-    flex: 1, 
-    justifyContent: "center" 
+  // ✅ NEW: Small "Extra Item" tag pinned to the top-right of the card
+  extraItemCornerTag: {
+    position: "absolute",
+    top: -8,
+    left: 8,           // ← CHANGED FROM right: 8 TO left: 8
+    backgroundColor: "#166538",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    zIndex: 10,
+    shadowColor: "#166538",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 2,
   },
-  rowItemNameTitle: { 
-    fontSize: 14.5, 
-    fontWeight: "700", 
-    color: "#0B261D" 
+  extraItemCornerTagText: {
+    fontSize: 8.5,
+    fontWeight: "900",
+    color: "#FAF8F5",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  itemThumbImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    marginRight: 14,
+    backgroundColor: "#E5ECE8"
+  },
+  itemMetaMiddle: {
+    flex: 1,
+    justifyContent: "center"
+  },
+  rowItemNameTitle: {
+    fontSize: 14.5,
+    fontWeight: "700",
+    color: "#0B261D"
   },
   rowItemNameTitleActive: {
     color: "#0F382A",
     fontWeight: "800",
   },
-  rowItemPriceText: { 
-    fontSize: 12, 
-    color: "#0F382A", 
-    marginTop: 2, 
-    fontWeight: "800" 
+  rowItemPriceText: {
+    fontSize: 12,
+    color: "#0F382A",
+    marginTop: 2,
+    fontWeight: "800"
   },
-  addButtonWrapper: { 
-    justifyContent: "center", 
-    alignItems: "center", 
-    marginLeft: 10 
+  addButtonWrapper: {
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 10
   },
-  radioButtonCircle: { 
-    width: 22, 
-    height: 22, 
-    borderRadius: 11, 
-    borderWidth: 1.5, 
-    borderColor: "rgba(15, 56, 42, 0.25)", 
-    justifyContent: "center", 
-    alignItems: "center", 
-    backgroundColor: "#FFFFFF" 
+  radioButtonCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: "rgba(15, 56, 42, 0.25)",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF"
   },
-  radioButtonCircleSelected: { 
+  radioButtonCircleSelected: {
     borderColor: "#0F382A",
     backgroundColor: "#0F382A",
   },
-  radioButtonInnerDot: { 
-    width: 9, 
-    height: 9, 
-    borderRadius: 4.5, 
-    backgroundColor: "#FAF8F5" 
+  radioButtonInnerDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: "#FAF8F5"
   },
-  categoryFooterHintBox: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    marginTop: 12, 
-    backgroundColor: "rgba(15, 56, 42, 0.06)", 
-    padding: 10, 
+  // ✅ NEW: Smaller Undo button (no icon) for extra-added items
+  undoButtonStyle: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#166538",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 12,
+    shadowColor: "#166538",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  undoButtonText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#FAF8F5",
+    letterSpacing: 0.3,
+  },
+  categoryFooterHintBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    backgroundColor: "rgba(15, 56, 42, 0.06)",
+    padding: 10,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.09)",
   },
-  hintBoxMessageText: { 
-    fontSize: 12, 
-    color: "#0F382A", 
+  hintBoxMessageText: {
+    fontSize: 12,
+    color: "#0F382A",
     flex: 1,
     fontWeight: "600",
     lineHeight: 16,
   },
-  counterActionControlBox: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    borderWidth: 1, 
-    borderColor: "rgba(15, 56, 42, 0.15)", 
-    borderRadius: 18, 
+  counterActionControlBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.15)",
+    borderRadius: 18,
     paddingHorizontal: 4,
     backgroundColor: "#FAF8F5",
   },
-  controlBoxBtn: { 
-    width: 28, 
-    height: 28, 
-    justifyContent: "center", 
-    alignItems: "center" 
+  controlBoxBtn: {
+    width: 28,
+    height: 28,
+    justifyContent: "center",
+    alignItems: "center"
   },
   controlBoxValueTouchable: {
     paddingHorizontal: 8,
@@ -1835,10 +2009,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  controlBoxValueText: { 
-    fontSize: 13, 
-    fontWeight: "800", 
-    color: "#0B261D" 
+  controlBoxValueText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0B261D"
   },
   controlBoxInput: {
     fontSize: 13,
@@ -1848,6 +2022,32 @@ const styles = StyleSheet.create({
     minWidth: 28,
     textAlign: "center",
     paddingVertical: 2,
+  },
+  /* ✅ NEW: Simple Add / Remove toggle button used by the Add-Ons section */
+  simpleAddToggleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(22, 101, 56, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(22, 101, 56, 0.25)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginLeft: 10,
+  },
+  simpleAddToggleBtnAdded: {
+    backgroundColor: "#166538",
+    borderColor: "#166538",
+  },
+  simpleAddToggleText: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#166538",
+    letterSpacing: 0.2,
+  },
+  simpleAddToggleTextAdded: {
+    color: "#FAF8F5",
   },
   bottomPriceDetailsPopover: {
     position: "absolute",
@@ -1957,19 +2157,19 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#0B261D",
   },
-  fixedBottomControlBar: { 
-    position: "absolute", 
-    bottom: 0, 
-    left: 0, 
-    right: 0, 
-    height: 84, 
-    backgroundColor: "#FFFFFF", 
-    borderTopWidth: 1, 
-    borderTopColor: "rgba(15, 56, 42, 0.08)", 
-    paddingHorizontal: 20, 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "space-between", 
+  fixedBottomControlBar: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 84,
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(15, 56, 42, 0.08)",
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     zIndex: 999,
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: -4 },
@@ -1977,13 +2177,13 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 8,
   },
-  footerPriceMetaColumn: { 
+  footerPriceMetaColumn: {
     flexDirection: "column",
     justifyContent: "center",
   },
-  footerFinalPriceText: { 
-    fontSize: 20, 
-    fontWeight: "900", 
+  footerFinalPriceText: {
+    fontSize: 20,
+    fontWeight: "900",
     color: "#0B261D",
     letterSpacing: -0.4,
   },
@@ -2003,13 +2203,13 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textDecorationLine: "underline",
   },
-  footerActionSubmitBtn: { 
-    backgroundColor: "#166538", 
-    height: 48, 
-    borderRadius: 24, 
-    paddingHorizontal: 22, 
-    flexDirection: "row", 
-    alignItems: "center", 
+  footerActionSubmitBtn: {
+    backgroundColor: "#166538",
+    height: 48,
+    borderRadius: 24,
+    paddingHorizontal: 22,
+    flexDirection: "row",
+    alignItems: "center",
     justifyContent: "center",
     shadowColor: "#166538",
     shadowOffset: { width: 0, height: 3 },
@@ -2024,9 +2224,9 @@ const styles = StyleSheet.create({
     shadowRadius: 0,
     elevation: 0,
   },
-  footerSubmitBtnText: { 
-    color: "#FAF8F5", 
-    fontSize: 14.5, 
+  footerSubmitBtnText: {
+    color: "#FAF8F5",
+    fontSize: 14.5,
     fontWeight: "800",
     letterSpacing: 0.2,
   },
@@ -2044,11 +2244,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  modalContent: { 
-    width: "84%", 
-    backgroundColor: "#FFFFFF", 
-    borderRadius: 24, 
-    padding: 24, 
+  modalContent: {
+    width: "84%",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 24,
     alignItems: "center",
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
@@ -2067,25 +2267,25 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 14,
   },
-  modalTitle: { 
-    fontSize: 19, 
-    fontWeight: "900", 
-    color: "#0B261D", 
+  modalTitle: {
+    fontSize: 19,
+    fontWeight: "900",
+    color: "#0B261D",
     marginBottom: 10,
     letterSpacing: -0.3,
   },
-  modalMessage: { 
-    fontSize: 14, 
-    color: "#4F6B61", 
-    lineHeight: 21, 
-    textAlign: "center", 
+  modalMessage: {
+    fontSize: 14,
+    color: "#4F6B61",
+    lineHeight: 21,
+    textAlign: "center",
     marginBottom: 20,
     fontWeight: "500",
   },
-  modalButton: { 
-    backgroundColor: "#166538", 
-    paddingVertical: 13, 
-    paddingHorizontal: 36, 
+  modalButton: {
+    backgroundColor: "#166538",
+    paddingVertical: 13,
+    paddingHorizontal: 36,
     borderRadius: 20,
     shadowColor: "#166538",
     shadowOffset: { width: 0, height: 3 },
@@ -2093,24 +2293,24 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  modalButtonText: { 
-    color: "#FAF8F5", 
-    fontSize: 14.5, 
+  modalButtonText: {
+    color: "#FAF8F5",
+    fontSize: 14.5,
     fontWeight: "800",
     letterSpacing: 0.2,
   },
-  backToTopButton: { 
-    position: "absolute", 
-    bottom: 96, 
-    right: 18, 
-    zIndex: 700 
+  backToTopButton: {
+    position: "absolute",
+    bottom: 96,
+    right: 18,
+    zIndex: 700
   },
-  backToTopTouchable: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    backgroundColor: "#166538", 
-    paddingVertical: 9, 
-    paddingHorizontal: 14, 
+  backToTopTouchable: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#166538",
+    paddingVertical: 9,
+    paddingHorizontal: 14,
     borderRadius: 24,
     shadowColor: "#166538",
     shadowOffset: { width: 0, height: 3 },
@@ -2118,22 +2318,22 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
-  backToTopText: { 
-    color: "#FAF8F5", 
-    fontSize: 13, 
-    fontWeight: "800", 
-    marginLeft: 5 
+  backToTopText: {
+    color: "#FAF8F5",
+    fontSize: 13,
+    fontWeight: "800",
+    marginLeft: 5
   },
-  compactStickyHeader: { 
-    position: "absolute", 
-    top: 0, 
-    left: 0, 
-    right: 0, 
-    backgroundColor: "#FAF8F5", 
-    paddingHorizontal: 16, 
-    paddingBottom: 10, 
-    zIndex: 500, 
-    borderBottomWidth: 1, 
+  compactStickyHeader: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "#FAF8F5",
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    zIndex: 500,
+    borderBottomWidth: 1,
     borderBottomColor: "rgba(15, 56, 42, 0.08)",
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: 2 },
@@ -2141,25 +2341,25 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  titleRowCompact: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "space-between", 
-    marginBottom: 8 
+  titleRowCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8
   },
-  compactBackBtn: { 
-    width: 32, 
-    height: 32, 
-    justifyContent: "center", 
-    alignItems: "flex-start" 
+  compactBackBtn: {
+    width: 32,
+    height: 32,
+    justifyContent: "center",
+    alignItems: "flex-start"
   },
-  centerTitleWrapper: { 
-    flex: 1, 
-    alignItems: "center" 
+  centerTitleWrapper: {
+    flex: 1,
+    alignItems: "center"
   },
-  planTitleCompact: { 
-    fontSize: 16, 
-    fontWeight: "800", 
+  planTitleCompact: {
+    fontSize: 16,
+    fontWeight: "800",
     color: "#0B261D",
     letterSpacing: -0.3,
   },
@@ -2169,27 +2369,27 @@ const styles = StyleSheet.create({
     color: "#166538",
     marginTop: 1,
   },
-  compactBackBtnPlaceholder: { 
-    width: 32 
+  compactBackBtnPlaceholder: {
+    width: 32
   },
-  stickyPlateContainer: { 
-    paddingHorizontal: 4, 
-    gap: 14, 
-    flexDirection: "row", 
-    alignItems: "center" 
+  stickyPlateContainer: {
+    paddingHorizontal: 4,
+    gap: 14,
+    flexDirection: "row",
+    alignItems: "center"
   },
-  stickyDishItem: { 
-    alignItems: "center", 
-    width: 48 
+  stickyDishItem: {
+    alignItems: "center",
+    width: 48
   },
-  previewModalContent: { 
-    width: "100%", 
-    height: "82%", 
-    backgroundColor: "#FAF8F5", 
-    borderTopLeftRadius: 28, 
-    borderTopRightRadius: 28, 
-    paddingTop: 16, 
-    paddingHorizontal: 18, 
+  previewModalContent: {
+    width: "100%",
+    height: "82%",
+    backgroundColor: "#FAF8F5",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 16,
+    paddingHorizontal: 18,
     paddingBottom: 20,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
@@ -2199,16 +2399,16 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 20,
   },
-  previewCloseBtn: { 
-    position: "absolute", 
-    top: -24, 
-    alignSelf: "center", 
-    backgroundColor: "#166538", 
-    width: 46, 
-    height: 46, 
-    borderRadius: 23, 
-    justifyContent: "center", 
-    alignItems: "center", 
+  previewCloseBtn: {
+    position: "absolute",
+    top: -24,
+    alignSelf: "center",
+    backgroundColor: "#166538",
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    justifyContent: "center",
+    alignItems: "center",
     zIndex: 50,
     shadowColor: "#166538",
     shadowOffset: { width: 0, height: 4 },
@@ -2216,54 +2416,54 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 5,
   },
-  previewHeaderCard: { 
-    backgroundColor: "#FFFFFF", 
-    borderRadius: 20, 
-    padding: 14, 
+  previewHeaderCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 14,
     marginTop: 8,
-    marginBottom: 14, 
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
-    shadowColor: "#0F382A", 
-    shadowOffset: { width: 0, height: 3 }, 
-    shadowOpacity: 0.04, 
-    shadowRadius: 8, 
-    elevation: 2 
+    shadowColor: "#0F382A",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2
   },
-  previewHeaderRow: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "space-between" 
+  previewHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
   },
-  previewHeaderImage: { 
-    width: 48, 
-    height: 48, 
-    borderRadius: 14, 
+  previewHeaderImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     marginRight: 10,
     backgroundColor: "#E5ECE8",
   },
-  previewTitleInline: { 
-    flex: 1, 
-    marginHorizontal: 6 
+  previewTitleInline: {
+    flex: 1,
+    marginHorizontal: 6
   },
-  previewMainTitle: { 
-    fontSize: 16, 
-    fontWeight: "900", 
+  previewMainTitle: {
+    fontSize: 16,
+    fontWeight: "900",
     color: "#0B261D",
     letterSpacing: -0.2,
   },
-  previewSubInline: { 
-    fontSize: 12, 
-    color: "#5B756C", 
+  previewSubInline: {
+    fontSize: 12,
+    color: "#5B756C",
     marginTop: 2,
     fontWeight: "500",
   },
-  previewPricePillSmall: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    backgroundColor: "#166538", 
-    paddingHorizontal: 12, 
-    paddingVertical: 7, 
+  previewPricePillSmall: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#166538",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 18,
     shadowColor: "#166538",
     shadowOffset: { width: 0, height: 2 },
@@ -2271,134 +2471,134 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  previewPriceInline: { 
-    color: "#FAF8F5", 
-    fontSize: 12.5, 
-    fontWeight: "800" 
+  previewPriceInline: {
+    color: "#FAF8F5",
+    fontSize: 12.5,
+    fontWeight: "800"
   },
-  previewTitle: { 
-    fontSize: 18, 
-    fontWeight: "900", 
-    color: "#0B261D", 
+  previewTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#0B261D",
     marginBottom: 12,
     letterSpacing: -0.3,
   },
-  previewCategoryCard: { 
-    backgroundColor: "#FFFFFF", 
-    borderRadius: 18, 
-    padding: 14, 
+  previewCategoryCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    padding: 14,
     marginBottom: 12,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
   },
-  previewCategoryHeader: { 
-    flexDirection: "row", 
-    justifyContent: "space-between", 
-    alignItems: "center", 
-    marginBottom: 10 
+  previewCategoryHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10
   },
-  previewCategoryTitle: { 
-    fontSize: 14.5, 
-    fontWeight: "800", 
+  previewCategoryTitle: {
+    fontSize: 14.5,
+    fontWeight: "800",
     color: "#0B261D",
     letterSpacing: -0.2,
   },
-  previewItemCard: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    backgroundColor: "#FAF8F5", 
-    padding: 10, 
-    borderRadius: 12, 
+  previewItemCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FAF8F5",
+    padding: 10,
+    borderRadius: 12,
     marginBottom: 8,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.06)",
   },
-  previewItemImage: { 
-    width: 38, 
-    height: 38, 
-    borderRadius: 10, 
+  previewItemImage: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
     marginRight: 10,
     backgroundColor: "#E5ECE8",
   },
-  previewItemName: { 
-    fontSize: 13.5, 
+  previewItemName: {
+    fontSize: 13.5,
     fontWeight: "700",
     color: "#0B261D",
     flex: 1,
   },
-  priceBreakdownCard: { 
-    marginTop: 4, 
+  priceBreakdownCard: {
+    marginTop: 4,
     marginBottom: 14,
-    backgroundColor: "#FFFFFF", 
-    borderRadius: 18, 
-    padding: 14, 
-    borderWidth: 1, 
-    borderColor: "rgba(15, 56, 42, 0.08)" 
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.08)"
   },
-  breakdownTitle: { 
-    fontSize: 14.5, 
-    fontWeight: "900", 
+  breakdownTitle: {
+    fontSize: 14.5,
+    fontWeight: "900",
     marginBottom: 10,
     color: "#0B261D",
   },
-  breakdownRow: { 
-    flexDirection: "row", 
-    justifyContent: "space-between", 
-    marginBottom: 6 
+  breakdownRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 6
   },
-  breakdownLabel: { 
-    fontSize: 13.5, 
+  breakdownLabel: {
+    fontSize: 13.5,
     fontWeight: "600",
     color: "#4F6B61",
   },
-  breakdownSubLabel: { 
+  breakdownSubLabel: {
     fontSize: 13,
     color: "#5B756C",
     fontWeight: "500",
   },
-  breakdownValue: { 
-    fontSize: 13.5, 
+  breakdownValue: {
+    fontSize: 13.5,
     fontWeight: "700",
     color: "#0B261D",
   },
-  extraValue: { 
-    fontSize: 13, 
-    fontWeight: "800", 
-    color: "#0F382A" 
+  extraValue: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0F382A"
   },
-  totalLabel: { 
-    fontSize: 14.5, 
+  totalLabel: {
+    fontSize: 14.5,
     fontWeight: "900",
     color: "#0B261D",
   },
-  extraTag: { 
-    backgroundColor: "rgba(15, 56, 42, 0.08)", 
-    paddingHorizontal: 8, 
-    paddingVertical: 3, 
-    borderRadius: 8, 
+  extraTag: {
+    backgroundColor: "rgba(15, 56, 42, 0.08)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
     marginLeft: 8,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.12)",
   },
-  extraTagText: { 
-    fontSize: 10.5, 
-    fontWeight: "800", 
-    color: "#0F382A" 
+  extraTagText: {
+    fontSize: 10.5,
+    fontWeight: "800",
+    color: "#0F382A"
   },
-  extraSectionTitle: { 
-    fontSize: 12, 
-    fontWeight: "800", 
-    color: "#0F382A", 
-    marginTop: 6, 
-    marginBottom: 6, 
-    marginLeft: 2 
+  extraSectionTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#0F382A",
+    marginTop: 6,
+    marginBottom: 6,
+    marginLeft: 2
   },
-  previewContinueButton: { 
-    marginTop: 10, 
-    backgroundColor: "#166538", 
-    paddingVertical: 14, 
-    borderRadius: 24, 
-    alignItems: "center", 
+  previewContinueButton: {
+    marginTop: 10,
+    backgroundColor: "#166538",
+    paddingVertical: 14,
+    borderRadius: 24,
+    alignItems: "center",
     width: "100%",
     shadowColor: "#166538",
     shadowOffset: { width: 0, height: 3 },
@@ -2406,29 +2606,29 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  previewContinueText: { 
-    color: "#FAF8F5", 
-    fontSize: 15, 
+  previewContinueText: {
+    color: "#FAF8F5",
+    fontSize: 15,
     fontWeight: "800",
     letterSpacing: 0.2,
   },
-  divider: { 
-    height: 1, 
-    backgroundColor: "rgba(15, 56, 42, 0.08)", 
-    marginVertical: 10 
+  divider: {
+    height: 1,
+    backgroundColor: "rgba(15, 56, 42, 0.08)",
+    marginVertical: 10
   },
-  totalValue: { 
-    fontSize: 15, 
-    fontWeight: "900", 
-    color: "#0B261D" 
+  totalValue: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: "#0B261D"
   },
-  flyImage: { 
-    position: "absolute", 
-    width: 64, 
-    height: 64, 
-    borderRadius: 32, 
-    top: 360, 
-    left: width / 232, 
-    zIndex: 900 
+  flyImage: {
+    position: "absolute",
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    top: 360,
+    left: width / 232,
+    zIndex: 900
   },
 });
