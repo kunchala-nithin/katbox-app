@@ -103,6 +103,91 @@ const formatCoordLabel = (lat: any, lng: any): string => {
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 };
 
+// ✅ NEW HELPER — Resolve special instruction from the order document.
+//    Works for both the new nested `specialInstruction` object and the
+//    legacy flat fields (specialInstructionTag / Label / Text).
+const resolveSpecialInstruction = (order: any): { tag: string; label: string; text: string } => {
+  if (!order) return { tag: '', label: '', text: '' };
+  const nested = order.specialInstruction || {};
+  const tag = String(nested.tag || order.specialInstructionTag || '').trim();
+  const label = String(nested.label || order.specialInstructionLabel || '').trim();
+  const text = String(nested.text || order.specialInstructionText || '').trim();
+  return { tag, label, text };
+};
+
+// ✅ NEW HELPER — Human-friendly label for deliveryType.
+//    Handles "standard", "doorstep", "doorstep + service" (case-insensitive,
+//    with any spacing/pluses/hyphens) and returns a title-cased string.
+const formatDeliveryType = (raw: any): string => {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+
+  const norm = s.toLowerCase().replace(/\s+/g, ' ').trim();
+
+  if (norm === 'standard') return 'Standard';
+  if (norm === 'doorstep') return 'Doorstep';
+  if (
+    norm === 'doorstep + service' ||
+    norm === 'doorstep+service' ||
+    norm === 'doorstep +service' ||
+    norm === 'doorstep+ service' ||
+    norm === 'doorstep and service'
+  ) {
+    return 'Doorstep + Service';
+  }
+
+  // Fallback: title-case each whitespace-separated word
+  return s
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+};
+
+// ✅ NEW HELPER — Maps a spice level string to an emoji-prefixed label
+//    using the EXACT SAME emojis used in CateringOrderReview.tsx:
+//      🧊  Less spicy
+//      🌶  Medium spicy
+//      🔥  Very spicy
+//      🚫🧄 No onion & garlic
+const formatSpiceLevel = (raw: any): string => {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return '';
+
+  // 🌶️ Extra / Very spicy
+  if (s.includes('extra spicy') || s.includes('extra hot') || s.includes('very spicy')) {
+    return '🔥 Very spicy';
+  }
+  // 🌶 Medium spicy
+  if (s.includes('medium')) {
+    return '🌶 Medium spicy';
+  }
+  // 🧊 Less spicy
+  if (s.includes('less spicy') || s.includes('mild') || s.includes('low')) {
+    return '🧊 Less spicy';
+  }
+  // 🚫🧄 No onion & garlic
+  if (
+    s.includes('no onion') ||
+    s.includes('noonion') ||
+    s.includes('no garlic') ||
+    s.includes('onion & garlic') ||
+    s.includes('onion and garlic')
+  ) {
+    return '🚫🧄 No onion & garlic';
+  }
+  // 🌶 Spicy (plain)
+  if (s.includes('spicy') || s.includes('hot')) {
+    return '🌶 Spicy';
+  }
+  // ⚪ No spice
+  if (s.includes('no spice') || s.includes('none')) {
+    return '⚪ No Spice';
+  }
+
+  // Fallback — return the original string
+  return raw;
+};
+
 /* ─── COUNTDOWN TIMER WIDGET (ADMIN BLUE THEME) ─── */
 function DeliverySlotCountdownWidget({
   deliveryDate,
@@ -255,6 +340,98 @@ function DeliverySlotCountdownWidget({
         <Text style={styles.timerDigits}>{formatTimerDisplay(secondsRemaining)}</Text>
         <Text style={styles.timerUnit}>remaining</Text>
       </View>
+    </View>
+  );
+}
+
+/* ─── SPECIAL INSTRUCTION EXPANDABLE PANEL (ADMIN BLUE THEME) ───
+   Trigger row now shows a fixed "Special Instructions" label with an
+   information icon and a chevron. On tap it expands to reveal the
+   spice level (with the SAME emojis as CateringOrderReview) and the
+   full description text below. */
+function SpecialInstructionPanel({
+  tag,
+  label,
+  text,
+}: {
+  tag: string;
+  label: string;
+  text: string;
+}) {
+  const [expanded, setExpanded] = useState<boolean>(false);
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+
+  const hasAny = !!(tag || label || text);
+  if (!hasAny) return null;
+
+  const toggle = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const toValue = expanded ? 0 : 1;
+    Animated.timing(rotateAnim, {
+      toValue,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+    setExpanded(!expanded);
+  };
+
+  const chevronRotate = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+
+  // ✅ Spice level is derived from the label field (or tag as a fallback)
+  const spiceSource = label || tag;
+  const spiceDisplay = formatSpiceLevel(spiceSource);
+  const hasSpice = !!spiceDisplay;
+
+  // ✅ Description text shown beneath (the free-form special instruction)
+  const descriptionText = text || '';
+
+  return (
+    <View style={styles.specialInstructionWrapper}>
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={toggle}
+        style={styles.specialInstructionTriggerRow}
+      >
+        <Ionicons
+          name="information-circle-outline"
+          size={16}
+          color="#2563EB"
+          style={{ marginRight: 6 }}
+        />
+        <Text style={styles.specialInstructionTriggerText} numberOfLines={1}>
+          Special Instructions
+        </Text>
+        <Animated.View style={{ transform: [{ rotate: chevronRotate }], marginLeft: 6 }}>
+          <Ionicons name="chevron-down" size={15} color="#2563EB" />
+        </Animated.View>
+      </TouchableOpacity>
+
+      {expanded && (
+        <View style={styles.specialInstructionExpandedCard}>
+          {hasSpice ? (
+            <View style={styles.specialInstructionSpiceRow}>
+              <Text style={styles.specialInstructionSpiceLabel}>Spice Level</Text>
+              <Text style={styles.specialInstructionSpiceValue}>{spiceDisplay}</Text>
+            </View>
+          ) : null}
+
+          {descriptionText ? (
+            <View style={styles.specialInstructionDescBlock}>
+              <Text style={styles.specialInstructionDescLabel}>Description</Text>
+              <Text style={styles.specialInstructionDescText}>{descriptionText}</Text>
+            </View>
+          ) : null}
+
+          {!hasSpice && !descriptionText && tag ? (
+            <View style={styles.specialInstructionTagPill}>
+              <Text style={styles.specialInstructionTagPillText}>{tag}</Text>
+            </View>
+          ) : null}
+        </View>
+      )}
     </View>
   );
 }
@@ -854,6 +1031,22 @@ export default function AdminAllOrdersScreen() {
     isQuickBitesFlow,
     quickBitesDateTime,
   ]);
+
+  // ✅ NEW: Resolved special instruction (works for every flow).
+  const resolvedSpecialInstruction = useMemo(() => {
+    return resolveSpecialInstruction(activeOrder);
+  }, [activeOrder]);
+
+  const hasSpecialInstruction = !!(
+    resolvedSpecialInstruction.tag ||
+    resolvedSpecialInstruction.label ||
+    resolvedSpecialInstruction.text
+  );
+
+  // ✅ NEW: Human-friendly delivery type label.
+  const resolvedDeliveryTypeLabel = useMemo(() => {
+    return formatDeliveryType(activeOrder?.deliveryType);
+  }, [activeOrder?.deliveryType]);
 
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
@@ -1751,10 +1944,11 @@ export default function AdminAllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
-                {/* ✅ NEW: Dynamic Delivery Date & Slot Strip (Admin Blue Theme)
-                    — Mirrors the chef screen exactly, values come from the
-                    same orderData.deliveryDate / orderData.deliveryTimeSlot
-                    already computed dynamically from the order.ts document. */}
+                {/* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Admin Blue Theme)
+                    — Delivery Type has been added as a THIRD cell inside the same
+                    strip, right next to Delivery Slot. Values come from the same
+                    orderData.deliveryDate / orderData.deliveryTimeSlot and
+                    resolvedDeliveryTypeLabel already computed dynamically. */}
                 <View style={styles.deliveryInfoStripContainer}>
                   <View style={styles.deliveryInfoCell}>
                     <View style={{ flex: 1 }}>
@@ -1775,7 +1969,36 @@ export default function AdminAllOrdersScreen() {
                       </Text>
                     </View>
                   </View>
+
+                  {resolvedDeliveryTypeLabel ? (
+                    <>
+                      <View style={styles.deliveryInfoDivider} />
+                      <View style={styles.deliveryInfoCell}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.deliveryInfoLabel}>DELIVERY TYPE</Text>
+                          <Text style={styles.deliveryInfoValue} numberOfLines={1}>
+                            {resolvedDeliveryTypeLabel}
+                          </Text>
+                        </View>
+                      </View>
+                    </>
+                  ) : null}
                 </View>
+
+                {/* ✅ NEW: Special Instructions — trigger row now shows a fixed
+                    "Special Instructions" label with an information icon and
+                    chevron. Tapping expands to reveal the spice level (with
+                    the SAME emojis as CateringOrderReview) and the full
+                    description text. */}
+                {hasSpecialInstruction ? (
+                  <View style={styles.specialInstructionBottomLeftWrapper}>
+                    <SpecialInstructionPanel
+                      tag={resolvedSpecialInstruction.tag}
+                      label={resolvedSpecialInstruction.label}
+                      text={resolvedSpecialInstruction.text}
+                    />
+                  </View>
+                ) : null}
 
                 {hasAnyItemsToPreview && (
                   <View style={styles.centeredPreviewContainer}>
@@ -2402,7 +2625,6 @@ const styles = StyleSheet.create({
   },
   notificationBadgeText: { color: '#FFFFFF', fontSize: 8.5, fontWeight: '900' },
 
-  /* ─── ✅ NEW: SEARCH BAR (Admin Blue Theme) ─── */
   searchBarWrapper: {
     marginBottom: 12,
   },
@@ -2457,7 +2679,6 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 6 },
   emptySubtitle: { fontSize: 13, color: '#64748B', textAlign: 'center', fontWeight: '500', lineHeight: 18 },
 
-  /* ✅ NEW: Empty-state "clear search" CTA button */
   emptyClearSearchBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2604,7 +2825,7 @@ const styles = StyleSheet.create({
   simplePlanDaysText: { fontSize: 12, fontWeight: '700', color: '#64748B' },
   simplePlanDetailsText: { fontSize: 12, color: '#64748B', fontWeight: '500', marginTop: 2 },
 
-  /* ✅ NEW: Dynamic Delivery Date & Slot Strip (Admin Blue Theme) */
+  /* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Admin Blue Theme) */
   deliveryInfoStripContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2639,6 +2860,92 @@ const styles = StyleSheet.create({
     height: 32,
     backgroundColor: 'rgba(37, 99, 235, 0.18)',
     marginHorizontal: 10,
+  },
+
+  /* ✅ NEW: Special Instructions — bottom-left aligned, icon + label trigger */
+  specialInstructionBottomLeftWrapper: {
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+  specialInstructionWrapper: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  specialInstructionTriggerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  specialInstructionTriggerText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#2563EB',
+    textDecorationLine: 'underline',
+    letterSpacing: 0.1,
+  },
+  specialInstructionExpandedCard: {
+    marginTop: 8,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignSelf: 'stretch',
+    minWidth: 240,
+    maxWidth: '100%',
+  },
+  specialInstructionSpiceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(37, 99, 235, 0.15)',
+  },
+  specialInstructionSpiceLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  specialInstructionSpiceValue: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: 0.2,
+  },
+  specialInstructionDescBlock: {
+    marginTop: 2,
+  },
+  specialInstructionDescLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748B',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  specialInstructionDescText: {
+    fontSize: 12.5,
+    fontWeight: '500',
+    color: '#334155',
+    lineHeight: 18,
+  },
+  specialInstructionTagPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  specialInstructionTagPillText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#B45309',
+    letterSpacing: 0.3,
   },
 
   centeredPreviewContainer: { alignItems: 'center', justifyContent: 'center', marginVertical: 6 },

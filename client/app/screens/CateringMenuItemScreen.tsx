@@ -34,10 +34,11 @@ const HEADER_COLLAPSE_THRESHOLD = 280;
 //    opacity, scale, and margin all resolve at exactly the same moment.
 const STICKY_SETTLE_START = HEADER_COLLAPSE_THRESHOLD - 80;
 const STICKY_SETTLE_END = HEADER_COLLAPSE_THRESHOLD;
-// ✅ Measured height of the sticky header content (title row + dish strip).
-//    Used only for the "Select all" scroll offset so the target category
-//    isn't tucked under the sticky header.
-const STICKY_CONTENT_HEIGHT = 74;
+// ✅ Fallback height of the sticky header content (title row + dish strip).
+//    The real height is measured via onLayout on the sticky header and stored
+//    in `stickyHeaderHeightRef`; this constant is only used before that
+//    measurement is available.
+const STICKY_CONTENT_HEIGHT = 130;
 // ✅ Approximate rendered height of the "WHAT'S IN THE PLATTER" section.
 //    Used as the reserved-space height so we can animate it away via
 //    `scaleY` (GPU-only) without ever touching layout.
@@ -121,8 +122,28 @@ export default function CateringMenuItemScreen() {
   const categoryRefs = useRef<Record<number, View | null>>({});
   const categoryYPositions = useRef<Record<number, number>>({});
 
+  // ✅ The category card's layout.y is relative to its PARENT
+  //    (`mainCustomizerBody`), NOT to the scroll content. To scroll to it
+  //    accurately we also need the y-offset of `mainCustomizerBody` inside
+  //    the ScrollView content. It is measured here.
+  const customizerBodyYRef = useRef(0);
+  const handleCustomizerBodyLayout = useCallback((e: LayoutChangeEvent) => {
+    customizerBodyYRef.current = e.nativeEvent.layout.y;
+  }, []);
+
+  // ✅ Real measured height of the sticky header (safe-area + title row +
+  //    dish strip). Used to place the target category right below it so the
+  //    whole category card is visible and never hidden behind the header.
+  const stickyHeaderHeightRef = useRef(0);
+  const handleStickyHeaderLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = e.nativeEvent.layout.height;
+    if (h > 0) {
+      stickyHeaderHeightRef.current = h;
+    }
+  }, []);
+
   const handleCategoryLayout = useCallback((catIndex: number, e: LayoutChangeEvent) => {
-    // Store the y position relative to the scroll content.
+    // Store the y position relative to the parent (mainCustomizerBody).
     const y = e.nativeEvent.layout.y;
     if (y >= 0) {
       categoryYPositions.current[catIndex] = y;
@@ -643,15 +664,53 @@ export default function CateringMenuItemScreen() {
     productScrollRef.current?.scrollTo({ y: 0, animated: true });
   };
 
-  // ✅ Scroll to a specific category card within the ScrollView.
-  //    We add a small offset so the category header isn't tucked under the
-  //    sticky header. Uses the stored y-position measured on layout.
-  const scrollToCategory = useCallback((catIndex: number) => {
-    const y = categoryYPositions.current[catIndex];
-    if (y === undefined || y === null) return;
-    const targetY = Math.max(0, y - STICKY_CONTENT_HEIGHT - 8);
-    productScrollRef.current?.scrollTo({ y: targetY, animated: true });
+  // ✅ JS-side scroll handler. Runs alongside the native-driven Animated.event
+  //    (via its `listener` option) so the UI-thread animation stays smooth
+  //    while React state is only flipped when a boolean actually changes.
+  //    - `isStickyActive` enables touches on the sticky header (so its
+  //      horizontal dish strip can be scrolled) and disables touches on the
+  //      main "What's in the platter" strip once it has collapsed.
+  //    - The back-to-top button fades in/out past the threshold.
+  const handleScrollEvent = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const y = e.nativeEvent.contentOffset.y;
+
+    const shouldStickyBeActive = y >= HEADER_COLLAPSE_THRESHOLD - 40;
+    if (shouldStickyBeActive !== stickyActiveRef.current) {
+      stickyActiveRef.current = shouldStickyBeActive;
+      setIsStickyActive(shouldStickyBeActive);
+    }
+
+    const shouldShowBackToTop = y > SHOW_BACK_TO_TOP_THRESHOLD;
+    if (shouldShowBackToTop !== backToTopRef.current) {
+      backToTopRef.current = shouldShowBackToTop;
+      setShowBackToTop(shouldShowBackToTop);
+      Animated.timing(backToTopOpacity, {
+        toValue: shouldShowBackToTop ? 1 : 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
   }, []);
+
+  // ✅ Scroll to a specific category card within the ScrollView.
+  //    Target = (offset of the customizer body inside the scroll content)
+  //           + (offset of the category inside the customizer body)
+  //           − (real sticky header height) − small breathing gap.
+  //    This lands the category's top edge just below the sticky header, so the
+  //    entire category card is visible and never tucked underneath it.
+  const scrollToCategory = useCallback((catIndex: number) => {
+    const catY = categoryYPositions.current[catIndex];
+    if (catY === undefined || catY === null) return;
+    const stickyHeight =
+      stickyHeaderHeightRef.current > 0
+        ? stickyHeaderHeightRef.current
+        : Math.max(insets.top, 12) + STICKY_CONTENT_HEIGHT;
+    const targetY = Math.max(
+      0,
+      customizerBodyYRef.current + catY - stickyHeight - 12
+    );
+    productScrollRef.current?.scrollTo({ y: targetY, animated: true });
+  }, [insets.top]);
 
   // ✅ Pulse a category's "Choose any N" pill so the customer notices
   //    which category still needs attention. The pulse runs continuously
@@ -683,12 +742,14 @@ export default function CateringMenuItemScreen() {
   //    customer immediately sees which course still needs a selection.
   const handleSelectAllPrompt = useCallback(() => {
     if (firstIncompleteCategoryIndex < 0) return;
+    // Close the price popover if it's open so it doesn't cover the category.
+    setShowFooterPriceDetails(false);
     scrollToCategory(firstIncompleteCategoryIndex);
-    // Delay slightly so the scroll animation starts before the pulse kicks in,
+    // Delay slightly so the scroll animation settles before the pulse kicks in,
     // making the pulse feel like a "you are here" cue.
     setTimeout(() => {
       startCategoryPulse(firstIncompleteCategoryIndex);
-    }, 350);
+    }, 450);
   }, [firstIncompleteCategoryIndex, scrollToCategory, startCategoryPulse]);
 
   const getExtraBreakdown = () => {
@@ -891,6 +952,7 @@ export default function CateringMenuItemScreen() {
             ],
           },
         ]}
+        pointerEvents={showBackToTop ? "auto" : "none"}
       >
         <TouchableOpacity onPress={scrollToTop} style={styles.backToTopTouchable} activeOpacity={0.85}>
           <Feather name="arrow-up" size={18} color="#FAF8F5" />
@@ -909,6 +971,7 @@ export default function CateringMenuItemScreen() {
           },
         ]}
         pointerEvents={isStickyActive ? "auto" : "none"}
+        onLayout={handleStickyHeaderLayout}
       >
         <View style={styles.titleRowCompact}>
           <TouchableOpacity style={styles.compactBackBtn} onPress={handleBackPress} activeOpacity={0.75}>
@@ -959,8 +1022,10 @@ export default function CateringMenuItemScreen() {
           {
             // ✅ useNativeDriver: true lets the animation run entirely on the
             //    UI thread — this is the single biggest fix for scroll lag.
-            //    We use addListener below to react to scroll state changes.
+            //    The `listener` runs on the JS thread and only flips React
+            //    state when a boolean changes (sticky active / back-to-top).
             useNativeDriver: true,
+            listener: handleScrollEvent,
           }
         )}
       >
@@ -1039,14 +1104,19 @@ export default function CateringMenuItemScreen() {
               an inner Animated.View collapses via `scaleY` + `opacity` — both
               GPU-only, both use the native driver, both perfectly smooth.
               The outer wrapper clips overflow so the scaled content doesn't
-              bleed into neighboring views. */}
+              bleed into neighboring views.
+
+              ✅ FIX: pointerEvents used to be permanently "none", which
+              blocked the horizontal dish strip from receiving swipes. It is
+              now "auto" while the section is visible and only switches to
+              "none" once it has collapsed into the sticky header. */}
           <View
             style={{
               height: reservedHeight,
               marginBottom: 24,
               overflow: "hidden",
             }}
-            pointerEvents="none"
+            pointerEvents={isStickyActive ? "none" : "auto"}
           >
             <Animated.View
               style={{
@@ -1108,8 +1178,10 @@ export default function CateringMenuItemScreen() {
             ✅ NOTE: We intentionally do NOT add any extra top padding here.
             The collapse of "WHAT'S IN THE PLATTER" already reclaims all the
             vertical space, so "Customize Platter Items" sits flush right
-            below the sticky header with zero gap. */}
-        <View style={styles.mainCustomizerBody}>
+            below the sticky header with zero gap.
+            ✅ onLayout captures this body's y-offset inside the scroll
+            content so "Select all" can compute an accurate scroll target. */}
+        <View style={styles.mainCustomizerBody} onLayout={handleCustomizerBodyLayout}>
           {daawathCategories.map((category: any, catIndex: number) => {
             const maxCount = getMaxForCategory(catIndex);
             const items = category.items || [];
@@ -2707,7 +2779,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10  },
+    marginBottom: 10
+  },
   previewCategoryTitle: {
     fontSize: 14.5,
     fontWeight: "800",

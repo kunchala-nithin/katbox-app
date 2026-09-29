@@ -33,6 +33,44 @@ export interface ISpecialInstruction {
   text?: string;
 }
 
+// ✅ NEW: Catering menu structures.
+// These describe the exact shape the catering review screen sends and that the
+// orders screen ("Menu Items" preview) reads back. They are stored in Mixed
+// fields, so the interfaces below are for type-safety/documentation only.
+export interface ICateringSelectedItem {
+  id?: string;
+  name: string;
+  // The client may send either `imageUrl` or `image`; both are supported on read.
+  imageUrl?: string;
+  image?: string;
+  // Only meaningful for items that are charged extra (per plate).
+  price?: number;
+  // Optional category label if the item was sent in a flat list.
+  category?: string;
+  section?: string;
+}
+
+export interface ICateringSelectionCategory {
+  // Category / course name shown as the card title (e.g. "Starters", "Main Course")
+  category: string;
+  // Max number of items included in the base price for this category
+  max?: number;
+  // Items included in the base plate price
+  selected?: ICateringSelectedItem[];
+  // Items picked beyond `max` (charged extra per plate)
+  extraSelected?: ICateringSelectedItem[];
+}
+
+export interface ICateringAddon {
+  id?: string;
+  name: string;
+  imageUrl?: string;
+  image?: string;
+  price?: number;
+  // number of plates / units for this add-on
+  count?: number;
+}
+
 // Base Interface for Shared Order Properties
 export interface IBaseOrder extends Document {
   orderId: string;
@@ -132,7 +170,11 @@ export interface IMealBoxOrCateringOrder extends IBaseOrder {
   deliveryDate?: string;
   upcomingDeliveries?: string[];
   pausedDates?: string[];
-  selections?: any;
+  // ✅ UPDATED: `selections` is persisted differently per service type:
+  //    • catering → ICateringSelectionCategory[]  (category cards with selected/extraSelected)
+  //    • mealbox  → Record<dayKey, any[]>          (e.g. { Mon: [...], Tue: [...] })
+  //    Stored as Mixed so both shapes are accepted by the same discriminator schema.
+  selections?: ICateringSelectionCategory[] | Record<string, any[]> | any;
   items?: any[];
   restaurantName?: string;
   restaurantImage?: string;
@@ -142,7 +184,8 @@ export interface IMealBoxOrCateringOrder extends IBaseOrder {
   eventTime?: string;
   deliveryType?: string;
   pricePerPlate?: number;
-  addons?: any[];
+  // ✅ UPDATED: typed catering add-ons (still stored as Mixed array)
+  addons?: ICateringAddon[] | any[];
 }
 
 export type IOrder = IHomemadeOrder | IMealBoxOrCateringOrder;
@@ -278,6 +321,9 @@ const BaseOrderSchema: Schema = new Schema(
   {
     discriminatorKey: "serviceType",
     timestamps: true,
+    // ✅ NEW: Keep empty objects/arrays inside Mixed fields (e.g. an empty
+    //    `selections` object) instead of silently stripping them on save.
+    minimize: false,
   }
 );
 
@@ -314,6 +360,15 @@ const HomemadeOrderSchema = new Schema({
 // 4. MEALBOX & CATERING SCHEMA
 // ✅ IMPORTANT: Do NOT redeclare `deliveryType` or `specialInstruction*` here.
 //    They already live on the BaseOrderSchema. Redeclaring causes save() errors.
+//
+// ✅ NOTE ON CATERING MENU ITEMS:
+//    `selections` (category cards → selected / extraSelected), `items` (flat list
+//    fallback) and `addons` are all Mixed so the exact payload sent by the
+//    catering review screen is persisted untouched and returned as-is by
+//    GET /api/orders/my-orders. The orders screen reads them dynamically for the
+//    "Menu Items" preview. If you ever mutate them in place on an existing
+//    document, call `order.markModified("selections")` (or "items"/"addons")
+//    before `order.save()`.
 const MealBoxOrCateringSchema = new Schema({
   menuName: { type: String, default: "Meal Plan" },
   menuImage: { type: String, default: "" },

@@ -64,6 +64,199 @@ const getOccasionIcon = (occasionName: string): keyof typeof Ionicons.glyphMap =
   return "sparkles-outline";
 };
 
+// ✅ NEW: Normalized shapes used by the catering "Menu Items" preview.
+type CateringPreviewItem = {
+  id: string;
+  name: string;
+  image: string;
+  price: number;
+  isExtra: boolean;
+};
+
+type CateringPreviewSection = {
+  category: string;
+  items: CateringPreviewItem[];
+};
+
+type CateringPreviewAddon = {
+  id: string;
+  name: string;
+  image: string;
+  price: number;
+  count: number;
+};
+
+const pickFirstString = (...values: any[]): string => {
+  for (const v of values) {
+    if (typeof v === "string" && v.trim().length > 0) return v.trim();
+  }
+  return "";
+};
+
+// ✅ NEW: Turns one raw menu item coming from the database (order.ts → Mixed
+//    `selections` / `items`) into a predictable shape. Handles plain strings and
+//    the different key names the client may have persisted (imageUrl / image / img…).
+const normalizeCateringItem = (raw: any, index: number, forceExtra: boolean): CateringPreviewItem | null => {
+  if (raw === null || raw === undefined) return null;
+
+  if (typeof raw === "string") {
+    const nm = raw.trim();
+    if (!nm) return null;
+    return { id: `${nm}-${index}`, name: nm, image: "", price: 0, isExtra: forceExtra };
+  }
+
+  if (typeof raw !== "object") return null;
+
+  const name = pickFirstString(raw.name, raw.title, raw.itemName, raw.label);
+  if (!name) return null;
+
+  return {
+    id: String(raw.id ?? raw._id ?? `${name}-${index}`),
+    name,
+    image: pickFirstString(raw.imageUrl, raw.image, raw.img, raw.photo, raw.thumbnail),
+    price: Number(raw.price) || 0,
+    isExtra: forceExtra || raw.isExtra === true || String(raw.type || "").toLowerCase() === "extra",
+  };
+};
+
+// ✅ NEW: Builds the catering menu sections dynamically from the order document.
+//    Supported persisted shapes (all stored by order.ts in Mixed fields):
+//      1. selections: [{ category, max, selected: [...], extraSelected: [...] }]
+//      2. selections: { "Starters": [...], "Main Course": [...] }   (object keyed by category)
+//      3. selections: [ {name,...}, "Paneer Tikka", ... ]           (flat list)
+//      4. items: [ {name, category|section, ...} ]                  (fallback when selections is empty)
+const getCateringPreviewSections = (order: any): CateringPreviewSection[] => {
+  if (!order) return [];
+
+  const sections: CateringPreviewSection[] = [];
+  const selections = order.selections;
+
+  const pushSection = (category: string, standard: any[], extra: any[], max?: number) => {
+    const items: CateringPreviewItem[] = [];
+    let idx = 0;
+
+    (standard || []).forEach((raw: any) => {
+      const overMax = typeof max === "number" && max > 0 && idx >= max;
+      const norm = normalizeCateringItem(raw, idx, overMax);
+      idx += 1;
+      if (norm) items.push(norm);
+    });
+
+    (extra || []).forEach((raw: any) => {
+      const norm = normalizeCateringItem(raw, idx, true);
+      idx += 1;
+      if (norm) items.push(norm);
+    });
+
+    if (items.length > 0) {
+      sections.push({ category: category || "Selected Items", items });
+    }
+  };
+
+  if (Array.isArray(selections)) {
+    const looseItems: any[] = [];
+
+    selections.forEach((cat: any, ci: number) => {
+      if (cat === null || cat === undefined) return;
+
+      const isCategoryBlock =
+        typeof cat === "object" &&
+        (Array.isArray(cat.selected) || Array.isArray(cat.extraSelected) || Array.isArray(cat.items));
+
+      if (!isCategoryBlock) {
+        looseItems.push(cat);
+        return;
+      }
+
+      const categoryName =
+        pickFirstString(cat.category, cat.categoryName, cat.title, cat.section, cat.name) ||
+        `Category ${ci + 1}`;
+      const standard = Array.isArray(cat.selected)
+        ? cat.selected
+        : Array.isArray(cat.items)
+        ? cat.items
+        : [];
+      const extra = Array.isArray(cat.extraSelected) ? cat.extraSelected : [];
+      const max = Number(cat.max);
+
+      pushSection(categoryName, standard, extra, Number.isFinite(max) && max > 0 ? max : undefined);
+    });
+
+    if (looseItems.length > 0) {
+      // Group loose items by their own category label if they have one.
+      const grouped: { [label: string]: any[] } = {};
+      looseItems.forEach((itm: any) => {
+        const label =
+          typeof itm === "object" && itm
+            ? pickFirstString(itm.category, itm.section) || "Selected Items"
+            : "Selected Items";
+        if (!grouped[label]) grouped[label] = [];
+        grouped[label].push(itm);
+      });
+      Object.keys(grouped).forEach((label) => pushSection(label, grouped[label], []));
+    }
+  } else if (selections && typeof selections === "object") {
+    Object.keys(selections)
+      .filter((key) => key !== "pausedDates")
+      .forEach((key) => {
+        const val = selections[key];
+        if (Array.isArray(val)) {
+          pushSection(key, val, []);
+        } else if (val && typeof val === "object") {
+          const standard = Array.isArray(val.selected) ? val.selected : Array.isArray(val.items) ? val.items : [];
+          const extra = Array.isArray(val.extraSelected) ? val.extraSelected : [];
+          const max = Number(val.max);
+          pushSection(key, standard, extra, Number.isFinite(max) && max > 0 ? max : undefined);
+        }
+      });
+  }
+
+  // Fallback: nothing usable in `selections` → try the flat `items` array.
+  if (sections.length === 0 && Array.isArray(order.items) && order.items.length > 0) {
+    const grouped: { [label: string]: any[] } = {};
+    order.items.forEach((itm: any) => {
+      const label =
+        typeof itm === "object" && itm
+          ? pickFirstString(itm.category, itm.section) || "Menu Items"
+          : "Menu Items";
+      if (!grouped[label]) grouped[label] = [];
+      grouped[label].push(itm);
+    });
+    Object.keys(grouped).forEach((label) => pushSection(label, grouped[label], []));
+  }
+
+  return sections;
+};
+
+// ✅ NEW: Normalizes the catering add-ons array persisted on the order.
+const getCateringPreviewAddons = (order: any): CateringPreviewAddon[] => {
+  if (!order || !Array.isArray(order.addons)) return [];
+
+  const result: CateringPreviewAddon[] = [];
+  order.addons.forEach((raw: any, idx: number) => {
+    if (!raw) return;
+    if (typeof raw === "string") {
+      const nm = raw.trim();
+      if (nm) result.push({ id: `${nm}-${idx}`, name: nm, image: "", price: 0, count: 1 });
+      return;
+    }
+    if (typeof raw !== "object") return;
+
+    const name = pickFirstString(raw.name, raw.title, raw.label);
+    if (!name) return;
+
+    result.push({
+      id: String(raw.id ?? raw._id ?? `${name}-${idx}`),
+      name,
+      image: pickFirstString(raw.imageUrl, raw.image, raw.img, raw.photo),
+      price: Number(raw.price) || 0,
+      count: Number(raw.count ?? raw.qty ?? raw.quantity) || 1,
+    });
+  });
+
+  return result;
+};
+
 const parseDateParts = (dateStr: string) => {
   if (!dateStr) return { dayName: "MON", dayNumber: "17", month: "JUN", fullString: "Mon, 17 Jun" };
 
@@ -78,6 +271,92 @@ const parseDateParts = (dateStr: string) => {
   }
 
   return { dayName: "DAY", dayNumber: "1", month: "JUN", fullString: cleanedStr };
+};
+
+// ✅ NEW: Resolves a date string ("Today", "Tomorrow", "Mon, 17 Jun", "Today, 17 Jun", etc.)
+//    into concrete year/month/day components anchored on "now" as the default.
+//    Shared by the homemade/QuickBites delivery-time resolver and the live
+//    countdown widget so both compute the target date the same way.
+const resolveTargetDateComponents = (dateStr: string): { year: number; month: number; day: number } => {
+  const now = new Date();
+  let targetYear = now.getFullYear();
+  let targetMonth = now.getMonth();
+  let targetDay = now.getDate();
+
+  if (!dateStr) return { year: targetYear, month: targetMonth, day: targetDay };
+
+  const lower = dateStr.trim().toLowerCase();
+  if (lower === "today" || lower.startsWith("today")) {
+    return { year: targetYear, month: targetMonth, day: targetDay };
+  }
+  if (lower === "tomorrow" || lower.startsWith("tomorrow")) {
+    const t = new Date(now);
+    t.setDate(t.getDate() + 1);
+    return { year: t.getFullYear(), month: t.getMonth(), day: t.getDate() };
+  }
+
+  try {
+    const cleanedDate = dateStr.includes("–") ? dateStr.split("–")[0].trim() : dateStr.trim();
+    const dateParts = cleanedDate.replace(/,/g, "").split(/\s+/);
+
+    let foundDay = -1;
+    let foundMonth = -1;
+    let foundYear = -1;
+
+    dateParts.forEach((part) => {
+      const num = parseInt(part, 10);
+      if (!isNaN(num) && num > 1900) {
+        foundYear = num;
+      } else if (!isNaN(num) && num >= 1 && num <= 31 && foundDay === -1) {
+        foundDay = num;
+      } else {
+        const mKey = part.substring(0, 3).toUpperCase();
+        if (MONTHS_MAP[mKey] !== undefined) {
+          foundMonth = MONTHS_MAP[mKey];
+        }
+      }
+    });
+
+    if (foundMonth !== -1) targetMonth = foundMonth;
+    if (foundDay !== -1) targetDay = foundDay;
+    if (foundYear !== -1) targetYear = foundYear;
+  } catch (_) {
+    // Fall through to "now" based defaults already set above.
+  }
+
+  return { year: targetYear, month: targetMonth, day: targetDay };
+};
+
+// ✅ NEW: Reads a slot string like "By 4:30 PM", "4:00 PM - 5:00 PM", or "08:30 PM"
+//    and extracts an explicit clock time. A meridiem (AM/PM) MUST be present for
+//    this to match — this is what stops duration strings like "45-60 min" from
+//    being misread as a clock time (e.g. "60" would otherwise look like an hour).
+const extractClockTimeFromSlot = (slot: string): { hour: number; minute: number } | null => {
+  if (!slot) return null;
+  const slotToParse = slot.includes("-") ? slot.split("-")[1].trim() : slot.trim();
+  const timeMatch = slotToParse.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
+  if (!timeMatch) return null;
+
+  let hour = parseInt(timeMatch[1], 10);
+  const minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+  const meridiem = timeMatch[3].toUpperCase();
+
+  if (meridiem === "PM" && hour < 12) hour += 12;
+  if (meridiem === "AM" && hour === 12) hour = 0;
+
+  return { hour, minute };
+};
+
+// ✅ NEW: Reads a slot string like "45-60 min" or "60 minutes" and extracts a
+//    duration in minutes (the upper bound of a range is used, since that's the
+//    latest the delivery is expected by).
+const extractDurationMinutesFromSlot = (slot: string): number | null => {
+  if (!slot) return null;
+  const rangeMatch = slot.match(/(\d+)\s*-\s*(\d+)\s*min/i);
+  if (rangeMatch) return parseInt(rangeMatch[2], 10);
+  const singleMatch = slot.match(/(\d+)\s*min/i);
+  if (singleMatch) return parseInt(singleMatch[1], 10);
+  return null;
 };
 
 const sortDatesAscending = (dates: string[]) => {
@@ -108,6 +387,16 @@ const generateFutureDateOptions = () => {
   return dates;
 };
 
+// ✅ UPDATED: For homemade/QuickBites orders, the effective delivery time is now
+//    derived from the order's actual `deliveryDate` + `deliverySlot`/`deliveryTimeSlot`
+//    whenever that slot resolves to a real clock time (e.g. "By 4:30 PM"). This
+//    makes the live countdown track the real scheduled delivery instead of always
+//    counting down a fixed window from order creation.
+//    Resolution order for homemade/QuickBites:
+//      1. `order.estimatedDeliveryAt` if the backend already supplied one.
+//      2. `deliveryDate` + a clock time parsed out of the delivery slot.
+//      3. `createdAt` + a duration parsed out of the delivery slot (e.g. "45-60 min").
+//      4. `createdAt` + a default window (55 min homemade / 75 min QuickBites).
 const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
   if (!order) return undefined;
 
@@ -117,15 +406,48 @@ const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
   }
 
   const sType = (order.serviceType || "").toLowerCase();
-  if (sType === "homemade" && order.createdAt) {
-    const windowMin = Number(order.deliveryWindowMinutes) || 55;
-    const createdMs = new Date(order.createdAt).getTime();
-    if (Number.isFinite(createdMs)) {
-      return new Date(createdMs + windowMin * 60 * 1000).toISOString();
+  const isHomemadeType = sType === "homemade" || sType === "quickbites";
+
+  if (isHomemadeType) {
+    const slotStr = order.deliverySlot || order.deliveryTimeSlot || "";
+
+    // ✅ 1) Try to read an explicit clock time out of the slot (e.g. "By 4:30 PM")
+    //       and anchor it to the order's actual delivery date.
+    const clockTime = extractClockTimeFromSlot(slotStr);
+    if (clockTime) {
+      const { year, month, day } = resolveTargetDateComponents(order.deliveryDate || "Today");
+      const targetDate = new Date(year, month, day, clockTime.hour, clockTime.minute, 0, 0);
+      if (!isNaN(targetDate.getTime())) {
+        return targetDate.toISOString();
+      }
+    }
+
+    // ✅ 2) Otherwise fall back to createdAt + a duration — prefer a duration
+    //       parsed from the slot itself (e.g. "45-60 min") over the generic default.
+    if (order.createdAt) {
+      const createdMs = new Date(order.createdAt).getTime();
+      if (Number.isFinite(createdMs)) {
+        const durationFromSlot = extractDurationMinutesFromSlot(slotStr);
+        const windowMin =
+          durationFromSlot ||
+          Number(order.deliveryWindowMinutes) ||
+          (sType === "quickbites" ? 75 : 55);
+        return new Date(createdMs + windowMin * 60 * 1000).toISOString();
+      }
     }
   }
 
   return undefined;
+};
+
+// ✅ NEW: Check if order is QuickBites
+const isQuickBitesOrder = (order: any): boolean => {
+  if (!order) return false;
+  return (
+    order?.isQuickBites === true ||
+    String(order?.isQuickBites).toLowerCase() === "true" ||
+    (order?.serviceType || "").toLowerCase() === "quickbites"
+  );
 };
 
 function DeliverySlotCountdownWidget({
@@ -133,15 +455,19 @@ function DeliverySlotCountdownWidget({
   timeSlot,
   isDelivered,
   isHomemade = false,
+  isQuickBites = false,
   estimatedDeliveryAt,
 }: {
   deliveryDate: string;
   timeSlot: string;
   isDelivered: boolean;
   isHomemade?: boolean;
+  isQuickBites?: boolean;
   estimatedDeliveryAt?: string;
 }) {
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(isHomemade ? 55 * 60 : 0);
+  // ✅ For QuickBites, use 75 min default; homemade 55 min
+  const defaultMinutes = isQuickBites ? 75 : 55;
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(isHomemade ? defaultMinutes * 60 : 0);
 
   const tickAnim = useRef(new Animated.Value(0)).current;
   const tickLoopRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -176,6 +502,12 @@ function DeliverySlotCountdownWidget({
     outputRange: ["0deg", "18deg"],
   });
 
+  // ✅ UPDATED: For homemade/QuickBites orders that don't already have a resolved
+  //    `estimatedDeliveryAt` (handled first, below), the countdown is now derived
+  //    from the actual `deliveryDate` + `timeSlot` instead of always returning a
+  //    flat fixed window. It first looks for an explicit clock time in the slot
+  //    (e.g. "By 4:30 PM"), then a duration (e.g. "45-60 min"), and only falls
+  //    back to the flat default window if neither can be parsed.
   const calculateRemainingSeconds = useCallback(() => {
     if (estimatedDeliveryAt) {
       const targetMs = new Date(estimatedDeliveryAt).getTime();
@@ -189,7 +521,23 @@ function DeliverySlotCountdownWidget({
     }
 
     if (isHomemade) {
-      return 55 * 60;
+      const clockTime = extractClockTimeFromSlot(timeSlot);
+      if (clockTime) {
+        const { year, month, day } = resolveTargetDateComponents(deliveryDate || "Today");
+        const targetDate = new Date(year, month, day, clockTime.hour, clockTime.minute, 0, 0);
+        const diffSecs = Math.floor((targetDate.getTime() - Date.now()) / 1000);
+        if (diffSecs > 0) {
+          return diffSecs;
+        }
+        return 10 * 60;
+      }
+
+      const durationMin = extractDurationMinutesFromSlot(timeSlot);
+      if (durationMin) {
+        return durationMin * 60;
+      }
+
+      return defaultMinutes * 60;
     }
 
     try {
@@ -253,7 +601,7 @@ function DeliverySlotCountdownWidget({
     } catch {
       return 1800;
     }
-  }, [deliveryDate, timeSlot, isHomemade, estimatedDeliveryAt]);
+  }, [deliveryDate, timeSlot, isHomemade, estimatedDeliveryAt, defaultMinutes]);
 
   useEffect(() => {
     if (isDelivered) return;
@@ -542,7 +890,11 @@ export default function MyOrdersScreen() {
   const [modalActiveDay, setModalActiveDay] = useState<string>("");
 
   const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [previewOrder, setPreviewOrder] = useState<any>(null);
+  // ✅ UPDATED: The state now only stores the order that was tapped (a snapshot).
+  //    The `previewOrder` actually rendered by the modal is derived below from
+  //    `userOrders`, so menu items stay in sync with what is in the database
+  //    (refresh / socket updates) while the sheet is open.
+  const [previewOrderSnapshot, setPreviewOrder] = useState<any>(null);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>("");
 
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -558,6 +910,15 @@ export default function MyOrdersScreen() {
   const rescheduleSheetAnim = useRef(new Animated.Value(400)).current;
 
   const availableDateOptions = useMemo(() => generateFutureDateOptions(), []);
+
+  // ✅ NEW: Live version of the order shown in the preview modal. Always prefers
+  //    the freshest copy from `userOrders` (which is what /api/orders/my-orders
+  //    and the socket events keep updated from the Order model in order.ts).
+  const previewOrder = useMemo(() => {
+    if (!previewOrderSnapshot) return null;
+    const live = userOrders.find((o) => o.orderId === previewOrderSnapshot.orderId);
+    return live ? { ...previewOrderSnapshot, ...live } : previewOrderSnapshot;
+  }, [previewOrderSnapshot, userOrders]);
 
   const handleCallSupport = () => {
     const cleanNumber = SUPPORT_PHONE_NUMBER.replace(/[^0-9+]/g, "");
@@ -679,7 +1040,7 @@ export default function MyOrdersScreen() {
         fetchedOrders.forEach((ord: any) => {
           const sType = (ord.serviceType || "").toLowerCase();
           const isCatering = sType === "catering";
-          const isHomemade = sType === "homemade";
+          const isHomemade = sType === "homemade" || sType === "quickbites";
           const defaultEventDate = ord.eventDate || ord.deliveryDate || (isHomemade ? "Today" : "Mon, 17 Jun");
 
           const sortedUpcoming = (isCatering || isHomemade)
@@ -856,12 +1217,14 @@ export default function MyOrdersScreen() {
     };
   }, []);
 
+  // ✅ Enhanced filtering to properly categorize all order types including QuickBites
   const filteredOrders = useMemo(() => {
     if (!userOrders || userOrders.length === 0) return [];
 
     const q = searchQuery.trim().toLowerCase();
 
     return userOrders.filter((order) => {
+      // Search filter
       if (q) {
         const haystack = [
           order.orderId,
@@ -869,6 +1232,8 @@ export default function MyOrdersScreen() {
           order.chefName,
           order.restaurantName,
           order.occasion,
+          // ✅ Include item names for homemade/quickbites search
+          ...(Array.isArray(order.items) ? order.items.map((i: any) => i.name) : []),
         ]
           .filter(Boolean)
           .join(" ")
@@ -883,6 +1248,7 @@ export default function MyOrdersScreen() {
         paymentStatus === "collected" ||
         paymentStatus === "paid" ||
         paymentStatus === "cash collected" ||
+        paymentStatus === "fully paid (balance collected)" ||
         order.paymentCaptured === true;
 
       const isCompletedState =
@@ -892,8 +1258,11 @@ export default function MyOrdersScreen() {
         status === "collected" ||
         isPaymentCollected;
 
+      const isCancelledState = status === "cancelled" || status === "canceled";
+
+      // ✅ UPCOMING: Orders that are placed, accepted, scheduled, preparing, etc. (not delivered/cancelled)
       if (activeTab === "Upcoming") {
-        if (isCompletedState) return false;
+        if (isCompletedState || isCancelledState) return false;
         return (
           status === "placed" ||
           status === "accepted" ||
@@ -903,22 +1272,31 @@ export default function MyOrdersScreen() {
           status === "prepared & packing" ||
           status === "prepared and packing" ||
           status === "paused" ||
-          status === "confirmed"
+          status === "confirmed" ||
+          status === "advance verified" ||
+          status === "payment verified"
         );
-      } else if (activeTab === "Active") {
-        if (isCompletedState) return false;
+      } 
+      // ✅ ACTIVE: Orders that are in-progress (preparing, out for delivery)
+      else if (activeTab === "Active") {
+        if (isCompletedState || isCancelledState) return false;
         return (
           status === "active" ||
           status === "preparing" ||
           status === "prepared & packing" ||
           status === "prepared and packing" ||
           status === "out for delivery" ||
-          status === "in progress"
+          status === "in progress" ||
+          status === "dispatched"
         );
-      } else if (activeTab === "Completed") {
-        return isCompletedState;
-      } else if (activeTab === "Cancelled") {
-        return status === "cancelled";
+      } 
+      // ✅ COMPLETED: Delivered/completed orders
+      else if (activeTab === "Completed") {
+        return isCompletedState && !isCancelledState;
+      } 
+      // ✅ CANCELLED: Cancelled orders
+      else if (activeTab === "Cancelled") {
+        return isCancelledState;
       }
       return true;
     });
@@ -1078,7 +1456,7 @@ export default function MyOrdersScreen() {
 
     const sType = (order?.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    const isHomemade = sType === "homemade";
+    const isHomemade = sType === "homemade" || sType === "quickbites";
     const activeDateToUse = defaultDate || selectedDatesPerOrder[order.orderId] || order.eventDate || order.deliveryDate;
 
     if (!isCatering && !isHomemade && order?.selections && typeof order.selections === "object" && !Array.isArray(order.selections)) {
@@ -1115,7 +1493,7 @@ export default function MyOrdersScreen() {
   const openOrderDetails = (order: any, activeDate?: string) => {
     const sType = (order?.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    const isHomemade = sType === "homemade";
+    const isHomemade = sType === "homemade" || sType === "quickbites";
     const dateToInspect = activeDate || selectedDatesPerOrder[order.orderId] || order.eventDate || order.deliveryDate;
 
     setSelectedOrderDetails({
@@ -1168,6 +1546,17 @@ export default function MyOrdersScreen() {
       : [];
   const groupedPreviewItemsMap = getGroupedMealBoxItemsBySection(currentPreviewDaySelections);
 
+  // ✅ NEW: Catering menu sections + add-ons resolved dynamically from the order
+  //    document (selections / items / addons stored by order.ts).
+  const cateringPreviewSections: CateringPreviewSection[] =
+    (previewOrder?.serviceType || "").toLowerCase() === "catering"
+      ? getCateringPreviewSections(previewOrder)
+      : [];
+  const cateringPreviewAddons: CateringPreviewAddon[] =
+    (previewOrder?.serviceType || "").toLowerCase() === "catering"
+      ? getCateringPreviewAddons(previewOrder)
+      : [];
+
   const handleCopyOrderId = () => {
     Alert.alert("Copied", "Order ID copied to clipboard.");
   };
@@ -1178,10 +1567,11 @@ export default function MyOrdersScreen() {
     try {
       const sType = (selectedOrderDetails.serviceType || "").toLowerCase();
       const isCatering = sType === "catering";
-      const isHomemade = sType === "homemade";
+      const isHomemade = sType === "homemade" || sType === "quickbites";
+      const isQuickBites = isQuickBitesOrder(selectedOrderDetails);
       const orderId = selectedOrderDetails.orderId || "DW12345678";
       const chefName = selectedOrderDetails.chefName || selectedOrderDetails.restaurantName || "Partner Chef";
-      const menuName = selectedOrderDetails.menuName || (isCatering ? "Royal Catering Platter" : (isHomemade ? "Homemade Dishes" : "Classic Lunch"));
+      const menuName = selectedOrderDetails.menuName || (isCatering ? "Royal Catering Platter" : (isHomemade ? (isQuickBites ? "Quick Bites Order" : "Homemade Dishes") : "Classic Lunch"));
       const total = selectedOrderDetails.totalAmount || 0;
       const subtotal = selectedOrderDetails.subtotal || total;
       const deliveryPrice = selectedOrderDetails.deliveryPrice ?? 0;
@@ -1279,9 +1669,10 @@ export default function MyOrdersScreen() {
   if (isInvoiceScreenOpen && selectedOrderDetails) {
     const sType = (selectedOrderDetails.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    const isHomemade = sType === "homemade";
+    const isHomemade = sType === "homemade" || sType === "quickbites";
+    const isQuickBites = isQuickBitesOrder(selectedOrderDetails);
     const invOrderId = selectedOrderDetails.orderId || "DW12345678";
-    const invMenuName = selectedOrderDetails.menuName || (isCatering ? "Royal Catering Platter" : (isHomemade ? "Homemade Dishes Order" : "Classic Lunch"));
+    const invMenuName = selectedOrderDetails.menuName || (isCatering ? "Royal Catering Platter" : (isHomemade ? (isQuickBites ? "Quick Bites Order" : "Homemade Dishes Order") : "Classic Lunch"));
     const invChefName = selectedOrderDetails.chefName || selectedOrderDetails.restaurantName || "Partner Chef";
     const invTotal = selectedOrderDetails.totalAmount || 1014;
     const invSubtotal = selectedOrderDetails.subtotal || invTotal;
@@ -1350,7 +1741,7 @@ export default function MyOrdersScreen() {
                     {invChefName.toUpperCase()}
                   </Text>
                   <Text style={styles.brandSubtext}>
-                    {isCatering ? "Grand Event Catering" : isHomemade ? "Fresh Homemade Kitchen" : "Fresh Daily Subscriptions"}
+                    {isCatering ? "Grand Event Catering" : isHomemade ? (isQuickBites ? "Quick Bites Express" : "Fresh Homemade Kitchen") : "Fresh Daily Subscriptions"}
                   </Text>
                 </View>
               </View>
@@ -1397,7 +1788,7 @@ export default function MyOrdersScreen() {
             <View style={styles.invoiceTableDivider} />
 
             <Text style={styles.invoiceSectionTitle}>
-              {isCatering ? "MENU ITEMS & SELECTIONS" : isHomemade ? "HOMEMADE ITEMS ORDERED" : "ORDERED ITEMS"}
+              {isCatering ? "MENU ITEMS & SELECTIONS" : isHomemade ? (isQuickBites ? "QUICK BITES ITEMS" : "HOMEMADE ITEMS ORDERED") : "ORDERED ITEMS"}
             </Text>
 
             {dynamicInvoiceItems.map((itm: any, idx: number) => {
@@ -1503,11 +1894,12 @@ export default function MyOrdersScreen() {
   if (isDetailScreenOpen && selectedOrderDetails) {
     const sType = (selectedOrderDetails.serviceType || "").toLowerCase();
     const isCatering = sType === "catering";
-    const isHomemade = sType === "homemade";
+    const isHomemade = sType === "homemade" || sType === "quickbites";
+    const isQuickBites = isQuickBitesOrder(selectedOrderDetails);
     const isMealBox = !isCatering && !isHomemade;
     const detailOrderId = selectedOrderDetails.orderId || "DW12345678";
     const detailChefName = selectedOrderDetails.chefName || selectedOrderDetails.restaurantName || "Expert Chef";
-    const detailMenuName = selectedOrderDetails.menuName || (isCatering ? "Catering Platter" : (isHomemade ? "Homemade Dishes Order" : "Classic Lunch"));
+    const detailMenuName = selectedOrderDetails.menuName || (isCatering ? "Catering Platter" : (isHomemade ? (isQuickBites ? "Quick Bites Order" : "Homemade Dishes Order") : "Classic Lunch"));
     const detailMenuImage = selectedOrderDetails.menuImage || selectedOrderDetails.restaurantImage || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400";
     const detailTotal = selectedOrderDetails.totalAmount || 1014;
     
@@ -1522,10 +1914,24 @@ export default function MyOrdersScreen() {
       ? (selectedOrderDetails.deliveryDate || "Today")
       : activeDateTarget;
 
-    const detailTimeSlot = matchedSchedule?.timeSlot
+    // ✅ Enhanced time slot resolution for QuickBites
+    let detailTimeSlot = matchedSchedule?.timeSlot
       || (isCatering ? (selectedOrderDetails.eventTime || selectedOrderDetails.deliveryTimeSlot || "08:30 PM")
-      : isHomemade ? (selectedOrderDetails.deliverySlot || selectedOrderDetails.deliveryTimeSlot || "45-60 min")
+      : isHomemade ? (selectedOrderDetails.deliverySlot || selectedOrderDetails.deliveryTimeSlot || (isQuickBites ? "By 4:30 PM" : "45-60 min"))
       : (selectedOrderDetails.deliveryTimeSlot || "7:00 PM - 9:00 PM"));
+
+    // ✅ For QuickBites, compute the actual delivery time from estimatedDeliveryAt
+    if (isQuickBites && selectedOrderDetails.estimatedDeliveryAt) {
+      const estDate = new Date(selectedOrderDetails.estimatedDeliveryAt);
+      if (!isNaN(estDate.getTime())) {
+        const timeStr = estDate.toLocaleTimeString("en-IN", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+        detailTimeSlot = `By ${timeStr}`;
+      }
+    }
 
     const detailAddress = matchedSchedule?.address
       || selectedOrderDetails.addressDetails
@@ -1551,7 +1957,7 @@ export default function MyOrdersScreen() {
             <Ionicons name="chevron-back" size={24} color="#0F172A" />
           </TouchableOpacity>
           <Text style={styles.detailsHeaderTitle}>
-            {isCatering ? "Catering Event Details" : isHomemade ? "Homemade Order Details" : "Delivery Schedule Details"}
+            {isCatering ? "Catering Event Details" : isHomemade ? (isQuickBites ? "Quick Bites Details" : "Homemade Order Details") : "Delivery Schedule Details"}
           </Text>
           <TouchableOpacity style={styles.headerIconBtn} onPress={() => setShowSupportCard(true)}>
             <Ionicons name="headset-outline" size={22} color="#0F172A" />
@@ -1591,14 +1997,18 @@ export default function MyOrdersScreen() {
                 {isCatering
                   ? `Catering Booking Confirmed for ${selectedOrderDetails.occasion || "Event"}`
                   : isHomemade
-                  ? `Chef ${detailChefName} is cooking your fresh order`
+                  ? (isQuickBites 
+                    ? `Quick Bites order from Chef ${detailChefName}`
+                    : `Chef ${detailChefName} is cooking your fresh order`)
                   : `Delivery Scheduled for ${detailStartDate}`}
               </Text>
               <Text style={styles.heroConfirmedSubheading}>
                 {isCatering
                   ? `Our culinary team will set up the buffet at your venue on ${detailStartDate}.`
                   : isHomemade
-                  ? "Fresh, hygienic home cooking in progress."
+                  ? (isQuickBites 
+                    ? "Fast & fresh delivery in progress."
+                    : "Fresh, hygienic home cooking in progress.")
                   : `Track cooking, packing, and courier delivery for ${detailStartDate}.`}
               </Text>
             </View>
@@ -1616,6 +2026,7 @@ export default function MyOrdersScreen() {
             timeSlot={detailTimeSlot}
             isDelivered={isDeliveredCurrent}
             isHomemade={isHomemade}
+            isQuickBites={isQuickBites}
             estimatedDeliveryAt={resolveEffectiveDeliveryTime(selectedOrderDetails)}
           />
 
@@ -1702,6 +2113,80 @@ export default function MyOrdersScreen() {
                   </View>
                 </View>
               )}
+            </View>
+          )}
+
+          {/* ✅ Homemade/QuickBites items display in detail view */}
+          {isHomemade && Array.isArray(selectedOrderDetails.items) && selectedOrderDetails.items.length > 0 && (
+            <View style={styles.mealSpecCard}>
+              <View style={styles.mealSpecMainRow}>
+                <Image source={{ uri: detailMenuImage }} style={styles.mealSpecImage} />
+                <View style={styles.mealSpecTextCol}>
+                  <Text style={styles.mealSpecTitle}>{detailMenuName}</Text>
+                  <Text style={styles.mealSpecSubtext}>
+                    Chef: {detailChefName}
+                  </Text>
+                  <Text style={styles.mealSpecPriceText}>
+                    ₹{detailTotal} <Text style={styles.perWeekSpan}>{isQuickBites ? "quick" : "total"}</Text>
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.mergedScheduleSectionBlock}>
+                <View style={styles.mergedScheduleHeaderRow}>
+                  <View style={styles.mergedHeaderLabelGroup}>
+                    <Ionicons name={isQuickBites ? "flash-outline" : "fast-food-outline"} size={16} color="#166534" />
+                    <Text style={styles.mergedScheduleHeaderTitle}>
+                      {isQuickBites ? "Quick Bites Items" : "Homemade Items"}
+                    </Text>
+                  </View>
+                  <View style={styles.selectedScheduleStatusBadge}>
+                    <Text style={styles.selectedScheduleStatusBadgeText}>
+                      {selectedOrderDetails.items.length} items
+                    </Text>
+                  </View>
+                </View>
+
+                {selectedOrderDetails.items.map((item: any, idx: number) => (
+                  <View key={`detail-item-${idx}`} style={styles.detailItemRow}>
+                    <Image 
+                      source={{ uri: item.image || "https://via.placeholder.com/60" }} 
+                      style={styles.detailItemImage} 
+                    />
+                    <View style={styles.detailItemInfo}>
+                      <Text style={styles.detailItemName}>{item.name}</Text>
+                      <View style={styles.detailItemMetaRow}>
+                        <Text style={styles.detailItemServing}>
+                          {item.selectedQtyConfig || "Standard Serving"}
+                        </Text>
+                        <View style={styles.detailItemDot} />
+                        <Text style={styles.detailItemQty}>Qty: {item.quantity || 1}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.detailItemPrice}>
+                      ₹{(Number(item.price) || 0) * (Number(item.quantity) || 1)}
+                    </Text>
+                  </View>
+                ))}
+
+                {detailAddress && (
+                  <View style={styles.detailAddressRow}>
+                    <Ionicons name="location-outline" size={14} color="#166538" />
+                    <Text style={styles.detailAddressText} numberOfLines={2}>
+                      {detailAddress}
+                    </Text>
+                  </View>
+                )}
+
+                {detailTimeSlot && (
+                  <View style={[styles.detailAddressRow, { marginTop: 6 }]}>
+                    <Ionicons name="time-outline" size={14} color="#166538" />
+                    <Text style={styles.detailAddressText}>
+                      {detailTimeSlot}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
           )}
 
@@ -1831,7 +2316,7 @@ export default function MyOrdersScreen() {
             <Text style={styles.orderSummaryCardTitle}>Bill Summary</Text>
 
             <View style={styles.orderSummaryRow}>
-              <Text style={styles.orderSummaryLabel}>{isCatering ? "Catering Platter" : isHomemade ? "Homemade Dishes" : "Plan"}</Text>
+              <Text style={styles.orderSummaryLabel}>{isCatering ? "Catering Platter" : isHomemade ? (isQuickBites ? "Quick Bites" : "Homemade Dishes") : "Plan"}</Text>
               <Text style={styles.orderSummaryValue}>{detailMenuName}</Text>
             </View>
 
@@ -2002,7 +2487,8 @@ export default function MyOrdersScreen() {
   }
 
   const isPreviewCatering = (previewOrder?.serviceType || "").toLowerCase() === "catering";
-  const isPreviewHomemade = (previewOrder?.serviceType || "").toLowerCase() === "homemade";
+  const isPreviewHomemade = (previewOrder?.serviceType || "").toLowerCase() === "homemade" || (previewOrder?.serviceType || "").toLowerCase() === "quickbites";
+  const isPreviewQuickBites = isQuickBitesOrder(previewOrder);
 
   return (
     <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
@@ -2098,7 +2584,8 @@ export default function MyOrdersScreen() {
           filteredOrders.map((order, orderIndex) => {
             const sType = (order.serviceType || "").toLowerCase();
             const isCatering = sType === "catering";
-            const isHomemade = sType === "homemade";
+            const isHomemade = sType === "homemade" || sType === "quickbites";
+            const isQuickBites = isQuickBitesOrder(order);
             const orderId = order.orderId;
             const isNotLastOrder = orderIndex < filteredOrders.length - 1;
             const orderStatusString = order.orderStatus || "Placed";
@@ -2128,16 +2615,12 @@ export default function MyOrdersScreen() {
               const deliveryAddressString = order.deliveryAddress || order.addressDetails || "Doorstep Delivery";
               const isHomemadeStepperOpen = !!expandedSteppers[orderId];
 
-              const homemadeIsQuickBites =
-                order?.isQuickBites === true ||
-                String(order?.isQuickBites).toLowerCase() === "true" ||
-                !!order?.estimatedDeliveryAt;
-
+              // ✅ Enhanced date and slot display for QuickBites
               let homemadeDateDisplay = order?.deliveryDate || "Today";
               let homemadeSlotDisplay =
                 order?.deliverySlot ||
                 order?.deliveryTimeSlot ||
-                "within 45-60 min";
+                (isQuickBites ? "By 4:30 PM" : "within 45-60 min");
 
               const homemadeEstimatedIso = resolveEffectiveDeliveryTime(order);
               if (homemadeEstimatedIso) {
@@ -2150,7 +2633,8 @@ export default function MyOrdersScreen() {
                     minute: "2-digit",
                     hour12: true,
                   });
-                  if (homemadeIsQuickBites) {
+                  if (isQuickBites) {
+                    // ✅ QuickBites shows "Today, 17 Jun" and "By 4:30 PM"
                     homemadeDateDisplay = `Today, ${dayNum} ${monthShort}`;
                     homemadeSlotDisplay = `By ${timeStr}`;
                   } else {
@@ -2167,9 +2651,11 @@ export default function MyOrdersScreen() {
                       <View style={styles.nextDeliveryContentLeft}>
                         <View style={styles.nextDeliveryHeaderRow}>
                           <View style={[styles.calendarIconBox, { backgroundColor: "#15803D" }]}>
-                            <Ionicons name="restaurant-outline" size={16} color="#FFFFFF" />
+                            <Ionicons name={isQuickBites ? "flash-outline" : "restaurant-outline"} size={16} color="#FFFFFF" />
                           </View>
-                          <Text style={styles.nextDeliveryLabel}>Order #{orderId}</Text>
+                          <Text style={styles.nextDeliveryLabel}>
+                            {isQuickBites ? "Quick Bites" : "Homemade"} #{orderId}
+                          </Text>
                         </View>
 
                         <Text style={styles.nextDeliveryDateText}>
@@ -2198,6 +2684,7 @@ export default function MyOrdersScreen() {
                       timeSlot={homemadeSlotDisplay || order?.deliveryTimeSlot || "45-60 min"}
                       isDelivered={isDeliveredState}
                       isHomemade={true}
+                      isQuickBites={isQuickBites}
                       estimatedDeliveryAt={homemadeEstimatedIso}
                     />
 
@@ -2330,14 +2817,14 @@ export default function MyOrdersScreen() {
                       <View style={styles.deliveryCardMain}>
                         <View style={[styles.cateringEventTile, { backgroundColor: "#F0FDF4", borderColor: "#DCFCE7" }]}>
                           <View style={[styles.cateringEventTileHeader, { backgroundColor: "#15803D" }]}>
-                            <Text style={styles.cateringEventTileHeaderText}>KITCHEN</Text>
+                            <Text style={styles.cateringEventTileHeaderText}>{isQuickBites ? "QUICK" : "KITCHEN"}</Text>
                           </View>
-                          <Ionicons name="fast-food-outline" size={20} color="#15803D" style={{ marginTop: 6 }} />
+                          <Ionicons name={isQuickBites ? "flash-outline" : "fast-food-outline"} size={20} color="#15803D" style={{ marginTop: 6 }} />
                         </View>
 
                         <View style={styles.deliveryInfoCol}>
                           <Text style={styles.deliveryMenuTitle} numberOfLines={1}>
-                            {homemadeItems.map((i: any) => i.name).join(", ") || "Fresh Homemade Food"}
+                            {homemadeItems.map((i: any) => i.name).join(", ") || (isQuickBites ? "Quick Bites Order" : "Fresh Homemade Food")}
                           </Text>
                           <Text style={styles.deliveryTimeText} numberOfLines={1}>
                             {deliveryAddressString}
@@ -2351,7 +2838,7 @@ export default function MyOrdersScreen() {
 
                         <View style={styles.deliveryCardPriceRight}>
                           <Text style={styles.cateringPriceBigTotal}>₹{homemadeTotal}</Text>
-                          <Text style={styles.cateringPriceTotalLabel}>Delivering hot</Text>
+                          <Text style={styles.cateringPriceTotalLabel}>{isQuickBites ? "Quick delivery" : "Delivering hot"}</Text>
                         </View>
                       </View>
 
@@ -2368,6 +2855,16 @@ export default function MyOrdersScreen() {
                         >
                           <Ionicons name="settings-outline" size={16} color="#334155" />
                           <Text style={styles.actionBtnText}>Order Details</Text>
+                        </TouchableOpacity>
+
+                        <View style={styles.actionDivider} />
+
+                        <TouchableOpacity
+                          style={styles.actionBtn}
+                          onPress={() => openPreviewModal(order)}
+                        >
+                          <Ionicons name={isQuickBites ? "flash-outline" : "restaurant-outline"} size={16} color="#334155" />
+                          <Text style={styles.actionBtnText}>Items</Text>
                         </TouchableOpacity>
 
                         <View style={styles.actionDivider} />
@@ -2585,7 +3082,6 @@ export default function MyOrdersScreen() {
                         <View style={styles.deliveryInfoCol}>
                           <Text style={styles.deliveryMenuTitle}>{cateringMenuName}</Text>
 
-                          {/* 🔄 SWAPPED POSITION 1: Total Amount / Price Strip is now placed up top (reduced size/emphasis) */}
                           <View style={styles.cateringPriceStrip}>
                             <View style={styles.cateringPriceLabelCol}>
                               <Text style={styles.cateringPriceLabelText}>Total Amount</Text>
@@ -2596,7 +3092,6 @@ export default function MyOrdersScreen() {
                         </View>
                       </View>
 
-                      {/* 🔄 SWAPPED POSITION 2: Catering Details / Meta Card is now placed below, expanded for detailed information, and uses "Guests" text instead of an icon */}
                       <View style={styles.cateringMetaCombinedCard}>
                         <View style={styles.cateringMetaItem}>
                           <Ionicons name="calendar-outline" size={13} color="#166538" />
@@ -3146,11 +3641,11 @@ export default function MyOrdersScreen() {
 
             <View style={styles.previewHeaderCentered}>
               <Text style={styles.previewTitle}>
-                {isPreviewHomemade ? "Ordered Dishes" : "Customer Selected Items"}
+                {isPreviewQuickBites ? "Quick Bites Items" : isPreviewHomemade ? "Ordered Dishes" : "Customer Selected Items"}
               </Text>
               <Text style={styles.previewSubtitle}>
                 {isPreviewHomemade
-                  ? "Prepared fresh for this order"
+                  ? (isPreviewQuickBites ? "Fast & fresh quick bites" : "Prepared fresh for this order")
                   : isPreviewCatering
                   ? "Confirmed platter dishes & course selections"
                   : "Customized mealbox items"}
@@ -3215,7 +3710,9 @@ export default function MyOrdersScreen() {
               {isPreviewHomemade ? (
                 <View style={styles.previewCategoryCard}>
                   <View style={styles.previewCategoryHeader}>
-                    <Text style={styles.previewCategoryTitle}>Ordered Homemade Items</Text>
+                    <Text style={styles.previewCategoryTitle}>
+                      {isPreviewQuickBites ? "Quick Bites Items" : "Ordered Homemade Items"}
+                    </Text>
                   </View>
 
                   {Array.isArray(previewOrder?.items) && previewOrder.items.length > 0 ? (
@@ -3243,61 +3740,57 @@ export default function MyOrdersScreen() {
                   )}
                 </View>
               ) : isPreviewCatering ? (
-                <View style={{ width: "100%" }}>
-                  {Array.isArray(previewOrder?.selections) &&
-                    previewOrder.selections.map((cat: any, index: number) => {
-                      const allSelected = [...(cat.selected || []), ...(cat.extraSelected || [])];
-                      if (!allSelected.length) return null;
+                // ✅ UPDATED: Catering menu items are now rendered dynamically from the
+                //    order document (selections / items / addons persisted by order.ts),
+                //    via getCateringPreviewSections() / getCateringPreviewAddons().
+                <View style={{ width: "100%", paddingBottom: 90 }}>
+                  {cateringPreviewSections.map((section, index) => (
+                    <View key={`conf-preview-cat-${section.category}-${index}`} style={styles.previewCategoryCard}>
+                      <View style={styles.previewCategoryHeader}>
+                        <Text style={styles.previewCategoryTitle}>{section.category}</Text>
+                      </View>
 
-                      return (
-                        <View key={`conf-preview-cat-${index}`} style={styles.previewCategoryCard}>
-                          <View style={styles.previewCategoryHeader}>
-                            <Text style={styles.previewCategoryTitle}>{cat.category}</Text>
-                          </View>
-
-                          {allSelected.map((item: any, i: number) => {
-                            const isExtra = cat.max ? i >= cat.max : false;
-                            return (
-                              <View key={`conf-cat-item-${i}`} style={styles.previewItemCard}>
-                                <Image
-                                  source={{ uri: item.imageUrl || item.image || "https://images.unsplash.com/photo-1544025162-d76694265947?w=120&auto=format&fit=crop" }}
-                                  style={styles.previewItemImage}
-                                />
-                                <Text style={styles.previewItemName}>{item.name}</Text>
-                                {isExtra && (
-                                  <View style={styles.extraTag}>
-                                    <Text style={styles.extraTagText}>+₹{item.price || 0}/plate</Text>
-                                  </View>
-                                )}
-                                <Ionicons
-                                  name="checkmark-circle"
-                                  size={18}
-                                  color={isExtra ? "#f59e0b" : "#16a34a"}
-                                  style={{ marginLeft: "auto" }}
-                                />
-                              </View>
-                            );
-                          })}
+                      {section.items.map((item, i) => (
+                        <View key={`conf-cat-item-${item.id}-${i}`} style={styles.previewItemCard}>
+                          <Image
+                            source={{ uri: item.image || "https://images.unsplash.com/photo-1544025162-d76694265947?w=120&auto=format&fit=crop" }}
+                            style={styles.previewItemImage}
+                          />
+                          <Text style={[styles.previewItemName, { flexShrink: 1 }]} numberOfLines={2}>
+                            {item.name}
+                          </Text>
+                          {item.isExtra && (
+                            <View style={styles.extraTag}>
+                              <Text style={styles.extraTagText}>+₹{item.price || 0}/plate</Text>
+                            </View>
+                          )}
+                          <Ionicons
+                            name="checkmark-circle"
+                            size={18}
+                            color={item.isExtra ? "#f59e0b" : "#16a34a"}
+                            style={{ marginLeft: "auto" }}
+                          />
                         </View>
-                      );
-                    })}
+                      ))}
+                    </View>
+                  ))}
 
-                  {Array.isArray(previewOrder?.addons) && previewOrder.addons.length > 0 && (
+                  {cateringPreviewAddons.length > 0 && (
                     <View style={styles.previewCategoryCard}>
                       <View style={styles.previewCategoryHeader}>
                         <Text style={styles.previewCategoryTitle}>Add-ons</Text>
                       </View>
-                      {previewOrder.addons.map((addon: any, idx: number) => (
-                        <View key={`conf-addon-preview-${idx}`} style={styles.previewItemCard}>
+                      {cateringPreviewAddons.map((addon, idx) => (
+                        <View key={`conf-addon-preview-${addon.id}-${idx}`} style={styles.previewItemCard}>
                           <Image
-                            source={{ uri: addon.imageUrl || addon.image || "https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=120&auto=format&fit=crop" }}
+                            source={{ uri: addon.image || "https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=120&auto=format&fit=crop" }}
                             style={styles.previewItemImage}
                           />
-                          <Text style={styles.previewItemName}>
-                            {addon.name} × {addon.count || 1}
+                          <Text style={[styles.previewItemName, { flexShrink: 1 }]} numberOfLines={2}>
+                            {addon.name} × {addon.count}
                           </Text>
                           <View style={styles.extraTag}>
-                            <Text style={styles.extraTagText}>+₹{(addon.price || 0) * (addon.count || 1)}/plate</Text>
+                            <Text style={styles.extraTagText}>+₹{addon.price * addon.count}/plate</Text>
                           </View>
                           <Ionicons
                             name="checkmark-circle"
@@ -3307,6 +3800,14 @@ export default function MyOrdersScreen() {
                           />
                         </View>
                       ))}
+                    </View>
+                  )}
+
+                  {cateringPreviewSections.length === 0 && cateringPreviewAddons.length === 0 && (
+                    <View style={styles.previewCategoryCard}>
+                      <Text style={styles.previewEmptyListText}>
+                        No menu items were saved for this catering order.
+                      </Text>
                     </View>
                   )}
                 </View>
@@ -3743,6 +4244,74 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: "#15803D",
     fontWeight: "800",
+  },
+
+  // ✅ Detail item styles for homemade/quickbites
+  detailItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+  },
+  detailItemImage: {
+    width: 52,
+    height: 52,
+    borderRadius: 12,
+    backgroundColor: "#E5ECE8",
+  },
+  detailItemInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  detailItemName: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0B261D",
+  },
+  detailItemMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+  },
+  detailItemServing: {
+    fontSize: 11.5,
+    color: "#5B756C",
+    fontWeight: "600",
+  },
+  detailItemDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: "#CBD5E1",
+    marginHorizontal: 6,
+  },
+  detailItemQty: {
+    fontSize: 11.5,
+    color: "#5B756C",
+    fontWeight: "600",
+  },
+  detailItemPrice: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: "#166538",
+    marginLeft: 8,
+  },
+  detailAddressRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#F1F5F9",
+  },
+  detailAddressText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: "600",
+    color: "#334155",
+    marginLeft: 6,
+    lineHeight: 17,
   },
 
   feedbackCardContainer: {

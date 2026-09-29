@@ -768,17 +768,7 @@ export default function OrderConfirmationScreen() {
                 </View>
               ) : null}
 
-              {/* ✅ NEW: Delivery Type Display for Homemade Flow */}
-              {!!resolvedDeliveryType && deliveryInfo && (
-                <View style={styles.deliveryOptionRowInline}>
-                  <Text style={styles.deliveryOptionEmojiInline}>
-                    {deliveryInfo.emoji}
-                  </Text>
-                  <Text style={styles.deliveryOptionTextInline}>
-                    {resolvedDeliveryType}
-                  </Text>
-                </View>
-              )}
+              
 
               {/* ✅ NEW: Special Instructions Display for Homemade Flow */}
               {resolvedSpecialInstruction.hasAny && (
