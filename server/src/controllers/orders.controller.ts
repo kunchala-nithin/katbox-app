@@ -668,6 +668,12 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     //
     // ✅ The slot label is now ALWAYS just the time — "4:30 PM" —
     // never the long "ASAP (Within 75 minutes…)" string.
+    //
+    // ✅ CRITICAL FIX for QuickBites:
+    //    For QuickBites, the persisted `deliverySlot` and `deliveryTimeSlot`
+    //    MUST be the formatted time (e.g. "4:30 PM") so that the admin and
+    //    chef /all-orders screens can display it directly. We therefore
+    //    OVERRIDE whatever the client sent with the server-computed value.
     let finalDeliverySlotLabel = String(safeDeliverySlot || safeDeliveryTimeSlot || "").trim();
     let finalDeliveryDateLabel = String(safeDeliveryDate || "").trim();
 
@@ -676,7 +682,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       const dateStr = formatDateShort(orderPlacedAt);
 
       if (quickBitesFlag) {
-        // ✅ Just the time, e.g. "4:30 PM"
+        // ✅ Just the time, e.g. "4:30 PM" — ALWAYS override for QuickBites
         finalDeliveryDateLabel = `Today, ${dateStr}`;
         finalDeliverySlotLabel = timeStr;
       } else if (!finalDeliverySlotLabel) {
@@ -685,6 +691,25 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
       if (!finalDeliveryDateLabel) {
         finalDeliveryDateLabel = dateStr;
+      }
+    }
+
+    // ✅ ADDITIONAL SAFETY NET for QuickBites:
+    //    If for any reason resolvedEstimatedDeliveryAt was undefined but
+    //    the flow is QuickBites, still compute a fresh slot label from
+    //    "now" so the persisted slot is never empty.
+    if (quickBitesFlag && !finalDeliverySlotLabel) {
+      const fallbackEstimated = new Date(
+        orderPlacedAt.getTime() + (resolvedWindowMinutes || 75) * 60 * 1000
+      );
+      finalDeliverySlotLabel = formatTimeShort(fallbackEstimated);
+      if (!finalDeliveryDateLabel) {
+        finalDeliveryDateLabel = `Today, ${formatDateShort(orderPlacedAt)}`;
+      }
+      // Also make sure we persist the estimated timestamp
+      if (!resolvedEstimatedDeliveryAt) {
+        resolvedEstimatedDeliveryAt = fallbackEstimated;
+        resolvedWindowMinutes = resolvedWindowMinutes || 75;
       }
     }
 

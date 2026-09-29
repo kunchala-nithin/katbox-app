@@ -1053,7 +1053,7 @@ export default function AllOrdersScreen() {
     }
   };
 
-  const isHomemadeFlow = activeOrder?.serviceType === 'homemade';
+  const isHomemadeFlow = activeOrder?.serviceType === 'homemade' || activeOrder?.serviceType === 'quickbites';
   const isCateringFlow = activeOrder?.serviceType === 'catering';
   const isMealBoxFlow = activeOrder?.serviceType === 'mealbox' || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
 
@@ -1214,7 +1214,8 @@ export default function AllOrdersScreen() {
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
   // ✅ QuickBites detection — robust: true if either the flag is set OR
-  //    the order carries a persisted estimatedDeliveryAt timestamp.
+  //    the order carries a persisted estimatedDeliveryAt timestamp OR
+  //    the serviceType itself is "quickbites".
   //    Only applies to homemade orders.
   const isQuickBitesFlow = useMemo(() => {
     if (!activeOrder) return false;
@@ -1223,7 +1224,11 @@ export default function AllOrdersScreen() {
       activeOrder?.isQuickBites === true ||
       String(activeOrder?.isQuickBites).toLowerCase() === 'true';
     const hasEstimated = !!activeOrder?.estimatedDeliveryAt;
-    return flagSet || hasEstimated;
+    const isQuickService =
+      activeOrder?.serviceType === 'quickbites' ||
+      activeOrder?.serviceType === 'quick_bites' ||
+      activeOrder?.serviceType === 'quick-bites';
+    return flagSet || hasEstimated || isQuickService;
   }, [activeOrder, isHomemadeFlow]);
 
   // ✅ QuickBites window in minutes — defaults to 75
@@ -1261,15 +1266,22 @@ export default function AllOrdersScreen() {
   }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
 
   // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
-  //    • For QuickBites: computed live from `estimatedDeliveryAt` (same day).
-  //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
-  //      falls back to legacy `deliveryTimeSlot`.
+  //    ✅ CRITICAL FIX: PREFER the persisted `deliverySlot` / `deliveryDate` from
+  //       MongoDB FIRST. Only fall back to the live-computed QuickBites value if
+  //       the persisted field is empty. This ensures the QuickBites slot saved at
+  //       checkout (e.g. "4:30 PM") is displayed correctly.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
+    // ✅ PREFER the persisted date from MongoDB
+    const persistedDate = String(activeOrder?.deliveryDate || '').trim();
+    if (persistedDate) {
+      return persistedDate;
+    }
+    // Fall back to QuickBites computed value
     if (isQuickBitesFlow && quickBitesDateTime) {
       return quickBitesDateTime.timerDate; // parse-friendly for timer widget
     }
-    return String(activeOrder?.deliveryDate || '').trim();
+    return '';
   }, [
     activeOrder?.deliveryDate,
     isHomemadeFlow,
@@ -1279,14 +1291,23 @@ export default function AllOrdersScreen() {
 
   const homemadeDeliverySlotResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    if (isQuickBitesFlow && quickBitesDateTime) {
-      return `By ${quickBitesDateTime.timeStr}`;
-    }
-    return String(
+    // ✅ CRITICAL FIX: PREFER the persisted `deliverySlot` from MongoDB FIRST.
+    //    This ensures the QuickBites slot saved at checkout (e.g. "4:30 PM")
+    //    is displayed correctly. Only fall back to computed `estimatedDeliveryAt`
+    //    if the persisted slot is empty.
+    const persistedSlot = String(
       activeOrder?.deliverySlot ||
       activeOrder?.deliveryTimeSlot ||
       ''
     ).trim();
+    if (persistedSlot) {
+      return persistedSlot;
+    }
+    // Fall back to QuickBites computed value
+    if (isQuickBitesFlow && quickBitesDateTime) {
+      return quickBitesDateTime.timeStr;
+    }
+    return '';
   }, [
     activeOrder?.deliverySlot,
     activeOrder?.deliveryTimeSlot,
@@ -1296,13 +1317,19 @@ export default function AllOrdersScreen() {
   ]);
 
   // ✅ Human-friendly display date specifically for headers/cards.
-  //    For QuickBites it is ALWAYS "Today, <day> <month>".
+  //    ✅ PREFER the persisted `deliveryDate` from MongoDB first.
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
+    // ✅ PREFER persisted date first
+    const persistedDate = String(activeOrder?.deliveryDate || '').trim();
+    if (persistedDate) {
+      return persistedDate;
+    }
+    // Fall back to QuickBites computed value
     if (isQuickBitesFlow && quickBitesDateTime) {
       return quickBitesDateTime.displayDate;
     }
-    return String(activeOrder?.deliveryDate || '').trim();
+    return '';
   }, [
     activeOrder?.deliveryDate,
     isHomemadeFlow,
@@ -1331,7 +1358,7 @@ export default function AllOrdersScreen() {
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today, 09:41 AM',
-    // ✅ For homemade QuickBites: always "Today, ..." (same-day).
+    // ✅ For homemade QuickBites: use the persisted value first.
     //    For non-QuickBites homemade: use the persisted value.
     //    For mealbox/catering: keep original behaviour.
     deliveryDate: isHomemadeFlow
