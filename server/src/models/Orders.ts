@@ -33,6 +33,16 @@ export interface ISpecialInstruction {
   text?: string;
 }
 
+// ✅ NEW (Prompt 2): Persisted quick-bites / homemade special-instructions block.
+// This mirrors the EXACT shape that Prompt 1 stores on Cart.specialInstructions:
+//   { spice: string, noOnionsGarlic: boolean, notes: string }
+// It is additive and does NOT replace the legacy ISpecialInstruction block above.
+export interface IQuickSpecialInstructions {
+  spice?: string;
+  noOnionsGarlic?: boolean;
+  notes?: string;
+}
+
 // ✅ NEW: Catering menu structures.
 // These describe the exact shape the catering review screen sends and that the
 // orders screen ("Menu Items" preview) reads back. They are stored in Mixed
@@ -127,6 +137,16 @@ export interface IBaseOrder extends Document {
   specialInstructionTag?: string;
   specialInstructionLabel?: string;
   specialInstructionText?: string;
+
+  // ✅ NEW (Prompt 2): Prompt 1's exact authoritative cart fields carried
+  // forward onto the order for homemade / quickbites flows.
+  // - quickDeliverySlot: the exact slot string stored on the cart (cart.deliverySlot).
+  // - specialInstructions: the exact sub-doc shape stored on the cart
+  //   (cart.specialInstructions = { spice, noOnionsGarlic, notes }).
+  // These are ADDITIVE. The legacy specialInstruction* fields above remain
+  // untouched for backward compatibility.
+  quickDeliverySlot?: string;
+  specialInstructions?: IQuickSpecialInstructions;
 
   // ✅ NEW: Delivery service type string (Standard / Doorstep / Doorstep + Service)
   deliveryType?: string;
@@ -246,6 +266,18 @@ const SpecialInstructionSchema = new Schema(
   { _id: false }
 );
 
+// ✅ NEW (Prompt 2): Sub-schema mirroring the exact Cart.specialInstructions
+// shape from Prompt 1. Purely additive — does NOT replace
+// SpecialInstructionSchema above (that one continues to serve catering).
+const QuickSpecialInstructionsSchema = new Schema(
+  {
+    spice: { type: String, default: "" },
+    noOnionsGarlic: { type: Boolean, default: false },
+    notes: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
 // Base Schema
 const BaseOrderSchema: Schema = new Schema(
   {
@@ -312,6 +344,15 @@ const BaseOrderSchema: Schema = new Schema(
     specialInstructionLabel: { type: String, default: "" },
     specialInstructionText: { type: String, default: "" },
 
+    // ✅ NEW (Prompt 2): Prompt 1's authoritative cart fields carried forward.
+    // Declared ONLY here on the base schema (same rule as deliveryType) to
+    // avoid Mongoose "Cannot use duplicate schema path" errors from child
+    // discriminators. `default: undefined` keeps older orders valid — a
+    // missing field stays missing rather than being coerced into an empty
+    // string/object, preserving backward compatibility.
+    quickDeliverySlot: { type: String, default: undefined },
+    specialInstructions: { type: QuickSpecialInstructionsSchema, default: undefined },
+
     // ✅ NEW: Delivery service type (Standard / Doorstep / Doorstep + Service)
     // ✅ IMPORTANT: This field MUST ONLY be declared here on the base schema.
     //    Declaring it again on child discriminator schemas causes Mongoose
@@ -344,8 +385,9 @@ const HomemadeItemSubSchema = new Schema(
   { _id: false }
 );
 
-// ✅ IMPORTANT: Do NOT redeclare `deliveryType` here — it's already on the
-//    BaseOrderSchema. Redeclaring causes Mongoose discriminator conflicts.
+// ✅ IMPORTANT: Do NOT redeclare `deliveryType`, `quickDeliverySlot` or
+//    `specialInstructions` here — they are already on the BaseOrderSchema.
+//    Redeclaring causes Mongoose discriminator conflicts.
 const HomemadeOrderSchema = new Schema({
   items: { type: [HomemadeItemSubSchema], required: true, default: [] },
   deliveryAddress: { type: String, required: true, default: "" },
@@ -358,8 +400,9 @@ const HomemadeOrderSchema = new Schema({
 });
 
 // 4. MEALBOX & CATERING SCHEMA
-// ✅ IMPORTANT: Do NOT redeclare `deliveryType` or `specialInstruction*` here.
-//    They already live on the BaseOrderSchema. Redeclaring causes save() errors.
+// ✅ IMPORTANT: Do NOT redeclare `deliveryType`, `specialInstruction*`,
+//    `quickDeliverySlot` or `specialInstructions` here. They already live on
+//    the BaseOrderSchema. Redeclaring causes save() errors.
 //
 // ✅ NOTE ON CATERING MENU ITEMS:
 //    `selections` (category cards → selected / extraSelected), `items` (flat list

@@ -163,7 +163,9 @@ export default function CheckOutScreen() {
   const durationType = (params.durationType as string) || "Flexible Days (2 Days Running)";
   const deliveryDate = (params.deliveryDate as string) || "Mon, 20 May – Tue, 21 May";
   const deliveryTimeSlot = (params.deliveryTimeSlot as string) || "7:00 PM - 9:00 PM";
-  // ✅ Homemade-only: top-level delivery slot param (may be empty for mealbox/catering)
+  // ✅ Homemade-only: top-level delivery slot param (may be empty for mealbox/catering).
+  //    This IS the authoritative cart.deliverySlot value from Prompt 1's cart flow —
+  //    CartScreen forwards cart.deliverySlot as params.deliverySlot.
   const deliverySlotParam = (params.deliverySlot as string) || "";
 
   // ✅ Homemade resolution — prefer the top-level slot; fall back to deliveryTimeSlot
@@ -238,6 +240,12 @@ export default function CheckOutScreen() {
   const [specialInstructionsExpanded, setSpecialInstructionsExpanded] = useState(false);
   const specialInstructionsAnim = useRef(new Animated.Value(0)).current;
 
+  // ✅ NEW: Fetched cart data for the current cartId (source of truth for
+  // Prompt 1's cart.specialInstructions sub-doc). We deliberately do NOT
+  // duplicate this into params or into a second store — we read the cart
+  // document once via the existing /api/cart endpoint and keep it local.
+  const [cartDoc, setCartDoc] = useState<any>(null);
+
   // 5-MINUTE COUNTDOWN TIMER STATE (300 seconds)
   const [timeLeft, setTimeLeft] = useState(300);
 
@@ -260,6 +268,38 @@ export default function CheckOutScreen() {
     }
     return () => clearInterval(timer);
   }, [showScannerModal, timeLeft]);
+
+  // ✅ NEW: Load the authoritative cart document for this checkout session.
+  // This is the SAME /api/cart endpoint CartScreen already uses (no new API,
+  // no second source of truth). We pick the cart that matches params.cartId
+  // when available; otherwise the most recent in-cart document.
+  useEffect(() => {
+    let cancelled = false;
+    const loadCartDoc = async () => {
+      try {
+        const res = await api.get("/api/cart");
+        if (cancelled) return;
+        if (res.data?.success && Array.isArray(res.data.cart) && res.data.cart.length > 0) {
+          const targetId = String((params.cartId as string) || "");
+          const match = targetId
+            ? res.data.cart.find((c: any) => String(c?._id) === targetId)
+            : null;
+          setCartDoc(match || res.data.cart[0]);
+        } else {
+          setCartDoc(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.log("Checkout: failed to load cart doc for special instructions:", err);
+          setCartDoc(null);
+        }
+      }
+    };
+    loadCartDoc();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.cartId]);
 
   // ✅ Simple real-timer format (MM:SS, zero-padded)
   const formatTimer = (seconds: number) => {
@@ -501,9 +541,39 @@ export default function CheckOutScreen() {
     ? DELIVERY_OPTION_INFO[resolvedDeliveryOption] || null
     : null;
 
-  // ✅ NEW: Special instructions resolution from orderDetails param / params
+  // ✅ NEW: Special instructions resolution.
+  // Priority:
+  //   1) Prompt 1's authoritative cart.specialInstructions sub-doc (fetched by cartId).
+  //   2) Fallback: reconstruct from params.orderDetails (legacy catering-style data),
+  //      exactly as before — nothing removed.
   const resolvedSpecialInstruction = useMemo(() => {
-    // Try to parse orderDetails from params if present
+    // ✅ 1) Read Prompt 1's authoritative cart sub-doc first.
+    const cartSub = cartDoc?.specialInstructions;
+    if (cartSub && (cartSub.spice || cartSub.noOnionsGarlic || cartSub.notes)) {
+      const spiceRaw = String(cartSub.spice || "").toLowerCase().trim();
+      let label = "";
+      if (spiceRaw === "less") label = "Less spicy";
+      else if (spiceRaw === "medium") label = "Medium spicy";
+      else if (spiceRaw === "very") label = "Very spicy";
+      else if (spiceRaw === "noonion") label = "No onion & garlic";
+      else if (spiceRaw) label = String(cartSub.spice);
+
+      const noOnion = !!cartSub.noOnionsGarlic;
+      const text = String(cartSub.notes || "").trim();
+      const spiceEmoji = label ? resolveSpiceEmoji(label) : "";
+      const hasAny = !!(label || text || noOnion);
+
+      return {
+        tag: spiceRaw,
+        label,
+        spiceEmoji,
+        text,
+        noOnion,
+        hasAny,
+      };
+    }
+
+    // ✅ 2) Fallback: existing legacy reconstruction from params.orderDetails.
     let orderDetails: any = null;
     const rawOrderDetails = params.orderDetails;
     if (rawOrderDetails) {
@@ -551,7 +621,7 @@ export default function CheckOutScreen() {
       noOnion,
       hasAny,
     };
-  }, [params.orderDetails]);
+  }, [cartDoc, params.orderDetails]);
 
   // ✅ NEW: Toggle special instructions collapsible
   const toggleSpecialInstructions = () => {
@@ -678,7 +748,8 @@ export default function CheckOutScreen() {
     //    Mongoose then rejects with "Cast to string failed".
     formData.append("deliveryType", resolvedDeliveryOption || "");
 
-    // ✅ NEW: Persist special instructions on the order document for all flows
+    // ✅ NEW: Persist special instructions on the order document for all flows.
+    //    Legacy fields preserved exactly as before (backward compatibility).
     if (resolvedSpecialInstruction.hasAny) {
       formData.append("specialInstruction", JSON.stringify({
         tag: resolvedSpecialInstruction.tag || "",
@@ -688,6 +759,41 @@ export default function CheckOutScreen() {
       formData.append("specialInstructionTag", resolvedSpecialInstruction.tag || "");
       formData.append("specialInstructionLabel", resolvedSpecialInstruction.label || "");
       formData.append("specialInstructionText", resolvedSpecialInstruction.text || "");
+    }
+
+    // ✅ NEW (Prompt 2): Forward Prompt 1's authoritative cart fields to the
+    //    backend under their Prompt 1 names, for homemade / quickbites only.
+    //    - quickDeliverySlot     ← params.deliverySlot (= cart.deliverySlot)
+    //    - specialInstructions   ← cart.specialInstructions sub-doc
+    //    We do NOT remove any legacy fields above; this is additive only.
+    if (isHomemadeFlow) {
+      const authoritativeQuickDeliverySlot =
+        (deliverySlotParam && String(deliverySlotParam).trim()) ||
+        (dynamicHomemadeSlotLabel && String(dynamicHomemadeSlotLabel).trim()) ||
+        "";
+      formData.append("quickDeliverySlot", authoritativeQuickDeliverySlot);
+
+      if (cartDoc?.specialInstructions) {
+        formData.append(
+          "specialInstructions",
+          JSON.stringify({
+            spice: cartDoc.specialInstructions.spice || "",
+            noOnionsGarlic: !!cartDoc.specialInstructions.noOnionsGarlic,
+            notes: cartDoc.specialInstructions.notes || "",
+          })
+        );
+      } else if (resolvedSpecialInstruction.hasAny) {
+        // Fallback: mirror the resolved values back into the Prompt 1 shape so
+        // the backend always has a consistent specialInstructions sub-doc.
+        formData.append(
+          "specialInstructions",
+          JSON.stringify({
+            spice: resolvedSpecialInstruction.tag || "",
+            noOnionsGarlic: !!resolvedSpecialInstruction.noOnion,
+            notes: resolvedSpecialInstruction.text || "",
+          })
+        );
+      }
     }
 
     if (proofType === "utr") {

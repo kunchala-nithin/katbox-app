@@ -103,11 +103,55 @@ const formatCoordLabel = (lat: any, lng: any): string => {
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 };
 
+// ✅ HELPER — Map a raw spice string (Prompt 1 shape) to a friendly
+//    label that the existing `formatSpiceLevel` helper can render.
+//    Used when hydrating Prompt 1's `specialInstructions.spice` field.
+const spiceRawToLabel = (rawSpice: any): string => {
+  const s = String(rawSpice || '').trim().toLowerCase();
+  if (!s) return '';
+  if (s === 'less') return 'Less spicy';
+  if (s === 'medium') return 'Medium spicy';
+  if (s === 'very') return 'Very spicy';
+  if (s === 'noonion') return 'No onion & garlic';
+  return String(rawSpice);
+};
+
 // ✅ NEW HELPER — Resolve special instruction from the order document.
-//    Works for both the new nested `specialInstruction` object and the
-//    legacy flat fields (specialInstructionTag / Label / Text).
+//    ✅ PROMPT 2: First priority is Prompt 1's authoritative sub-doc
+//    `order.specialInstructions` ({ spice, noOnionsGarlic, notes }).
+//    Fallback is the legacy `order.specialInstruction` sub-doc
+//    ({ tag, label, text }) + the flat fields, so pre-existing orders
+//    continue to render. Returns exactly the { tag, label, text } shape
+//    that `SpecialInstructionPanel` already consumes.
 const resolveSpecialInstruction = (order: any): { tag: string; label: string; text: string } => {
   if (!order) return { tag: '', label: '', text: '' };
+
+  // ✅ 1) Prompt 1's authoritative sub-doc (homemade / quickbites).
+  const quickSub = order.specialInstructions;
+  if (
+    quickSub &&
+    (quickSub.spice || quickSub.noOnionsGarlic || quickSub.notes)
+  ) {
+    const spiceRaw = String(quickSub.spice || '').trim();
+    const label = spiceRawToLabel(spiceRaw);
+    const notes = String(quickSub.notes || '').trim();
+    const noOnion = Boolean(quickSub.noOnionsGarlic);
+
+    // Merge the "No onion & garlic" info into the label when it isn't
+    // already present, so the panel still renders it as a single label.
+    let finalLabel = label;
+    if (noOnion && !String(finalLabel || '').toLowerCase().includes('no onion')) {
+      finalLabel = finalLabel ? `${finalLabel} • No onion & garlic` : 'No onion & garlic';
+    }
+
+    return {
+      tag: spiceRaw,
+      label: finalLabel,
+      text: notes,
+    };
+  }
+
+  // ✅ 2) Legacy fallback — existing nested sub-doc + flat fields.
   const nested = order.specialInstruction || {};
   const tag = String(nested.tag || order.specialInstructionTag || '').trim();
   const label = String(nested.label || order.specialInstructionLabel || '').trim();
@@ -1022,7 +1066,12 @@ export default function AdminAllOrdersScreen() {
     //    This ensures the QuickBites slot saved at checkout (e.g. "4:30 PM")
     //    is displayed correctly. Only fall back to computed `estimatedDeliveryAt`
     //    if the persisted slot is empty.
+    //    ✅ PROMPT 2: Also check the authoritative `quickDeliverySlot` first
+    //    (Prompt 1's exact field name), falling back to the legacy
+    //    `deliverySlot` / `deliveryTimeSlot` for pre-existing orders.
+    //    Single authoritative value — no competing versions.
     const persistedSlot = String(
+      activeOrder?.quickDeliverySlot ||
       activeOrder?.deliverySlot ||
       activeOrder?.deliveryTimeSlot ||
       ''
@@ -1036,6 +1085,7 @@ export default function AdminAllOrdersScreen() {
     }
     return '';
   }, [
+    activeOrder?.quickDeliverySlot,
     activeOrder?.deliverySlot,
     activeOrder?.deliveryTimeSlot,
     isHomemadeFlow,
@@ -1064,6 +1114,9 @@ export default function AdminAllOrdersScreen() {
   ]);
 
   // ✅ NEW: Resolved special instruction (works for every flow).
+  //    ✅ PROMPT 2: `resolveSpecialInstruction` now prefers Prompt 1's
+  //    authoritative `specialInstructions` sub-doc and falls back to the
+  //    legacy shape so all existing orders still render.
   const resolvedSpecialInstruction = useMemo(() => {
     return resolveSpecialInstruction(activeOrder);
   }, [activeOrder]);
@@ -2033,7 +2086,9 @@ export default function AdminAllOrdersScreen() {
                     "Special Instructions" label with an information icon and
                     chevron. Tapping expands to reveal the spice level (with
                     the SAME emojis as CateringOrderReview) and the full
-                    description text. */}
+                    description text.
+                    ✅ PROMPT 2: `resolvedSpecialInstruction` now prefers Prompt 1's
+                    authoritative `specialInstructions` sub-doc. */}
                 {hasSpecialInstruction ? (
                   <View style={styles.specialInstructionBottomLeftWrapper}>
                     <SpecialInstructionPanel

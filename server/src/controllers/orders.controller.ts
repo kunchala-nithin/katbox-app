@@ -163,6 +163,46 @@ const formatDateShort = (d: Date): string => {
   }
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER (Prompt 2) — Defensive parser for the Prompt 1
+   `specialInstructions` sub-document ({ spice, noOnionsGarlic, notes })
+   arriving via multipart/form-data (JSON string) or application/json
+   (already an object). Mirrors the existing `parsedSpecialInstruction`
+   pattern so the backend convention is preserved. Never throws.
+   ───────────────────────────────────────────────────────────────── */
+const parseQuickSpecialInstructions = (
+  raw: any
+): { spice: string; noOnionsGarlic: boolean; notes: string } | null => {
+  if (raw === undefined || raw === null || raw === "") return null;
+
+  let parsed: any = null;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  } else if (typeof raw === "object") {
+    parsed = raw;
+  } else {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object") return null;
+
+  const spice = String(parsed.spice ?? "").trim();
+  const noOnionsGarlic = Boolean(parsed.noOnionsGarlic);
+  const notes = String(parsed.notes ?? "").trim();
+
+  // Return null when every sub-field is empty — avoids writing an
+  // all-empty sub-doc to MongoDB for orders that carry no instructions.
+  if (!spice && !noOnionsGarlic && !notes) return null;
+
+  return { spice, noOnionsGarlic, notes };
+};
+
 const uploadBufferToCloudinary = (fileBuffer: Buffer) => {
   return new Promise<any>((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -387,6 +427,12 @@ setInterval(async () => {
  *    ✅ Special instructions and delivery type are now persisted
  *       on the order document for ALL flows.
  *
+ *    ✅ PROMPT 2: Prompt 1's authoritative cart fields
+ *       (`quickDeliverySlot` and `specialInstructions`) are now also
+ *       persisted on the order document for homemade / quickbites.
+ *       The legacy `deliverySlot` / `specialInstruction*` fields are
+ *       kept intact so existing orders and existing UIs continue to work.
+ *
  *    ✅ DEFENSIVE: All scalar string fields are passed through
  *       `coerceToString()` so that if a client sends the same
  *       multipart/form-data key twice (delivering an Array to
@@ -450,11 +496,18 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       // ✅ geo coordinates for map pinning
       latitude,
       longitude,
-      // ✅ Special instruction fields
+      // ✅ Special instruction fields (legacy, single-object shape)
       specialInstruction,
       specialInstructionTag,
       specialInstructionLabel,
       specialInstructionText,
+      // ✅ PROMPT 2: Prompt 1's authoritative cart fields
+      //    - quickDeliverySlot: the exact slot string stored on the cart.
+      //    - specialInstructions: the exact sub-doc shape stored on the cart
+      //      ({ spice, noOnionsGarlic, notes }).
+      //    These are additive and do NOT replace the legacy fields above.
+      quickDeliverySlot,
+      specialInstructions,
     } = req.body;
 
     // ✅ Normalize coordinates once (works for JSON and multipart/form-data)
@@ -483,6 +536,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     const safeEventDate = coerceToString(eventDate);
     const safeEventTime = coerceToString(eventTime);
     const safeDeliveryType = coerceToString(deliveryType);
+    // ✅ PROMPT 2: Coerce the incoming Prompt 1 quickDeliverySlot.
+    const safeQuickDeliverySlot = coerceToString(quickDeliverySlot);
 
     // ✅ Defensive parsing of specialInstruction — never throws, never leaks null
     let parsedSpecialInstruction: any = null;
@@ -531,6 +586,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       label: resolvedSpecialInstructionLabel,
       text: resolvedSpecialInstructionText,
     };
+
+    // ✅ PROMPT 2: Parse the Prompt 1 `specialInstructions` sub-doc
+    // ({ spice, noOnionsGarlic, notes }) — returns null when empty so we
+    // don't write an all-empty sub-document to MongoDB.
+    const resolvedQuickSpecialInstructions = parseQuickSpecialInstructions(specialInstructions);
 
     const finalUserId = String(rawUserId || userId || "");
 
@@ -713,6 +773,33 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
     }
 
+    // ✅ PROMPT 2: Resolve the authoritative `quickDeliverySlot` value that
+    // gets persisted on the order document.
+    //
+    // Priority (single authoritative value — never two competing versions):
+    //   1. The exact `quickDeliverySlot` string the client sent (which
+    //      CheckoutScreen derived from the cart's `deliverySlot` field —
+    //      Prompt 1's source of truth).
+    //   2. Fallback to the server-computed `finalDeliverySlotLabel`
+    //      (which for QuickBites is the fresh "4:30 PM" time and for
+    //      homemade is the client/legacy `deliverySlot`/`deliveryTimeSlot`).
+    //
+    // This guarantees the SAME value travels Cart → Checkout → Order → Mongo
+    // without inventing a new field or a second source of truth.
+    const resolvedQuickDeliverySlot =
+      safeQuickDeliverySlot || finalDeliverySlotLabel || "";
+
+    // ✅ PROMPT 2: Only attach the two new fields to the order doc when
+    // there is actual data to persist. This keeps older / non-QuickBites /
+    // non-homemade orders exactly as they were before (no new empty fields).
+    const includeQuickDeliverySlot =
+      !!resolvedQuickDeliverySlot &&
+      (resolvedServiceType === "homemade" || resolvedServiceType === "quickbites");
+
+    const includeQuickSpecialInstructions =
+      !!resolvedQuickSpecialInstructions &&
+      (resolvedServiceType === "homemade" || resolvedServiceType === "quickbites");
+
     let savedOrder: any = null;
 
     // ✅ Homemade AND QuickBites share the same schema, but they are
@@ -795,6 +882,15 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         specialInstructionTag: resolvedSpecialInstructionTag,
         specialInstructionLabel: resolvedSpecialInstructionLabel,
         specialInstructionText: resolvedSpecialInstructionText,
+        // ✅ PROMPT 2: Persist Prompt 1's authoritative cart fields for
+        // homemade / quickbites. Only attached when non-empty so we never
+        // write a phantom value.
+        ...(includeQuickDeliverySlot
+          ? { quickDeliverySlot: resolvedQuickDeliverySlot }
+          : {}),
+        ...(includeQuickSpecialInstructions
+          ? { specialInstructions: resolvedQuickSpecialInstructions }
+          : {}),
         // ✅ Persist delivery type for homemade / quickbites flow
         deliveryType: safeDeliveryType,
         statusTimeline: [
@@ -807,6 +903,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     else if (resolvedServiceType === "catering") {
       const safeLat = Number.isFinite(resolvedLatitude as number) ? (resolvedLatitude as number) : undefined;
       const safeLng = Number.isFinite(resolvedLongitude as number) ? (resolvedLongitude as number) : undefined;
+
+      // ✅ PROMPT 2: On catering, we still persist the two new fields IF the
+      // client happened to send them (defensive, keeps the chain universal).
+      // We do NOT fabricate them for catering — they are only attached when
+      // the client explicitly provided them, matching Prompt 2's "do not
+      // accidentally apply the new behavior to unrelated order types".
+      const includeCateringQuickDeliverySlot = !!safeQuickDeliverySlot;
+      const includeCateringQuickSpecialInstructions = !!resolvedQuickSpecialInstructions;
 
       const newCateringOrder = new CateringOrderModel({
         orderId: generatedOrderId,
@@ -857,6 +961,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         specialInstructionTag: resolvedSpecialInstructionTag,
         specialInstructionLabel: resolvedSpecialInstructionLabel,
         specialInstructionText: resolvedSpecialInstructionText,
+        // ✅ PROMPT 2: attach Prompt 1 fields only when the client sent them.
+        ...(includeCateringQuickDeliverySlot
+          ? { quickDeliverySlot: safeQuickDeliverySlot }
+          : {}),
+        ...(includeCateringQuickSpecialInstructions
+          ? { specialInstructions: resolvedQuickSpecialInstructions }
+          : {}),
         statusTimeline: [
           { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
@@ -869,6 +980,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       // map actions can pin the exact drop location.
       const safeLat = Number.isFinite(resolvedLatitude as number) ? (resolvedLatitude as number) : undefined;
       const safeLng = Number.isFinite(resolvedLongitude as number) ? (resolvedLongitude as number) : undefined;
+
+      // ✅ PROMPT 2: Same rule as catering — attach only if client sent them.
+      const includeMealboxQuickDeliverySlot = !!safeQuickDeliverySlot;
+      const includeMealboxQuickSpecialInstructions = !!resolvedQuickSpecialInstructions;
 
       const initialSchedules = sortedDeliveries.map((dateItem: string) => ({
         date: dateItem,
@@ -928,6 +1043,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         specialInstructionTag: resolvedSpecialInstructionTag,
         specialInstructionLabel: resolvedSpecialInstructionLabel,
         specialInstructionText: resolvedSpecialInstructionText,
+        // ✅ PROMPT 2: attach Prompt 1 fields only when the client sent them.
+        ...(includeMealboxQuickDeliverySlot
+          ? { quickDeliverySlot: safeQuickDeliverySlot }
+          : {}),
+        ...(includeMealboxQuickSpecialInstructions
+          ? { specialInstructions: resolvedQuickSpecialInstructions }
+          : {}),
         // ✅ Persist delivery type for mealbox flow
         deliveryType: safeDeliveryType,
         statusTimeline: [

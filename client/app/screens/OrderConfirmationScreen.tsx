@@ -248,14 +248,21 @@ export default function OrderConfirmationScreen() {
 
   const homemadeDeliverySlotResolved = useMemo(() => {
     if (!isHomemadeFlow) return "";
+    // ✅ PROMPT 2: Prefer the authoritative `quickDeliverySlot` field first
+    // (Prompt 1's exact name, persisted by the order controller). Fall back to
+    // the legacy `deliverySlot` / `deliveryTimeSlot` / route params so that
+    // pre-existing orders created before this change still render correctly.
+    // Single authoritative value — no competing versions are created.
     return String(
+      dbOrder?.quickDeliverySlot ||
       dbOrder?.deliverySlot ||
       dbOrder?.deliveryTimeSlot ||
+      (params.quickDeliverySlot as string) ||
       (params.deliverySlot as string) ||
       (params.deliveryTimeSlot as string) ||
       ""
     ).trim();
-  }, [dbOrder, params.deliverySlot, params.deliveryTimeSlot, isHomemadeFlow]);
+  }, [dbOrder, params.quickDeliverySlot, params.deliverySlot, params.deliveryTimeSlot, isHomemadeFlow]);
 
   // ✅ Resolve the absolute estimated delivery time from the persisted order.
   // This is the "source of truth" that was computed by the backend at the
@@ -346,9 +353,43 @@ export default function OrderConfirmationScreen() {
 
   const isMealBoxFlow = serviceType === "mealbox" || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
 
-  // ✅ NEW: Resolve special instruction from the persisted order
+  // ✅ NEW: Resolve special instruction from the persisted order.
+  //    ✅ PROMPT 2: First priority is Prompt 1's authoritative sub-doc
+  //    `dbOrder.specialInstructions` ({ spice, noOnionsGarlic, notes }).
+  //    Fallback is the legacy `dbOrder.specialInstruction`
+  //    ({ tag, label, text }) + top-level flat fields, so pre-existing
+  //    orders created before this change continue to render.
   const resolvedSpecialInstruction = useMemo(() => {
-    // Try to get from dbOrder first
+    // ✅ 1) Prompt 1's authoritative sub-doc (homemade / quickbites).
+    const quickSub = dbOrder?.specialInstructions;
+    if (
+      quickSub &&
+      (quickSub.spice || quickSub.noOnionsGarlic || quickSub.notes)
+    ) {
+      const spiceRaw = String(quickSub.spice || "").toLowerCase().trim();
+      let label = "";
+      if (spiceRaw === "less") label = "Less spicy";
+      else if (spiceRaw === "medium") label = "Medium spicy";
+      else if (spiceRaw === "very") label = "Very spicy";
+      else if (spiceRaw === "noonion") label = "No onion & garlic";
+      else if (spiceRaw) label = String(quickSub.spice);
+
+      const text = String(quickSub.notes || "").trim();
+      const noOnion = Boolean(quickSub.noOnionsGarlic);
+      const spiceEmoji = label ? resolveSpiceEmoji(label) : "";
+      const hasAny = !!(label || text || noOnion);
+
+      return {
+        tag: spiceRaw,
+        label,
+        spiceEmoji,
+        text,
+        noOnion,
+        hasAny,
+      };
+    }
+
+    // ✅ 2) Legacy fallback — existing specialInstruction sub-doc + flat fields.
     const nested = dbOrder?.specialInstruction;
     const nestedLabel = nested?.label || dbOrder?.specialInstructionLabel || "";
     const nestedTag = nested?.tag || dbOrder?.specialInstructionTag || "";
@@ -366,6 +407,7 @@ export default function OrderConfirmationScreen() {
       label,
       spiceEmoji,
       text,
+      noOnion: false,
       hasAny,
     };
   }, [dbOrder]);
@@ -558,6 +600,20 @@ export default function OrderConfirmationScreen() {
   const groupedPreviewDayItemsMap = getGroupedMealBoxItemsBySection(currentDaySelectionsArray);
 
   const handleNavigateToMyOrders = () => {
+    // ✅ PROMPT 2: Forward Prompt 1's authoritative fields to the Orders tab
+    // so it renders the SAME values without refetching or losing them.
+    // - quickDeliverySlot  ← resolved from dbOrder.quickDeliverySlot (fallback chain)
+    // - specialInstructions ← Prompt 1's sub-doc, JSON-stringified for the router
+    const quickSub = dbOrder?.specialInstructions;
+    const serializedQuickSpecialInstructions =
+      quickSub && (quickSub.spice || quickSub.noOnionsGarlic || quickSub.notes)
+        ? JSON.stringify({
+            spice: quickSub.spice || "",
+            noOnionsGarlic: Boolean(quickSub.noOnionsGarlic),
+            notes: quickSub.notes || "",
+          })
+        : undefined;
+
     router.push({
       pathname: "/(tabs)/Orders",
       params: {
@@ -573,8 +629,16 @@ export default function OrderConfirmationScreen() {
         addons: parsedAddons ? JSON.stringify(parsedAddons) : undefined,
         // ✅ For homemade / quickbites, forward the resolved date + slot so
         // the Orders tab can display them without needing to refetch.
+        // ✅ PROMPT 2: also forward the authoritative `quickDeliverySlot`
+        // alongside the legacy `deliverySlot` / `deliveryTimeSlot` so that
+        // downstream screens have Prompt 1's exact field name available.
         deliverySlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
         deliveryTimeSlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
+        quickDeliverySlot: isHomemadeFlow ? (homemadeDeliverySlotResolved || undefined) : undefined,
+        // ✅ PROMPT 2: forward Prompt 1's authoritative specialInstructions
+        // sub-doc ({ spice, noOnionsGarlic, notes }) — additive, does not
+        // replace any legacy param.
+        specialInstructions: isHomemadeFlow ? serializedQuickSpecialInstructions : undefined,
         // ✅ Preserve the quickbites flag so downstream screens (Orders tab) can render correctly.
         isQuickBites: isQuickBitesFlow ? "true" : "false",
       },
