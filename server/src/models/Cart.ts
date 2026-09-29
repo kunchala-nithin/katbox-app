@@ -23,6 +23,8 @@ interface ICart extends Document {
   serviceType?: 'catering' | 'homemade' | 'mealbox' | 'quickbites';
   chefId?: string;
   chefName?: string;
+  // ✅ NEW: chef/vendor image persisted for homemade / quickbites / mealbox flows
+  chefImage?: string;
   items?: Array<{
     id: string;
     name: string;
@@ -30,6 +32,8 @@ interface ICart extends Document {
     price: number;
     quantity: number;
     selectedQtyConfig: string;
+    // ✅ NEW: veg / non-veg flag preserved from HomeMadeOrderReview
+    isVeg?: boolean;
   }>;
   // ✅ Coupon and Discount Tracking State Fields
   couponCode?: string;
@@ -74,6 +78,8 @@ const CartSchema = new Schema<ICart>(
     serviceType: { type: String, enum: ['catering', 'homemade', 'mealbox', 'quickbites'], default: 'catering' },
     chefId: { type: String },
     chefName: { type: String },
+    // ✅ NEW: chef/vendor image persisted for homemade / quickbites / mealbox flows
+    chefImage: { type: String, default: '' },
     items: { type: [Schema.Types.Mixed], default: [] },
 
     // ✅ Coupon Tracking Field Definitions

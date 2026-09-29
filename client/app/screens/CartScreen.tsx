@@ -451,6 +451,29 @@ export default function CartScreen() {
     );
   }, [cartData, orderDetails, params.deliverySlot]);
 
+  // ✅ NEW: Resolve the dynamic quick-delivery clock time from the persisted
+  // estimatedDeliveryAt timestamp when available. This is the actual
+  // dynamically-calculated value from the frontend flow (now + 75 min),
+  // not a hardcoded string. Falls back to the persisted deliverySlot string.
+  const resolvedQuickDeliveryTimeLabel: string = React.useMemo(() => {
+    const ts = cartData?.estimatedDeliveryAt;
+    if (ts) {
+      try {
+        const d = new Date(ts);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleTimeString('en-IN', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+          });
+        }
+      } catch {
+        // fall through
+      }
+    }
+    return homemadeDeliverySlot || '';
+  }, [cartData, homemadeDeliverySlot]);
+
   const selectionsSummary = Array.isArray(cartData?.selections)
     ? cartData.selections.map((cat: any) => ({
         ...cat,
@@ -1085,9 +1108,13 @@ export default function CartScreen() {
                         <Ionicons name="time-outline" size={13} color="#0F382A" />
                       </View>
                       <View style={{ flex: 1, marginLeft: 8 }}>
-                        <Text style={styles.homemadeDeliveryLabel}>DELIVERY SLOT</Text>
+                        <Text style={styles.homemadeDeliveryLabel}>
+                          {isQuickBitesFlow ? "QUICK DELIVERY" : "DELIVERY SLOT"}
+                        </Text>
                         <Text style={styles.homemadeDeliveryValue} numberOfLines={1}>
-                          {homemadeDeliverySlot}
+                          {isQuickBitesFlow
+                            ? (resolvedQuickDeliveryTimeLabel || homemadeDeliverySlot)
+                            : homemadeDeliverySlot}
                         </Text>
                       </View>
                     </View>
@@ -1138,6 +1165,89 @@ export default function CartScreen() {
                     </View>
                   </View>
                 ))}
+
+              {/* ✅ Special Instructions row (same UI concept as the catering branch:
+                  plain underlined text + chevron-down, left-aligned, no badge/pill/container).
+                  Renders for BOTH homemade and quickbites flows whenever the cart
+                  carries a special instruction tag OR a customer-entered description. */}
+              {resolvedSpecialInstruction.hasAny && (
+                <View style={styles.simpleSpecialInstrWrapper}>
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={toggleSpecialInstructions}
+                    style={styles.simpleSpecialInstrTrigger}
+                  >
+                    <Ionicons
+                      name="restaurant-outline"
+                      size={14}
+                      color="#0F382A"
+                    />
+                    <Text style={styles.simpleSpecialInstrTriggerText}>
+                      Special Instructions
+                    </Text>
+                    <Animated.View
+                      style={{
+                        transform: [
+                          { rotate: specialInstructionsChevronRotate },
+                        ],
+                        marginLeft: 4,
+                      }}
+                    >
+                      <Ionicons
+                        name="chevron-down"
+                        size={14}
+                        color="#0F382A"
+                      />
+                    </Animated.View>
+                  </TouchableOpacity>
+
+                  {specialInstructionsExpanded && (
+                    <Animated.View
+                      style={[
+                        styles.simpleSpecialInstrBody,
+                        {
+                          maxHeight: specialInstructionsContentHeight,
+                          opacity: specialInstructionsContentOpacity,
+                          overflow: "hidden",
+                        },
+                      ]}
+                    >
+                      {!!resolvedSpecialInstruction.label && (
+                        <View style={styles.simpleSpecialInstrRow}>
+                          <Text style={styles.simpleSpecialInstrEmoji}>
+                            {resolvedSpecialInstruction.spiceEmoji}
+                          </Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>
+                            {resolvedSpecialInstruction.label}
+                          </Text>
+                        </View>
+                      )}
+
+                      {resolvedSpecialInstruction.noOnion &&
+                        !String(resolvedSpecialInstruction.label || "")
+                          .toLowerCase()
+                          .includes("no onion") && (
+                          <View style={styles.simpleSpecialInstrRow}>
+                            <Text style={styles.simpleSpecialInstrEmoji}>
+                              🚫🧄
+                            </Text>
+                            <Text style={styles.simpleSpecialInstrRowText}>
+                              No onion & garlic
+                            </Text>
+                          </View>
+                        )}
+
+                      {!!resolvedSpecialInstruction.text && (
+                        <View style={styles.simpleSpecialInstrNoteBox}>
+                          <Text style={styles.simpleSpecialInstrNoteText}>
+                            {resolvedSpecialInstruction.text}
+                          </Text>
+                        </View>
+                      )}
+                    </Animated.View>
+                  )}
+                </View>
+              )}
             </View>
           ) : isMealBoxFlow ? (
             <View style={styles.mainCardModern}>

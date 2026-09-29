@@ -1,6 +1,46 @@
 import { Request, Response } from 'express';
 import Cart from '../models/Cart';
 
+// ✅ Helper: normalize the instructionTag from HomeMadeOrderReview
+// ("less" | "medium" | "very" | "noonion" | "") into the
+// specialInstructions.spice + noOnionsGarlic shape already used by the schema.
+const normalizeSpecialInstructionsFromOrderDetails = (orderDetails: any) => {
+  const tagRaw = String(
+    orderDetails?.instructionTag ||
+    orderDetails?.selectedSpice ||
+    orderDetails?.specialInstruction?.tag ||
+    ''
+  ).trim().toLowerCase();
+
+  const noOnionFlag =
+    tagRaw === 'noonion' ||
+    !!orderDetails?.noOnionsGarlic ||
+    !!orderDetails?.specialInstruction?.noOnion;
+
+  // Preserve the spice tag the same way the existing catering branch does.
+  // If tag is "noonion", we set spice to "noonion" AND noOnionsGarlic=true
+  // (matches existing CartScreen resolveSpiceEmoji + resolveSpecialInstruction logic).
+  let spice = '';
+  if (tagRaw === 'less' || tagRaw === 'medium' || tagRaw === 'very') {
+    spice = tagRaw;
+  } else if (tagRaw === 'noonion') {
+    spice = 'noonion';
+  } else if (tagRaw) {
+    spice = tagRaw;
+  }
+
+  // The free-text description the customer typed.
+  const notes = String(
+    orderDetails?.chefNotes ||
+    orderDetails?.notes ||
+    orderDetails?.specialInstruction?.text ||
+    orderDetails?.specialInstructionText ||
+    ''
+  ).trim();
+
+  return { spice, noOnionsGarlic: noOnionFlag, notes };
+};
+
 export const addToCart = async (req: Request, res: Response) => {
   try {
     const userId =
@@ -23,8 +63,8 @@ export const addToCart = async (req: Request, res: Response) => {
       serviceType === 'quickbites';
 
     if (isItemBasedFlow) {
-      const { chefId, chefName, items, totalItems, totalPrice, menu, selections, addons, orderDetails, userPhone, alternatePhone } = req.body;
-      
+      const { chefId, chefName, chefImage, items, totalItems, totalPrice, menu, selections, addons, orderDetails, userPhone, alternatePhone } = req.body;
+
       // Calculate dynamic discount metrics safely
       const appliedDiscount = Number(discount || 0);
       const calculatedFinalTotal = Math.max(0, Number(totalPrice || 0) - appliedDiscount);
@@ -66,6 +106,12 @@ export const addToCart = async (req: Request, res: Response) => {
       const carriesDeliveryMeta =
         serviceType === 'homemade' || serviceType === 'quickbites';
 
+      // ✅ NEW: Normalize special instructions from HomeMadeOrderReview's
+      // orderDetails.instructionTag / orderDetails.chefNotes into the
+      // schema's existing specialInstructions sub-document (no duplicates).
+      const normalizedSpecialInstructions =
+        normalizeSpecialInstructionsFromOrderDetails(orderDetails);
+
       // Clear out active current instances sitting in standard active workflow session
       await Cart.deleteMany({ user: userId, status: "in-cart" });
 
@@ -76,6 +122,8 @@ export const addToCart = async (req: Request, res: Response) => {
         serviceType,
         chefId,
         chefName,
+        // ✅ NEW: persist chef/vendor image for homemade / quickbites / mealbox
+        chefImage: chefImage || '',
         items: items || [],
         totalItems,
         totalPrice,
@@ -83,6 +131,9 @@ export const addToCart = async (req: Request, res: Response) => {
         selections,
         addons,
         orderDetails,
+        // ✅ NEW: populate the existing specialInstructions sub-doc for
+        // item-based flows too (previously only catering wrote here).
+        specialInstructions: normalizedSpecialInstructions,
         status: 'in-cart',
         couponCode: couponCode || null,
         discount: appliedDiscount,
@@ -220,7 +271,7 @@ export const updateCart = async (req: Request, res: Response) => {
       serviceType === 'quickbites';
 
     if (isItemBasedFlow) {
-      const { chefId, chefName, items, totalItems, totalPrice, menu, selections, addons, orderDetails, userPhone, alternatePhone } = req.body;
+      const { chefId, chefName, chefImage, items, totalItems, totalPrice, menu, selections, addons, orderDetails, userPhone, alternatePhone } = req.body;
       const appliedDiscount = Number(discount || 0);
       const calculatedFinalTotal = Math.max(0, Number(totalPrice || 0) - appliedDiscount);
 
@@ -259,20 +310,29 @@ export const updateCart = async (req: Request, res: Response) => {
       const carriesDeliveryMeta =
         serviceType === 'homemade' || serviceType === 'quickbites';
 
+      // ✅ NEW: Same special-instructions normalization as addToCart.
+      const normalizedSpecialInstructions =
+        normalizeSpecialInstructionsFromOrderDetails(orderDetails);
+
       const updatedHomemade = await Cart.findByIdAndUpdate(
         cartId,
-        { 
-          chefId, 
-          chefName, 
+        {
+          chefId,
+          chefName,
+          // ✅ NEW: persist chef/vendor image for homemade / quickbites / mealbox
+          chefImage: chefImage || '',
           userPhone: resolvedUserPhone,
           alternatePhone: resolvedAltPhone,
-          items: items || [], 
-          totalItems, 
-          totalPrice, 
-          menu, 
-          selections, 
-          addons, 
-          orderDetails, 
+          items: items || [],
+          totalItems,
+          totalPrice,
+          menu,
+          selections,
+          addons,
+          orderDetails,
+          // ✅ NEW: populate the existing specialInstructions sub-doc for
+          // item-based flows too (previously only catering wrote here).
+          specialInstructions: normalizedSpecialInstructions,
           serviceType,
           couponCode: couponCode || null,
           discount: appliedDiscount,

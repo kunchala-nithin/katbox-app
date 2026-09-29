@@ -522,6 +522,12 @@ const HomeMadeOrderReview = () => {
       let finalDeliveryDate = effectiveDeliveryDateLabel;
       let finalDeliverySlot = effectiveDeliverySlotLabel;
 
+      // ✅ NEW: Absolute timestamp + window (only meaningful for QuickBites).
+      // These are the dynamically calculated values from the existing flow,
+      // not hardcoded. Sent to the backend so estimatedDeliveryAt persists.
+      let finalEstimatedDeliveryAtMs: number | undefined = undefined;
+      let finalDeliveryWindowMinutes: number = 0;
+
       if (isQuickBites) {
         const orderTime = new Date();
         const deadline = new Date(
@@ -530,7 +536,22 @@ const HomeMadeOrderReview = () => {
         finalDeliveryDate = `Today, ${formatTodayShort(orderTime)}`;
         // ✅ Just the clock time, e.g. "4:30 PM"
         finalDeliverySlot = formatTimeShort(deadline);
+        // ✅ Actual dynamic timestamp the customer is promised
+        finalEstimatedDeliveryAtMs = deadline.getTime();
+        finalDeliveryWindowMinutes = QUICK_BITES_WINDOW_MINUTES;
       }
+
+      // ✅ NEW: Build the special-instructions mirror that CartScreen's
+      // existing resolver reads. We reuse the same field names CartScreen
+      // already checks (selectedSpice / noOnionsGarlic / notes /
+      // specialInstruction / specialInstructionText / chefNotes), so the
+      // existing resolution logic picks them up without any CartScreen
+      // schema change.
+      const resolvedSpiceForCart =
+        selectedInstructionTag === 'noonion' ? 'noonion' : (selectedInstructionTag || '');
+      const resolvedNoOnionsGarlic = selectedInstructionTag === 'noonion';
+      const resolvedSpecialInstructionLabel =
+        instructionTags.find((t) => t.id === selectedInstructionTag)?.label || '';
 
       const payload = {
         // ✅ NEW: use the effective service type so Quick Bites persists as
@@ -540,6 +561,7 @@ const HomeMadeOrderReview = () => {
         userName: userName || currentUser?.name,
         chefId: chefId,
         chefName: chefName,
+        // ✅ NEW: persist chef/vendor image on the Cart document.
         chefImage: chefImage,
         totalItems: computedTotalItems,
         totalPrice: grandTotal,
@@ -556,6 +578,10 @@ const HomeMadeOrderReview = () => {
         // persist them directly. The slot is just "4:30 PM" for QuickBites.
         deliveryDate: finalDeliveryDate,
         deliverySlot: finalDeliverySlot,
+        // ✅ NEW: Dynamic QuickBites timestamp + window. Actual values
+        // from the flow, not hardcoded. Ignored by mealbox.
+        estimatedDeliveryAtMs: finalEstimatedDeliveryAtMs,
+        deliveryWindowMinutes: finalDeliveryWindowMinutes,
         orderDetails: {
           contactPhone: contactPhoneNumber,
           alternatePhone: alternatePhoneNumber,
@@ -563,11 +589,26 @@ const HomeMadeOrderReview = () => {
           addressDetails: addressDetails,
           addressPhone: addressPhone,
           activeAddress: activeAddress,
+          // ✅ Existing homemade-only tag/notes (kept for backward compat).
           instructionTag: selectedInstructionTag,
           chefNotes: chefNotesText,
           pageTitle: pageTitle,
           chefRating: chefRating,
           chefLocation: chefLocation,
+          // ✅ NEW: Mirror the customer-entered description + spice tag into
+          // the exact field names CartScreen already reads.
+          selectedSpice: resolvedSpiceForCart,
+          noOnionsGarlic: resolvedNoOnionsGarlic,
+          notes: chefNotesText,
+          specialInstruction: {
+            tag: resolvedSpiceForCart,
+            label: resolvedSpecialInstructionLabel,
+            text: chefNotesText,
+            noOnion: resolvedNoOnionsGarlic,
+          },
+          specialInstructionLabel: resolvedSpecialInstructionLabel,
+          specialInstructionTag: resolvedSpiceForCart,
+          specialInstructionText: chefNotesText,
           // ✅ Legacy keys preserved for backward compatibility
           deliveryDateKey: selectedDeliveryDateKey,
           deliverySlotId: selectedDeliverySlotId,
@@ -577,6 +618,20 @@ const HomeMadeOrderReview = () => {
           deliverySlot: finalDeliverySlot,
           deliveryTimeSlot: finalDeliverySlot,
           isQuickBites: isQuickBites ? 'true' : 'false',
+        },
+        // ✅ NEW: minimal menu/restaurant mirrors so CartScreen's existing
+        // destructure (menu, restaurant) has safe non-null values. Does not
+        // alter the CartScreen read path.
+        menu: {
+          name: pageTitle || (isQuickBites ? 'Quick Bites Order' : 'Homemade Dishes Order'),
+          imageUrl: chefImage || (editableItems[0]?.image || ''),
+          heroImageUrl: chefImage || (editableItems[0]?.image || ''),
+          durationType: isQuickBites ? 'Quick Delivery' : 'On Demand Prep',
+        },
+        restaurant: {
+          name: chefName || 'Chef Partner',
+          imageUrl: chefImage || (editableItems[0]?.image || ''),
+          image: chefImage || (editableItems[0]?.image || ''),
         },
       };
 
