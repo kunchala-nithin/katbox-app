@@ -348,8 +348,6 @@ const formatCoordLabel = (lat: any, lng: any): string => {
 };
 
 // ✅ NEW HELPER — Resolve special instruction text from the order document.
-//    Works for both the new nested `specialInstruction` object and the
-//    legacy flat fields (specialInstructionTag / Label / Text).
 const resolveSpecialInstruction = (order: any): { tag: string; label: string; text: string } => {
   if (!order) return { tag: '', label: '', text: '' };
 
@@ -369,8 +367,6 @@ const resolveSpecialInstruction = (order: any): { tag: string; label: string; te
 };
 
 // ✅ NEW HELPER — Human-friendly label for deliveryType.
-//    Handles "standard", "doorstep", "doorstep + service" (case-insensitive,
-//    with any spacing/pluses/hyphens) and returns a title-cased string.
 const formatDeliveryType = (raw: any): string => {
   const s = String(raw || '').trim();
   if (!s) return '';
@@ -389,7 +385,6 @@ const formatDeliveryType = (raw: any): string => {
     return 'Doorstep + Service';
   }
 
-  // Fallback: title-case each whitespace-separated word
   return s
     .split(/\s+/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
@@ -397,28 +392,19 @@ const formatDeliveryType = (raw: any): string => {
 };
 
 // ✅ NEW HELPER — Maps a spice level string to an emoji-prefixed label
-//    using the EXACT SAME emojis used in CateringOrderReview.tsx:
-//      🧊  Less spicy
-//      🌶  Medium spicy
-//      🔥  Very spicy
-//      🚫🧄 No onion & garlic
 const formatSpiceLevel = (raw: any): string => {
   const s = String(raw || '').trim().toLowerCase();
   if (!s) return '';
 
-  // 🔥 Very spicy / Extra spicy
   if (s.includes('extra spicy') || s.includes('extra hot') || s.includes('very spicy')) {
     return '🔥 Very spicy';
   }
-  // 🌶 Medium spicy
   if (s.includes('medium')) {
     return '🌶 Medium spicy';
   }
-  // 🧊 Less spicy
   if (s.includes('less spicy') || s.includes('mild') || s.includes('low')) {
     return '🧊 Less spicy';
   }
-  // 🚫🧄 No onion & garlic
   if (
     s.includes('no onion') ||
     s.includes('noonion') ||
@@ -428,16 +414,13 @@ const formatSpiceLevel = (raw: any): string => {
   ) {
     return '🚫🧄 No onion & garlic';
   }
-  // 🌶 Spicy (plain)
   if (s.includes('spicy') || s.includes('hot')) {
     return '🌶 Spicy';
   }
-  // ⚪ No spice
   if (s.includes('no spice') || s.includes('none')) {
     return '⚪ No Spice';
   }
 
-  // Fallback — return the original string
   return raw;
 };
 
@@ -623,10 +606,6 @@ function DeliverySlotCountdownWidget({
 
 /* ─────────────────────────────────────────────────────────────────
    ✅ NEW COMPONENT — Collapsible Special Instructions panel (CHEF).
-   Trigger row now shows a fixed "Special Instructions" label with an
-   information icon and a chevron. On tap it expands to reveal the
-   spice level (with the SAME emojis as CateringOrderReview) and the
-   full description text below.
    ───────────────────────────────────────────────────────────────── */
 function SpecialInstructionPanel({
   tag,
@@ -659,12 +638,10 @@ function SpecialInstructionPanel({
     outputRange: ['0deg', '180deg'],
   });
 
-  // ✅ Spice level is derived from the label field (or tag as a fallback)
   const spiceSource = label || tag;
   const spiceDisplay = formatSpiceLevel(spiceSource);
   const hasSpice = !!spiceDisplay;
 
-  // ✅ Description text shown beneath (the free-form special instruction)
   const descriptionText = text || '';
 
   return (
@@ -751,8 +728,6 @@ export default function AllOrdersScreen() {
   const sheetAnim = useRef(new Animated.Value(400)).current;
 
   // ✅ Alarm snooze-cycle interval ref.
-  //    Sound + vibration + 10s auto-stop are now fully owned by the
-  //    shared singleton `client/src/lib/orderAlarm.ts`.
   const alarmIntervalRef = useRef<any>(null);
 
   useEffect(() => {
@@ -805,19 +780,6 @@ export default function AllOrdersScreen() {
     }
   };
 
-  /* ─────────────────────────────────────────────────────────
-     ✅ UPDATED: These now delegate to the shared singleton
-     alarm controller (`client/src/lib/orderAlarm.ts`).
-
-     Why: the layout-mounted `useOrderNotifier('chef')` hook can
-     ALSO trigger the alarm (on socket event OR foreground push).
-     Without a singleton, the same order would ring twice — one
-     from the hook, one from this screen.
-
-     The singleton is idempotent, manages its own 10s auto-stop
-     timer, plays the bundled `assets/sounds/alarm.mp3`, applies
-     the correct audio mode, and drives the repeating vibration.
-     ───────────────────────────────────────────────────────── */
   const startOrderAlarmSound = async () => {
     await startOrderAlarm();
   };
@@ -866,7 +828,6 @@ export default function AllOrdersScreen() {
     try {
       const res = await api.get('/api/orders/chef-orders');
       if (res.data && res.data.success) {
-        // Only show orders where advance payment has been verified by Admin ("Payment Received" / isAdvanceVerified: true)
         const allFetched = res.data.orders || [];
         const fetched = allFetched.filter((o: any) => o.isAdvanceVerified === true);
         setOrders(fetched);
@@ -1114,6 +1075,11 @@ export default function AllOrdersScreen() {
   const paymentMethodType = activeOrder?.paymentMethod || 'cod';
   const isPaymentCod = String(paymentMethodType).toLowerCase() === 'cod';
 
+  // ✅ NEW: Resolve advance/balance + delivery type for the View Details breakdown
+  const advancePaidAmountNum = Number(activeOrder?.advancePaidAmount || 0);
+  const balanceToCollectNum = Number(activeOrder?.balanceAmountToCollect || 0);
+  const deliveryTypeLabel = useMemo(() => formatDeliveryType(activeOrder?.deliveryType), [activeOrder?.deliveryType]);
+
   const currentStatus = activeOrder?.orderStatus || 'Placed';
   const isCurrentOrderAccepted =
     currentStatus.toLowerCase() !== 'placed' &&
@@ -1142,7 +1108,6 @@ export default function AllOrdersScreen() {
     const upcomingList = Array.isArray(activeOrder.upcomingDeliveries) ? activeOrder.upcomingDeliveries : [];
     const pausedList = Array.isArray(activeOrder.pausedDates) ? activeOrder.pausedDates : [];
 
-    // Form combined list preserving all dates
     const dateKeys = Array.from(new Set([
       ...explicitSchedules.map((s: any) => s.date),
       ...upcomingList,
@@ -1155,7 +1120,6 @@ export default function AllOrdersScreen() {
       const timeSlot = match?.timeSlot || activeOrder.deliveryTimeSlot || '7:00 PM - 9:00 PM';
       const address = match?.address || activeOrder.addressDetails || activeOrder.deliveryAddress || customerAddress;
 
-      // ✅ Prefer per-schedule coords, fall back to order-level coords.
       const sLat = match?.latitude ?? activeOrder?.latitude;
       const sLng = match?.longitude ?? activeOrder?.longitude;
 
@@ -1171,7 +1135,6 @@ export default function AllOrdersScreen() {
     });
   }, [isMealBoxFlow, activeOrder, customerAddress]);
 
-  // Dynamic delivered schedule determination for meal box widget
   const deliveredScheduleInfo = useMemo(() => {
     if (!isMealBoxFlow) return null;
     const deliveredItem = allMealboxSchedules.find((s) => s.status.toLowerCase() === 'delivered');
@@ -1232,9 +1195,6 @@ export default function AllOrdersScreen() {
     activeOrder?.restaurantImage ||
     'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80';
 
-  // ✅ QuickBites detection — robust: true if either the flag is set OR
-  //    the order carries a persisted estimatedDeliveryAt timestamp.
-  //    Only applies to homemade orders.
   const isQuickBitesFlow = useMemo(() => {
     if (!activeOrder) return false;
     if (!isHomemadeFlow) return false;
@@ -1245,14 +1205,11 @@ export default function AllOrdersScreen() {
     return flagSet || hasEstimated;
   }, [activeOrder, isHomemadeFlow]);
 
-  // ✅ QuickBites window in minutes — defaults to 75
   const quickBitesWindowMinutes = useMemo(() => {
     const w = Number(activeOrder?.deliveryWindowMinutes);
     return Number.isFinite(w) && w > 0 ? w : 75;
   }, [activeOrder?.deliveryWindowMinutes]);
 
-  // ✅ Compute dynamic QuickBites date/time from MongoDB's `estimatedDeliveryAt`
-  //    For QuickBites the delivery date is ALWAYS "Today" (same-day).
   const quickBitesDateTime = useMemo(() => {
     if (!isQuickBitesFlow || !activeOrder?.estimatedDeliveryAt) return null;
     const d = new Date(activeOrder.estimatedDeliveryAt);
@@ -1262,7 +1219,6 @@ export default function AllOrdersScreen() {
     const dayNum = d.getDate();
     const monthShort = d.toLocaleDateString('en-US', { month: 'short' });
 
-    // ✅ QuickBites: force same-day "Today" label
     const displayDate = `Today, ${dayNum} ${monthShort}`;
     const timerDate = `Today, ${dayNum} ${monthShort}`;
 
@@ -1272,21 +1228,16 @@ export default function AllOrdersScreen() {
       hour12: true,
     });
 
-    // Remaining minutes until estimated delivery
     const diffMs = d.getTime() - now.getTime();
     const remainingMin = Math.max(0, Math.round(diffMs / (60 * 1000)));
 
     return { displayDate, timerDate, timeStr, remainingMin };
   }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
 
-  // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
-  //    • For QuickBites: computed live from `estimatedDeliveryAt` (same day).
-  //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
-  //      falls back to legacy `deliveryTimeSlot`.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
-      return quickBitesDateTime.timerDate; // parse-friendly for timer widget
+      return quickBitesDateTime.timerDate;
     }
     return String(activeOrder?.deliveryDate || '').trim();
   }, [
@@ -1314,8 +1265,6 @@ export default function AllOrdersScreen() {
     quickBitesDateTime,
   ]);
 
-  // ✅ Human-friendly display date specifically for headers/cards.
-  //    For QuickBites it is ALWAYS "Today, <day> <month>".
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
     if (isQuickBitesFlow && quickBitesDateTime) {
@@ -1329,7 +1278,6 @@ export default function AllOrdersScreen() {
     quickBitesDateTime,
   ]);
 
-  // ✅ NEW: Resolved special instruction (works for every flow).
   const resolvedSpecialInstruction = useMemo(() => {
     return resolveSpecialInstruction(activeOrder);
   }, [activeOrder]);
@@ -1340,7 +1288,6 @@ export default function AllOrdersScreen() {
     resolvedSpecialInstruction.text
   );
 
-  // ✅ NEW: Human-friendly delivery type label.
   const resolvedDeliveryTypeLabel = useMemo(() => {
     return formatDeliveryType(activeOrder?.deliveryType);
   }, [activeOrder?.deliveryType]);
@@ -1350,9 +1297,6 @@ export default function AllOrdersScreen() {
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today, 09:41 AM',
-    // ✅ For homemade QuickBites: always "Today, ..." (same-day).
-    //    For non-QuickBites homemade: use the persisted value.
-    //    For mealbox/catering: keep original behaviour.
     deliveryDate: isHomemadeFlow
       ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
       : (activeOrder?.deliveryDate || (isCateringFlow ? (activeOrder?.eventDate || '18 March') : 'Mon, 17 Jun 2024')),
@@ -1436,7 +1380,6 @@ export default function AllOrdersScreen() {
       .catch((err) => Alert.alert('Error', err.message));
   };
 
-  // ✅ Customer numbers are hidden — actions route through the static Customer Support number
   const handleCallCustomer = () => {
     triggerCall(CUSTOMER_SUPPORT_PHONE);
   };
@@ -1445,8 +1388,6 @@ export default function AllOrdersScreen() {
     triggerSMS(CUSTOMER_SUPPORT_PHONE);
   };
 
-  // ✅ Prefers coordinates for exact pin placement, falls back to address.
-  //    Works for every flow — catering, mealbox, quickbite, homemade.
   const handleOpenMap = (
     addressOverride?: string,
     latOverride?: any,
@@ -1609,7 +1550,6 @@ export default function AllOrdersScreen() {
     }
   };
 
-  // Dedicated handler to update live status of an individual scheduled date
   const handleUpdateIndividualScheduleStatus = async (dateStr: string, newStatus: string) => {
     if (!activeOrder || isCashCollected) return;
     setActiveScheduleDropdownDate(null);
@@ -1760,16 +1700,16 @@ export default function AllOrdersScreen() {
 
                   const isPendingUnaccepted = status === 'placed';
 
-                  let pillStyle = styles.orderTabPillPending; // Red
+                  let pillStyle = styles.orderTabPillPending;
                   let dotStyle = styles.tabIndicatorDotPending;
                   let textStyle = styles.orderTabPillTextPending;
 
                   if (isOrderDeliveredOrCollected) {
-                    pillStyle = styles.orderTabPillDelivered; // Green
+                    pillStyle = styles.orderTabPillDelivered;
                     dotStyle = styles.tabIndicatorDotDelivered;
                     textStyle = styles.orderTabPillTextDelivered;
                   } else if (!isPendingUnaccepted && status !== 'cancelled') {
-                    pillStyle = styles.orderTabPillAccepted; // Yellow
+                    pillStyle = styles.orderTabPillAccepted;
                     dotStyle = styles.tabIndicatorDotAccepted;
                     textStyle = styles.orderTabPillTextAccepted;
                   } else if (status === 'cancelled') {
@@ -2042,7 +1982,6 @@ export default function AllOrdersScreen() {
                 <View style={styles.orderMetaGridRow}>
                   <View style={styles.orderMetaColumn}>
                     <View style={styles.metaLabelRow}>
-                      {/* Calendar/time icons removed */}
                       <Text style={styles.metaLabelText}>ORDER TIME</Text>
                     </View>
                     <Text style={styles.metaValueText}>{orderData.orderTime}</Text>
@@ -2052,7 +1991,6 @@ export default function AllOrdersScreen() {
 
                   <View style={[styles.orderMetaColumn, { paddingLeft: 12 }]}>
                     <View style={styles.metaLabelRow}>
-                      {/* Calendar/time icons removed */}
                       <Text style={styles.metaLabelText}>SCHEDULED SLOT</Text>
                     </View>
                     <Text style={styles.metaValueTextBold}>{orderData.deliveryDate}</Text>
@@ -2119,11 +2057,7 @@ export default function AllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
-                {/* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Chef Green Theme)
-                    — Delivery Type has been added as a THIRD cell inside the same
-                    strip, right next to Delivery Slot. Values come from the same
-                    orderData.deliveryDate / orderData.deliveryTimeSlot and
-                    resolvedDeliveryTypeLabel already computed dynamically. */}
+                {/* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Chef Green Theme) */}
                 <View style={styles.deliveryInfoStripContainer}>
                   <View style={styles.deliveryInfoCell}>
                     <View style={{ flex: 1 }}>
@@ -2160,11 +2094,6 @@ export default function AllOrdersScreen() {
                   ) : null}
                 </View>
 
-                {/* ✅ NEW: Special Instructions — trigger row now shows a fixed
-                    "Special Instructions" label with an information icon and
-                    chevron. Tapping expands to reveal the spice level (with
-                    the SAME emojis as CateringOrderReview) and the full
-                    description text. */}
                 {hasSpecialInstruction ? (
                   <View style={styles.specialInstructionBottomLeftWrapper}>
                     <SpecialInstructionPanel
@@ -2210,6 +2139,12 @@ export default function AllOrdersScreen() {
                   </Animated.View>
                 </TouchableOpacity>
 
+                {/* ──────────────────────────────────────────────────────────
+                    ✅ VIEW DETAILS — now shows subtotal, delivery charge
+                    (with delivery type), coupon discount, advance paid,
+                    balance to collect, and payment mode for EVERY service
+                    type. Existing rows preserved.
+                    ────────────────────────────────────────────────────────── */}
                 {isPriceExpanded && (
                   <View style={styles.priceBreakdownFrame}>
                     {isCateringFlow && pricePerPlateNum > 0 && (
@@ -2239,7 +2174,9 @@ export default function AllOrdersScreen() {
                     )}
 
                     <View style={styles.priceDescriptionRow}>
-                      <Text style={styles.priceDescriptionLabel}>Delivery & Kitchen</Text>
+                      <Text style={styles.priceDescriptionLabel}>
+                        Delivery & Kitchen{deliveryTypeLabel ? ` (${deliveryTypeLabel})` : ''}
+                      </Text>
                       <Text style={[styles.priceDescriptionValue, deliveryPriceNum === 0 && styles.freeTextHighlight]}>
                         {deliveryPriceNum === 0 ? 'FREE' : `+₹${deliveryPriceNum}`}
                       </Text>
@@ -2253,6 +2190,40 @@ export default function AllOrdersScreen() {
                         <Text style={styles.discountValueText}>-₹{discountNum}</Text>
                       </View>
                     )}
+
+                    {advancePaidAmountNum > 0 && (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>Advance Paid</Text>
+                        <Text style={[styles.priceDescriptionValue, { color: '#166348', fontWeight: '800' }]}>
+                          ₹{advancePaidAmountNum}
+                        </Text>
+                      </View>
+                    )}
+
+                    {advancePaidAmountNum > 0 && balanceToCollectNum > 0 && (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>
+                          {isCashCollected ? 'Balance Collected' : 'Balance To Collect'}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.priceDescriptionValue,
+                            { color: isCashCollected ? '#166348' : '#D97706', fontWeight: '800' },
+                          ]}
+                        >
+                          ₹{balanceToCollectNum}
+                        </Text>
+                      </View>
+                    )}
+
+                    {deliveryTypeLabel ? (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>Delivery Type</Text>
+                        <Text style={[styles.priceDescriptionValue, { color: '#166348', fontWeight: '800' }]}>
+                          {deliveryTypeLabel}
+                        </Text>
+                      </View>
+                    ) : null}
 
                     <View style={styles.paymentModeStrip}>
                       <Text style={styles.paymentModeLabel}>Payment</Text>
@@ -2295,7 +2266,6 @@ export default function AllOrdersScreen() {
                         <View key={`sched-${scheduleItem.date}-${sIdx}`} style={styles.scheduleCardBlock}>
                           <View style={styles.scheduleTopRow}>
                             <View style={styles.scheduleDateBadge}>
-                              {/* Calendar icon removed */}
                               <Text style={styles.scheduleDateBadgeText}>{scheduleItem.date}</Text>
                             </View>
 
@@ -2316,7 +2286,6 @@ export default function AllOrdersScreen() {
                             </View>
                           </View>
 
-                          {/* Dynamic Location and Map Button on Every Delivery Card */}
                           <View style={styles.scheduleAddressRow}>
                             <Ionicons name="location-sharp" size={14} color="#166348" style={{ marginTop: 2 }} />
                             <View style={{ flex: 1, paddingRight: 6 }}>
@@ -2354,7 +2323,6 @@ export default function AllOrdersScreen() {
                             </TouchableOpacity>
                           </View>
 
-                          {/* Menu Preview Button for Chef */}
                           <View style={styles.schedulePreviewRow}>
                             <TouchableOpacity
                               style={styles.schedulePreviewBtn}
@@ -2367,7 +2335,6 @@ export default function AllOrdersScreen() {
                             </TouchableOpacity>
                           </View>
 
-                          {/* Individual Live Status Dropdown Trigger for Chef */}
                           {isCurrentOrderAccepted && !isItemPaused && !isCashCollected && (
                             <View style={{ marginTop: 10 }}>
                               <TouchableOpacity
@@ -2984,7 +2951,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  // ✅ QuickBites banner styles (chef green theme)
   quickBitesBannerCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3403,7 +3369,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     lineHeight: 16,
   },
-  // ✅ coordinate label style (green theme)
   scheduleCoordText: {
     fontSize: 10.5,
     color: '#166348',
@@ -3411,7 +3376,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
     letterSpacing: 0.2,
   },
-  // ✅ primary-address coordinate label style (green theme)
   addressCoordText: {
     fontSize: 11,
     color: '#166348',
@@ -3798,8 +3762,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginTop: 2,
   },
-
-  /* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Chef Green Theme) */
   deliveryInfoStripContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3843,8 +3805,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(22, 99, 72, 0.15)',
     marginHorizontal: 10,
   },
-
-  /* ✅ NEW: Special Instructions — bottom-left aligned, icon + label trigger */
   specialInstructionBottomLeftWrapper: {
     alignItems: 'flex-start',
     marginBottom: 10,
@@ -3929,7 +3889,6 @@ const styles = StyleSheet.create({
     color: '#B45309',
     letterSpacing: 0.3,
   },
-
   centeredPreviewContainer: {
     alignItems: 'center',
     justifyContent: 'center',

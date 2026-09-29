@@ -64,199 +64,6 @@ const getOccasionIcon = (occasionName: string): keyof typeof Ionicons.glyphMap =
   return "sparkles-outline";
 };
 
-// ✅ NEW: Normalized shapes used by the catering "Menu Items" preview.
-type CateringPreviewItem = {
-  id: string;
-  name: string;
-  image: string;
-  price: number;
-  isExtra: boolean;
-};
-
-type CateringPreviewSection = {
-  category: string;
-  items: CateringPreviewItem[];
-};
-
-type CateringPreviewAddon = {
-  id: string;
-  name: string;
-  image: string;
-  price: number;
-  count: number;
-};
-
-const pickFirstString = (...values: any[]): string => {
-  for (const v of values) {
-    if (typeof v === "string" && v.trim().length > 0) return v.trim();
-  }
-  return "";
-};
-
-// ✅ NEW: Turns one raw menu item coming from the database (order.ts → Mixed
-//    `selections` / `items`) into a predictable shape. Handles plain strings and
-//    the different key names the client may have persisted (imageUrl / image / img…).
-const normalizeCateringItem = (raw: any, index: number, forceExtra: boolean): CateringPreviewItem | null => {
-  if (raw === null || raw === undefined) return null;
-
-  if (typeof raw === "string") {
-    const nm = raw.trim();
-    if (!nm) return null;
-    return { id: `${nm}-${index}`, name: nm, image: "", price: 0, isExtra: forceExtra };
-  }
-
-  if (typeof raw !== "object") return null;
-
-  const name = pickFirstString(raw.name, raw.title, raw.itemName, raw.label);
-  if (!name) return null;
-
-  return {
-    id: String(raw.id ?? raw._id ?? `${name}-${index}`),
-    name,
-    image: pickFirstString(raw.imageUrl, raw.image, raw.img, raw.photo, raw.thumbnail),
-    price: Number(raw.price) || 0,
-    isExtra: forceExtra || raw.isExtra === true || String(raw.type || "").toLowerCase() === "extra",
-  };
-};
-
-// ✅ NEW: Builds the catering menu sections dynamically from the order document.
-//    Supported persisted shapes (all stored by order.ts in Mixed fields):
-//      1. selections: [{ category, max, selected: [...], extraSelected: [...] }]
-//      2. selections: { "Starters": [...], "Main Course": [...] }   (object keyed by category)
-//      3. selections: [ {name,...}, "Paneer Tikka", ... ]           (flat list)
-//      4. items: [ {name, category|section, ...} ]                  (fallback when selections is empty)
-const getCateringPreviewSections = (order: any): CateringPreviewSection[] => {
-  if (!order) return [];
-
-  const sections: CateringPreviewSection[] = [];
-  const selections = order.selections;
-
-  const pushSection = (category: string, standard: any[], extra: any[], max?: number) => {
-    const items: CateringPreviewItem[] = [];
-    let idx = 0;
-
-    (standard || []).forEach((raw: any) => {
-      const overMax = typeof max === "number" && max > 0 && idx >= max;
-      const norm = normalizeCateringItem(raw, idx, overMax);
-      idx += 1;
-      if (norm) items.push(norm);
-    });
-
-    (extra || []).forEach((raw: any) => {
-      const norm = normalizeCateringItem(raw, idx, true);
-      idx += 1;
-      if (norm) items.push(norm);
-    });
-
-    if (items.length > 0) {
-      sections.push({ category: category || "Selected Items", items });
-    }
-  };
-
-  if (Array.isArray(selections)) {
-    const looseItems: any[] = [];
-
-    selections.forEach((cat: any, ci: number) => {
-      if (cat === null || cat === undefined) return;
-
-      const isCategoryBlock =
-        typeof cat === "object" &&
-        (Array.isArray(cat.selected) || Array.isArray(cat.extraSelected) || Array.isArray(cat.items));
-
-      if (!isCategoryBlock) {
-        looseItems.push(cat);
-        return;
-      }
-
-      const categoryName =
-        pickFirstString(cat.category, cat.categoryName, cat.title, cat.section, cat.name) ||
-        `Category ${ci + 1}`;
-      const standard = Array.isArray(cat.selected)
-        ? cat.selected
-        : Array.isArray(cat.items)
-        ? cat.items
-        : [];
-      const extra = Array.isArray(cat.extraSelected) ? cat.extraSelected : [];
-      const max = Number(cat.max);
-
-      pushSection(categoryName, standard, extra, Number.isFinite(max) && max > 0 ? max : undefined);
-    });
-
-    if (looseItems.length > 0) {
-      // Group loose items by their own category label if they have one.
-      const grouped: { [label: string]: any[] } = {};
-      looseItems.forEach((itm: any) => {
-        const label =
-          typeof itm === "object" && itm
-            ? pickFirstString(itm.category, itm.section) || "Selected Items"
-            : "Selected Items";
-        if (!grouped[label]) grouped[label] = [];
-        grouped[label].push(itm);
-      });
-      Object.keys(grouped).forEach((label) => pushSection(label, grouped[label], []));
-    }
-  } else if (selections && typeof selections === "object") {
-    Object.keys(selections)
-      .filter((key) => key !== "pausedDates")
-      .forEach((key) => {
-        const val = selections[key];
-        if (Array.isArray(val)) {
-          pushSection(key, val, []);
-        } else if (val && typeof val === "object") {
-          const standard = Array.isArray(val.selected) ? val.selected : Array.isArray(val.items) ? val.items : [];
-          const extra = Array.isArray(val.extraSelected) ? val.extraSelected : [];
-          const max = Number(val.max);
-          pushSection(key, standard, extra, Number.isFinite(max) && max > 0 ? max : undefined);
-        }
-      });
-  }
-
-  // Fallback: nothing usable in `selections` → try the flat `items` array.
-  if (sections.length === 0 && Array.isArray(order.items) && order.items.length > 0) {
-    const grouped: { [label: string]: any[] } = {};
-    order.items.forEach((itm: any) => {
-      const label =
-        typeof itm === "object" && itm
-          ? pickFirstString(itm.category, itm.section) || "Menu Items"
-          : "Menu Items";
-      if (!grouped[label]) grouped[label] = [];
-      grouped[label].push(itm);
-    });
-    Object.keys(grouped).forEach((label) => pushSection(label, grouped[label], []));
-  }
-
-  return sections;
-};
-
-// ✅ NEW: Normalizes the catering add-ons array persisted on the order.
-const getCateringPreviewAddons = (order: any): CateringPreviewAddon[] => {
-  if (!order || !Array.isArray(order.addons)) return [];
-
-  const result: CateringPreviewAddon[] = [];
-  order.addons.forEach((raw: any, idx: number) => {
-    if (!raw) return;
-    if (typeof raw === "string") {
-      const nm = raw.trim();
-      if (nm) result.push({ id: `${nm}-${idx}`, name: nm, image: "", price: 0, count: 1 });
-      return;
-    }
-    if (typeof raw !== "object") return;
-
-    const name = pickFirstString(raw.name, raw.title, raw.label);
-    if (!name) return;
-
-    result.push({
-      id: String(raw.id ?? raw._id ?? `${name}-${idx}`),
-      name,
-      image: pickFirstString(raw.imageUrl, raw.image, raw.img, raw.photo),
-      price: Number(raw.price) || 0,
-      count: Number(raw.count ?? raw.qty ?? raw.quantity) || 1,
-    });
-  });
-
-  return result;
-};
-
 const parseDateParts = (dateStr: string) => {
   if (!dateStr) return { dayName: "MON", dayNumber: "17", month: "JUN", fullString: "Mon, 17 Jun" };
 
@@ -275,8 +82,6 @@ const parseDateParts = (dateStr: string) => {
 
 // ✅ NEW: Resolves a date string ("Today", "Tomorrow", "Mon, 17 Jun", "Today, 17 Jun", etc.)
 //    into concrete year/month/day components anchored on "now" as the default.
-//    Shared by the homemade/QuickBites delivery-time resolver and the live
-//    countdown widget so both compute the target date the same way.
 const resolveTargetDateComponents = (dateStr: string): { year: number; month: number; day: number } => {
   const now = new Date();
   let targetYear = now.getFullYear();
@@ -389,14 +194,7 @@ const generateFutureDateOptions = () => {
 
 // ✅ UPDATED: For homemade/QuickBites orders, the effective delivery time is now
 //    derived from the order's actual `deliveryDate` + `deliverySlot`/`deliveryTimeSlot`
-//    whenever that slot resolves to a real clock time (e.g. "By 4:30 PM"). This
-//    makes the live countdown track the real scheduled delivery instead of always
-//    counting down a fixed window from order creation.
-//    Resolution order for homemade/QuickBites:
-//      1. `order.estimatedDeliveryAt` if the backend already supplied one.
-//      2. `deliveryDate` + a clock time parsed out of the delivery slot.
-//      3. `createdAt` + a duration parsed out of the delivery slot (e.g. "45-60 min").
-//      4. `createdAt` + a default window (55 min homemade / 75 min QuickBites).
+//    whenever that slot resolves to a real clock time (e.g. "By 4:30 PM").
 const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
   if (!order) return undefined;
 
@@ -411,8 +209,6 @@ const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
   if (isHomemadeType) {
     const slotStr = order.deliverySlot || order.deliveryTimeSlot || "";
 
-    // ✅ 1) Try to read an explicit clock time out of the slot (e.g. "By 4:30 PM")
-    //       and anchor it to the order's actual delivery date.
     const clockTime = extractClockTimeFromSlot(slotStr);
     if (clockTime) {
       const { year, month, day } = resolveTargetDateComponents(order.deliveryDate || "Today");
@@ -422,8 +218,6 @@ const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
       }
     }
 
-    // ✅ 2) Otherwise fall back to createdAt + a duration — prefer a duration
-    //       parsed from the slot itself (e.g. "45-60 min") over the generic default.
     if (order.createdAt) {
       const createdMs = new Date(order.createdAt).getTime();
       if (Number.isFinite(createdMs)) {
@@ -450,6 +244,40 @@ const isQuickBitesOrder = (order: any): boolean => {
   );
 };
 
+// ✅ NEW: Human-friendly label for deliveryType.
+//    Handles "standard", "doorstep", "doorstep + service" (case-insensitive,
+//    with any spacing/pluses/hyphens) and returns a title-cased string.
+const formatDeliveryType = (raw: any): string => {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const norm = s.toLowerCase().replace(/\s+/g, " ").trim();
+  if (norm === "standard") return "Standard";
+  if (norm === "doorstep") return "Doorstep";
+  if (
+    norm === "doorstep + service" ||
+    norm === "doorstep+service" ||
+    norm === "doorstep +service" ||
+    norm === "doorstep+ service" ||
+    norm === "doorstep and service"
+  ) {
+    return "Doorstep + Service";
+  }
+  return s
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+};
+
+// ✅ NEW: Resolve special instruction from the order document.
+const resolveSpecialInstruction = (order: any): { tag: string; label: string; text: string } => {
+  if (!order) return { tag: "", label: "", text: "" };
+  const nested = order.specialInstruction || {};
+  const tag = String(nested.tag || order.specialInstructionTag || "").trim();
+  const label = String(nested.label || order.specialInstructionLabel || "").trim();
+  const text = String(nested.text || order.specialInstructionText || "").trim();
+  return { tag, label, text };
+};
+
 function DeliverySlotCountdownWidget({
   deliveryDate,
   timeSlot,
@@ -465,7 +293,6 @@ function DeliverySlotCountdownWidget({
   isQuickBites?: boolean;
   estimatedDeliveryAt?: string;
 }) {
-  // ✅ For QuickBites, use 75 min default; homemade 55 min
   const defaultMinutes = isQuickBites ? 75 : 55;
   const [secondsRemaining, setSecondsRemaining] = useState<number>(isHomemade ? defaultMinutes * 60 : 0);
 
@@ -502,20 +329,12 @@ function DeliverySlotCountdownWidget({
     outputRange: ["0deg", "18deg"],
   });
 
-  // ✅ UPDATED: For homemade/QuickBites orders that don't already have a resolved
-  //    `estimatedDeliveryAt` (handled first, below), the countdown is now derived
-  //    from the actual `deliveryDate` + `timeSlot` instead of always returning a
-  //    flat fixed window. It first looks for an explicit clock time in the slot
-  //    (e.g. "By 4:30 PM"), then a duration (e.g. "45-60 min"), and only falls
-  //    back to the flat default window if neither can be parsed.
   const calculateRemainingSeconds = useCallback(() => {
     if (estimatedDeliveryAt) {
       const targetMs = new Date(estimatedDeliveryAt).getTime();
       if (Number.isFinite(targetMs)) {
         const diffSecs = Math.floor((targetMs - Date.now()) / 1000);
-        if (diffSecs > 0) {
-          return diffSecs;
-        }
+        if (diffSecs > 0) return diffSecs;
         return 10 * 60;
       }
     }
@@ -526,16 +345,12 @@ function DeliverySlotCountdownWidget({
         const { year, month, day } = resolveTargetDateComponents(deliveryDate || "Today");
         const targetDate = new Date(year, month, day, clockTime.hour, clockTime.minute, 0, 0);
         const diffSecs = Math.floor((targetDate.getTime() - Date.now()) / 1000);
-        if (diffSecs > 0) {
-          return diffSecs;
-        }
+        if (diffSecs > 0) return diffSecs;
         return 10 * 60;
       }
 
       const durationMin = extractDurationMinutesFromSlot(timeSlot);
-      if (durationMin) {
-        return durationMin * 60;
-      }
+      if (durationMin) return durationMin * 60;
 
       return defaultMinutes * 60;
     }
@@ -556,15 +371,11 @@ function DeliverySlotCountdownWidget({
 
         dateParts.forEach((part) => {
           const num = parseInt(part, 10);
-          if (!isNaN(num) && num > 1900) {
-            foundYear = num;
-          } else if (!isNaN(num) && num >= 1 && num <= 31 && foundDay === -1) {
-            foundDay = num;
-          } else {
+          if (!isNaN(num) && num > 1900) foundYear = num;
+          else if (!isNaN(num) && num >= 1 && num <= 31 && foundDay === -1) foundDay = num;
+          else {
             const mKey = part.substring(0, 3).toUpperCase();
-            if (MONTHS_MAP[mKey] !== undefined) {
-              foundMonth = MONTHS_MAP[mKey];
-            }
+            if (MONTHS_MAP[mKey] !== undefined) foundMonth = MONTHS_MAP[mKey];
           }
         });
 
@@ -584,7 +395,6 @@ function DeliverySlotCountdownWidget({
           hour = parseInt(timeMatch[1], 10);
           minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
           const meridiem = timeMatch[3] ? timeMatch[3].toUpperCase() : null;
-
           if (meridiem === "PM" && hour < 12) hour += 12;
           if (meridiem === "AM" && hour === 12) hour = 0;
         }
@@ -592,12 +402,8 @@ function DeliverySlotCountdownWidget({
 
       const targetDate = new Date(targetYear, targetMonth, targetDay, hour, minute, 0, 0);
       const diffSecs = Math.floor((targetDate.getTime() - now.getTime()) / 1000);
-
-      if (diffSecs > 0) {
-        return diffSecs;
-      } else {
-        return 10 * 60;
-      }
+      if (diffSecs > 0) return diffSecs;
+      return 10 * 60;
     } catch {
       return 1800;
     }
@@ -610,16 +416,12 @@ function DeliverySlotCountdownWidget({
 
   useEffect(() => {
     if (isDelivered) return;
-
     const interval = setInterval(() => {
       setSecondsRemaining((prev) => {
-        if (prev <= 1) {
-          return 10 * 60;
-        }
+        if (prev <= 1) return 10 * 60;
         return prev - 1;
       });
     }, 1000);
-
     return () => clearInterval(interval);
   }, [isDelivered]);
 
@@ -628,10 +430,8 @@ function DeliverySlotCountdownWidget({
     const hours = Math.floor((totalSecs % 86400) / 3600);
     const mins = Math.floor((totalSecs % 3600) / 60);
     const secs = totalSecs % 60;
-
     if (days > 0) return `${days}d ${String(hours).padStart(2, "0")}h`;
-    if (hours > 0)
-      return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    if (hours > 0) return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
     return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
@@ -686,30 +486,10 @@ function WhatsNextStepperCard({
   useEffect(() => {
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(heartbeatAnim, {
-          toValue: 1.15,
-          duration: 350,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(heartbeatAnim, {
-          toValue: 1.0,
-          duration: 250,
-          easing: Easing.in(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(heartbeatAnim, {
-          toValue: 1.1,
-          duration: 300,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(heartbeatAnim, {
-          toValue: 1.0,
-          duration: 400,
-          easing: Easing.in(Easing.ease),
-          useNativeDriver: true,
-        }),
+        Animated.timing(heartbeatAnim, { toValue: 1.15, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+        Animated.timing(heartbeatAnim, { toValue: 1.0, duration: 250, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+        Animated.timing(heartbeatAnim, { toValue: 1.1, duration: 300, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+        Animated.timing(heartbeatAnim, { toValue: 1.0, duration: 400, easing: Easing.in(Easing.ease), useNativeDriver: true }),
         Animated.delay(600),
       ])
     );
@@ -890,11 +670,7 @@ export default function MyOrdersScreen() {
   const [modalActiveDay, setModalActiveDay] = useState<string>("");
 
   const [showPreviewModal, setShowPreviewModal] = useState(false);
-  // ✅ UPDATED: The state now only stores the order that was tapped (a snapshot).
-  //    The `previewOrder` actually rendered by the modal is derived below from
-  //    `userOrders`, so menu items stay in sync with what is in the database
-  //    (refresh / socket updates) while the sheet is open.
-  const [previewOrderSnapshot, setPreviewOrder] = useState<any>(null);
+  const [previewOrder, setPreviewOrder] = useState<any>(null);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>("");
 
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -910,15 +686,6 @@ export default function MyOrdersScreen() {
   const rescheduleSheetAnim = useRef(new Animated.Value(400)).current;
 
   const availableDateOptions = useMemo(() => generateFutureDateOptions(), []);
-
-  // ✅ NEW: Live version of the order shown in the preview modal. Always prefers
-  //    the freshest copy from `userOrders` (which is what /api/orders/my-orders
-  //    and the socket events keep updated from the Order model in order.ts).
-  const previewOrder = useMemo(() => {
-    if (!previewOrderSnapshot) return null;
-    const live = userOrders.find((o) => o.orderId === previewOrderSnapshot.orderId);
-    return live ? { ...previewOrderSnapshot, ...live } : previewOrderSnapshot;
-  }, [previewOrderSnapshot, userOrders]);
 
   const handleCallSupport = () => {
     const cleanNumber = SUPPORT_PHONE_NUMBER.replace(/[^0-9+]/g, "");
@@ -1232,7 +999,6 @@ export default function MyOrdersScreen() {
           order.chefName,
           order.restaurantName,
           order.occasion,
-          // ✅ Include item names for homemade/quickbites search
           ...(Array.isArray(order.items) ? order.items.map((i: any) => i.name) : []),
         ]
           .filter(Boolean)
@@ -1260,7 +1026,6 @@ export default function MyOrdersScreen() {
 
       const isCancelledState = status === "cancelled" || status === "canceled";
 
-      // ✅ UPCOMING: Orders that are placed, accepted, scheduled, preparing, etc. (not delivered/cancelled)
       if (activeTab === "Upcoming") {
         if (isCompletedState || isCancelledState) return false;
         return (
@@ -1276,9 +1041,7 @@ export default function MyOrdersScreen() {
           status === "advance verified" ||
           status === "payment verified"
         );
-      } 
-      // ✅ ACTIVE: Orders that are in-progress (preparing, out for delivery)
-      else if (activeTab === "Active") {
+      } else if (activeTab === "Active") {
         if (isCompletedState || isCancelledState) return false;
         return (
           status === "active" ||
@@ -1289,13 +1052,9 @@ export default function MyOrdersScreen() {
           status === "in progress" ||
           status === "dispatched"
         );
-      } 
-      // ✅ COMPLETED: Delivered/completed orders
-      else if (activeTab === "Completed") {
+      } else if (activeTab === "Completed") {
         return isCompletedState && !isCancelledState;
-      } 
-      // ✅ CANCELLED: Cancelled orders
-      else if (activeTab === "Cancelled") {
+      } else if (activeTab === "Cancelled") {
         return isCancelledState;
       }
       return true;
@@ -1546,17 +1305,6 @@ export default function MyOrdersScreen() {
       : [];
   const groupedPreviewItemsMap = getGroupedMealBoxItemsBySection(currentPreviewDaySelections);
 
-  // ✅ NEW: Catering menu sections + add-ons resolved dynamically from the order
-  //    document (selections / items / addons stored by order.ts).
-  const cateringPreviewSections: CateringPreviewSection[] =
-    (previewOrder?.serviceType || "").toLowerCase() === "catering"
-      ? getCateringPreviewSections(previewOrder)
-      : [];
-  const cateringPreviewAddons: CateringPreviewAddon[] =
-    (previewOrder?.serviceType || "").toLowerCase() === "catering"
-      ? getCateringPreviewAddons(previewOrder)
-      : [];
-
   const handleCopyOrderId = () => {
     Alert.alert("Copied", "Order ID copied to clipboard.");
   };
@@ -1687,6 +1435,9 @@ export default function MyOrdersScreen() {
     const invCustomerPhone = selectedOrderDetails.phone || selectedOrderDetails.userPhone || "+91 98765 43210";
     const invCustomerAddress = selectedOrderDetails.addressDetails || selectedOrderDetails.deliveryAddress || "Primary Delivery Address";
     const invCouponCode = selectedOrderDetails.appliedCoupon || selectedOrderDetails.couponCode || null;
+    const invAdvancePaid = Number(selectedOrderDetails.advancePaidAmount || 0);
+    const invBalanceDue = Number(selectedOrderDetails.balanceAmountToCollect || 0);
+    const invDeliveryTypeLabel = formatDeliveryType(selectedOrderDetails.deliveryType);
 
     let invDeliveryDates: string[] = [];
     if (isCatering) {
@@ -1763,6 +1514,11 @@ export default function MyOrdersScreen() {
                     Chef: {invChefName}
                   </Text>
                 )}
+                {invDeliveryTypeLabel ? (
+                  <Text style={styles.invoiceMetaAccentText}>
+                    Delivery: {invDeliveryTypeLabel}
+                  </Text>
+                ) : null}
               </View>
 
               <View style={styles.invoiceMetaRightCol}>
@@ -1833,7 +1589,7 @@ export default function MyOrdersScreen() {
 
             <View style={styles.invoiceCalcRow}>
               <Text style={styles.invoiceCalcLabel}>
-                {isCatering ? `Delivery & Setup (${selectedOrderDetails.deliveryType || "Standard"})` : "Delivery Charges"}
+                {isCatering ? `Delivery & Setup (${invDeliveryTypeLabel || "Standard"})` : "Delivery Charges"}
               </Text>
               <Text style={[styles.invoiceCalcValue, invDeliveryPrice === 0 && { color: "#16A34A" }]}>
                 {invDeliveryPrice === 0 ? "FREE" : `₹${invDeliveryPrice}`}
@@ -1860,6 +1616,22 @@ export default function MyOrdersScreen() {
               <Text style={styles.invoiceTotalLabel}>Total Paid</Text>
               <Text style={styles.invoiceTotalValue}>₹{invTotal}</Text>
             </View>
+
+            {/* ✅ Advance paid / balance collected rows for the invoice */}
+            {invAdvancePaid > 0 && (
+              <>
+                <View style={styles.invoiceCalcRow}>
+                  <Text style={styles.invoiceCalcLabel}>Advance Paid</Text>
+                  <Text style={styles.invoiceCalcValue}>₹{invAdvancePaid}</Text>
+                </View>
+                {invBalanceDue > 0 && (
+                  <View style={styles.invoiceCalcRow}>
+                    <Text style={styles.invoiceCalcLabel}>Balance To Collect</Text>
+                    <Text style={styles.invoiceCalcValue}>₹{invBalanceDue}</Text>
+                  </View>
+                )}
+              </>
+            )}
 
             <View style={styles.paymentMethodInfoCard}>
               <Ionicons name="checkmark-circle-outline" size={22} color="#16A34A" />
@@ -1901,8 +1673,25 @@ export default function MyOrdersScreen() {
     const detailChefName = selectedOrderDetails.chefName || selectedOrderDetails.restaurantName || "Expert Chef";
     const detailMenuName = selectedOrderDetails.menuName || (isCatering ? "Catering Platter" : (isHomemade ? (isQuickBites ? "Quick Bites Order" : "Homemade Dishes Order") : "Classic Lunch"));
     const detailMenuImage = selectedOrderDetails.menuImage || selectedOrderDetails.restaurantImage || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400";
-    const detailTotal = selectedOrderDetails.totalAmount || 1014;
-    
+    const detailTotal = Number(selectedOrderDetails.totalAmount || 0);
+    const detailSubtotal = Number(selectedOrderDetails.subtotal ?? detailTotal);
+    const detailDeliveryPrice = Number(selectedOrderDetails.deliveryPrice ?? 0);
+    const detailDiscount = Number(selectedOrderDetails.discount ?? 0);
+    const detailAdvancePaid = Number(selectedOrderDetails.advancePaidAmount ?? 0);
+    const detailBalanceToCollect = Number(selectedOrderDetails.balanceAmountToCollect ?? 0);
+    const detailCoupon = String(selectedOrderDetails.appliedCoupon || "").trim();
+    const detailDeliveryTypeLabel = formatDeliveryType(selectedOrderDetails.deliveryType);
+    const detailPaymentMethodStr = String(selectedOrderDetails.paymentMethod || "cod");
+    const isDetailCod = detailPaymentMethodStr.toLowerCase() === "cod";
+    const detailPaymentStatusStr = String(selectedOrderDetails.paymentStatus || "").toLowerCase();
+    const isDetailCashCollected =
+      detailPaymentStatusStr === "collected" ||
+      detailPaymentStatusStr === "paid" ||
+      detailPaymentStatusStr.includes("fully paid") ||
+      selectedOrderDetails.paymentCaptured === true;
+    const detailSpecial = resolveSpecialInstruction(selectedOrderDetails);
+    const detailHasSpecial = !!(detailSpecial.tag || detailSpecial.label || detailSpecial.text);
+
     const activeDateTarget = selectedOrderDetails.selectedDeliveryDate || selectedDatesPerOrder[selectedOrderDetails.orderId] || selectedOrderDetails.deliveryDate || "Today";
     const matchedSchedule = isMealBox
       ? (selectedOrderDetails.deliverySchedules || []).find((s: any) => s.date === activeDateTarget)
@@ -1914,13 +1703,11 @@ export default function MyOrdersScreen() {
       ? (selectedOrderDetails.deliveryDate || "Today")
       : activeDateTarget;
 
-    // ✅ Enhanced time slot resolution for QuickBites
     let detailTimeSlot = matchedSchedule?.timeSlot
       || (isCatering ? (selectedOrderDetails.eventTime || selectedOrderDetails.deliveryTimeSlot || "08:30 PM")
       : isHomemade ? (selectedOrderDetails.deliverySlot || selectedOrderDetails.deliveryTimeSlot || (isQuickBites ? "By 4:30 PM" : "45-60 min"))
       : (selectedOrderDetails.deliveryTimeSlot || "7:00 PM - 9:00 PM"));
 
-    // ✅ For QuickBites, compute the actual delivery time from estimatedDeliveryAt
     if (isQuickBites && selectedOrderDetails.estimatedDeliveryAt) {
       const estDate = new Date(selectedOrderDetails.estimatedDeliveryAt);
       if (!isNaN(estDate.getTime())) {
@@ -1939,13 +1726,12 @@ export default function MyOrdersScreen() {
       || "Primary Venue Address";
 
     const detailStatus = matchedSchedule?.status || selectedOrderDetails.orderStatus || "Placed";
-    const detailPaymentStatusString = String(selectedOrderDetails.paymentStatus || "").toLowerCase();
     const isDeliveredCurrent =
       detailStatus.toLowerCase() === "delivered" ||
       detailStatus.toLowerCase() === "completed" ||
       detailStatus.toLowerCase() === "cash collected" ||
-      detailPaymentStatusString === "collected" ||
-      detailPaymentStatusString === "paid" ||
+      detailPaymentStatusStr === "collected" ||
+      detailPaymentStatusStr === "paid" ||
       selectedOrderDetails.paymentCaptured === true;
 
     const { dayName: schedDayName, dayNumber: schedDayNum, month: schedMonth } = parseDateParts(detailStartDate);
@@ -2190,6 +1976,25 @@ export default function MyOrdersScreen() {
             </View>
           )}
 
+          {/* ✅ Special instruction display for all flows */}
+          {detailHasSpecial && (
+            <View style={styles.specialInstructionDetailBlock}>
+              <Text style={styles.specialInstructionDetailHeading}>Special Instructions</Text>
+              {detailSpecial.label ? (
+                <View style={styles.specialInstructionDetailRow}>
+                  <Text style={styles.specialInstructionDetailLabel}>Spice Level:</Text>
+                  <Text style={styles.specialInstructionDetailValue}>{detailSpecial.label}</Text>
+                </View>
+              ) : null}
+              {detailSpecial.text ? (
+                <Text style={styles.specialInstructionDetailText}>{detailSpecial.text}</Text>
+              ) : null}
+              {!detailSpecial.label && !detailSpecial.text && detailSpecial.tag ? (
+                <Text style={styles.specialInstructionDetailText}>{detailSpecial.tag}</Text>
+              ) : null}
+            </View>
+          )}
+
           {isDeliveredCurrent && (
             <View style={styles.feedbackCardContainer}>
               <View style={styles.feedbackHeaderRow}>
@@ -2312,11 +2117,20 @@ export default function MyOrdersScreen() {
             <WhatsNextStepperCard order={selectedOrderDetails} targetStatus={detailStatus} />
           </View>
 
+          {/* ──────────────────────────────────────────────────────────
+              ✅ BILL SUMMARY — now shows ALL required components for
+                 EVERY service type (homemade, quickbites, mealbox,
+                 catering): line items, subtotal, delivery/setup charge
+                 (with delivery type), discount (with coupon code),
+                 advance paid, balance to collect, and grand total.
+              ────────────────────────────────────────────────────────── */}
           <View style={[styles.orderSummaryCardBlock, isHomemade && { marginBottom: 16 }]}>
             <Text style={styles.orderSummaryCardTitle}>Bill Summary</Text>
 
             <View style={styles.orderSummaryRow}>
-              <Text style={styles.orderSummaryLabel}>{isCatering ? "Catering Platter" : isHomemade ? (isQuickBites ? "Quick Bites" : "Homemade Dishes") : "Plan"}</Text>
+              <Text style={styles.orderSummaryLabel}>
+                {isCatering ? "Catering Platter" : isHomemade ? (isQuickBites ? "Quick Bites" : "Homemade Dishes") : "Plan"}
+              </Text>
               <Text style={styles.orderSummaryValue}>{detailMenuName}</Text>
             </View>
 
@@ -2327,15 +2141,28 @@ export default function MyOrdersScreen() {
 
             <View style={styles.orderSummaryRow}>
               <Text style={styles.orderSummaryLabel}>Subtotal</Text>
-              <Text style={styles.orderSummaryValue}>₹{selectedOrderDetails.subtotal || detailTotal}</Text>
+              <Text style={styles.orderSummaryValue}>₹{detailSubtotal}</Text>
             </View>
 
             <View style={styles.orderSummaryRow}>
-              <Text style={styles.orderSummaryLabel}>Delivery Charges</Text>
-              <Text style={[styles.orderSummaryValue, { color: "#16A34A", fontWeight: "800" }]}>
-                {selectedOrderDetails.deliveryPrice ? `₹${selectedOrderDetails.deliveryPrice}` : "FREE"}
+              <Text style={styles.orderSummaryLabel}>
+                Delivery Charges{detailDeliveryTypeLabel ? ` (${detailDeliveryTypeLabel})` : ""}
+              </Text>
+              <Text style={[styles.orderSummaryValue, detailDeliveryPrice === 0 && { color: "#16A34A", fontWeight: "800" }]}>
+                {detailDeliveryPrice === 0 ? "FREE" : `₹${detailDeliveryPrice}`}
               </Text>
             </View>
+
+            {detailDiscount > 0 && (
+              <View style={styles.orderSummaryRow}>
+                <Text style={styles.orderSummaryLabel}>
+                  Coupon Discount{detailCoupon ? ` (${detailCoupon})` : ""}
+                </Text>
+                <Text style={[styles.orderSummaryValue, { color: "#16A34A", fontWeight: "800" }]}>
+                  -₹{detailDiscount}
+                </Text>
+              </View>
+            )}
 
             <View style={styles.orderSummaryDivider} />
 
@@ -2343,6 +2170,81 @@ export default function MyOrdersScreen() {
               <Text style={styles.orderSummaryTotalLabel}>Total Amount</Text>
               <Text style={styles.orderSummaryTotalValue}>
                 ₹{detailTotal} <Text style={{ fontSize: 13, color: "#64748B", fontWeight: "500" }}>{isCatering || isHomemade ? "total" : "/ week"}</Text>
+              </Text>
+            </View>
+
+            {detailAdvancePaid > 0 && (
+              <>
+                <View style={[styles.orderSummaryRow, { marginTop: 10 }]}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Ionicons name="checkmark-circle" size={14} color="#16A34A" />
+                    <Text style={styles.orderSummaryLabel}>Advance Paid</Text>
+                  </View>
+                  <Text style={[styles.orderSummaryValue, { color: "#16A34A", fontWeight: "800" }]}>
+                    ₹{detailAdvancePaid}
+                  </Text>
+                </View>
+
+                <View style={styles.orderSummaryRow}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Ionicons
+                      name={isDetailCashCollected ? "checkmark-circle" : "cash-outline"}
+                      size={14}
+                      color={isDetailCashCollected ? "#16A34A" : "#D97706"}
+                    />
+                    <Text style={styles.orderSummaryLabel}>
+                      {isDetailCashCollected ? "Balance Collected" : "Balance To Collect"}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.orderSummaryValue,
+                      { color: isDetailCashCollected ? "#16A34A" : "#D97706", fontWeight: "800" },
+                    ]}
+                  >
+                    ₹{detailBalanceToCollect}
+                  </Text>
+                </View>
+
+                <View style={styles.advanceBalancePillStrip}>
+                  <Ionicons
+                    name={isDetailCashCollected ? "shield-checkmark" : isDetailCod ? "cash" : "card"}
+                    size={13}
+                    color={isDetailCashCollected ? "#166534" : "#B45309"}
+                  />
+                  <Text
+                    style={[
+                      styles.advanceBalancePillText,
+                      { color: isDetailCashCollected ? "#166534" : "#B45309" },
+                    ]}
+                  >
+                    {isDetailCashCollected
+                      ? "Payment fully settled — thank you!"
+                      : isDetailCod
+                      ? `Pay ₹${detailBalanceToCollect} in cash on delivery`
+                      : `Pay ₹${detailBalanceToCollect} online before delivery`}
+                  </Text>
+                </View>
+              </>
+            )}
+
+            {detailDeliveryTypeLabel ? (
+              <View style={[styles.orderSummaryRow, { marginTop: 6 }]}>
+                <Text style={styles.orderSummaryLabel}>Delivery Type</Text>
+                <Text style={[styles.orderSummaryValue, { color: "#166538", fontWeight: "800" }]}>
+                  {detailDeliveryTypeLabel}
+                </Text>
+              </View>
+            ) : null}
+
+            <View style={styles.orderSummaryRow}>
+              <Text style={styles.orderSummaryLabel}>Payment Method</Text>
+              <Text style={styles.orderSummaryValue}>
+                {isDetailCashCollected
+                  ? "Cash Collected (Paid)"
+                  : isDetailCod
+                  ? "Cash on Delivery (40% Advance)"
+                  : "Online Paid (UPI/Card)"}
               </Text>
             </View>
           </View>
@@ -2615,7 +2517,6 @@ export default function MyOrdersScreen() {
               const deliveryAddressString = order.deliveryAddress || order.addressDetails || "Doorstep Delivery";
               const isHomemadeStepperOpen = !!expandedSteppers[orderId];
 
-              // ✅ Enhanced date and slot display for QuickBites
               let homemadeDateDisplay = order?.deliveryDate || "Today";
               let homemadeSlotDisplay =
                 order?.deliverySlot ||
@@ -2634,7 +2535,6 @@ export default function MyOrdersScreen() {
                     hour12: true,
                   });
                   if (isQuickBites) {
-                    // ✅ QuickBites shows "Today, 17 Jun" and "By 4:30 PM"
                     homemadeDateDisplay = `Today, ${dayNum} ${monthShort}`;
                     homemadeSlotDisplay = `By ${timeStr}`;
                   } else {
@@ -3740,57 +3640,61 @@ export default function MyOrdersScreen() {
                   )}
                 </View>
               ) : isPreviewCatering ? (
-                // ✅ UPDATED: Catering menu items are now rendered dynamically from the
-                //    order document (selections / items / addons persisted by order.ts),
-                //    via getCateringPreviewSections() / getCateringPreviewAddons().
-                <View style={{ width: "100%", paddingBottom: 90 }}>
-                  {cateringPreviewSections.map((section, index) => (
-                    <View key={`conf-preview-cat-${section.category}-${index}`} style={styles.previewCategoryCard}>
-                      <View style={styles.previewCategoryHeader}>
-                        <Text style={styles.previewCategoryTitle}>{section.category}</Text>
-                      </View>
+                <View style={{ width: "100%" }}>
+                  {Array.isArray(previewOrder?.selections) &&
+                    previewOrder.selections.map((cat: any, index: number) => {
+                      const allSelected = [...(cat.selected || []), ...(cat.extraSelected || [])];
+                      if (!allSelected.length) return null;
 
-                      {section.items.map((item, i) => (
-                        <View key={`conf-cat-item-${item.id}-${i}`} style={styles.previewItemCard}>
-                          <Image
-                            source={{ uri: item.image || "https://images.unsplash.com/photo-1544025162-d76694265947?w=120&auto=format&fit=crop" }}
-                            style={styles.previewItemImage}
-                          />
-                          <Text style={[styles.previewItemName, { flexShrink: 1 }]} numberOfLines={2}>
-                            {item.name}
-                          </Text>
-                          {item.isExtra && (
-                            <View style={styles.extraTag}>
-                              <Text style={styles.extraTagText}>+₹{item.price || 0}/plate</Text>
-                            </View>
-                          )}
-                          <Ionicons
-                            name="checkmark-circle"
-                            size={18}
-                            color={item.isExtra ? "#f59e0b" : "#16a34a"}
-                            style={{ marginLeft: "auto" }}
-                          />
+                      return (
+                        <View key={`conf-preview-cat-${index}`} style={styles.previewCategoryCard}>
+                          <View style={styles.previewCategoryHeader}>
+                            <Text style={styles.previewCategoryTitle}>{cat.category}</Text>
+                          </View>
+
+                          {allSelected.map((item: any, i: number) => {
+                            const isExtra = cat.max ? i >= cat.max : false;
+                            return (
+                              <View key={`conf-cat-item-${i}`} style={styles.previewItemCard}>
+                                <Image
+                                  source={{ uri: item.imageUrl || item.image || "https://images.unsplash.com/photo-1544025162-d76694265947?w=120&auto=format&fit=crop" }}
+                                  style={styles.previewItemImage}
+                                />
+                                <Text style={styles.previewItemName}>{item.name}</Text>
+                                {isExtra && (
+                                  <View style={styles.extraTag}>
+                                    <Text style={styles.extraTagText}>+₹{item.price || 0}/plate</Text>
+                                  </View>
+                                )}
+                                <Ionicons
+                                  name="checkmark-circle"
+                                  size={18}
+                                  color={isExtra ? "#f59e0b" : "#16a34a"}
+                                  style={{ marginLeft: "auto" }}
+                                />
+                              </View>
+                            );
+                          })}
                         </View>
-                      ))}
-                    </View>
-                  ))}
+                      );
+                    })}
 
-                  {cateringPreviewAddons.length > 0 && (
+                  {Array.isArray(previewOrder?.addons) && previewOrder.addons.length > 0 && (
                     <View style={styles.previewCategoryCard}>
                       <View style={styles.previewCategoryHeader}>
                         <Text style={styles.previewCategoryTitle}>Add-ons</Text>
                       </View>
-                      {cateringPreviewAddons.map((addon, idx) => (
-                        <View key={`conf-addon-preview-${addon.id}-${idx}`} style={styles.previewItemCard}>
+                      {previewOrder.addons.map((addon: any, idx: number) => (
+                        <View key={`conf-addon-preview-${idx}`} style={styles.previewItemCard}>
                           <Image
-                            source={{ uri: addon.image || "https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=120&auto=format&fit=crop" }}
+                            source={{ uri: addon.imageUrl || addon.image || "https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=120&auto=format&fit=crop" }}
                             style={styles.previewItemImage}
                           />
-                          <Text style={[styles.previewItemName, { flexShrink: 1 }]} numberOfLines={2}>
-                            {addon.name} × {addon.count}
+                          <Text style={styles.previewItemName}>
+                            {addon.name} × {addon.count || 1}
                           </Text>
                           <View style={styles.extraTag}>
-                            <Text style={styles.extraTagText}>+₹{addon.price * addon.count}/plate</Text>
+                            <Text style={styles.extraTagText}>+₹{(addon.price || 0) * (addon.count || 1)}/plate</Text>
                           </View>
                           <Ionicons
                             name="checkmark-circle"
@@ -3800,14 +3704,6 @@ export default function MyOrdersScreen() {
                           />
                         </View>
                       ))}
-                    </View>
-                  )}
-
-                  {cateringPreviewSections.length === 0 && cateringPreviewAddons.length === 0 && (
-                    <View style={styles.previewCategoryCard}>
-                      <Text style={styles.previewEmptyListText}>
-                        No menu items were saved for this catering order.
-                      </Text>
                     </View>
                   )}
                 </View>
@@ -4246,7 +4142,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 
-  // ✅ Detail item styles for homemade/quickbites
   detailItemRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -4312,6 +4207,68 @@ const styles = StyleSheet.create({
     color: "#334155",
     marginLeft: 6,
     lineHeight: 17,
+  },
+
+  // ✅ Special instruction detail block (customer detail view)
+  specialInstructionDetailBlock: {
+    backgroundColor: "#F0FDF4",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#DCFCE7",
+    padding: 14,
+    marginBottom: 16,
+  },
+  specialInstructionDetailHeading: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#166534",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  specialInstructionDetailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(22, 99, 72, 0.15)",
+  },
+  specialInstructionDetailLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  specialInstructionDetailValue: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#0F172A",
+  },
+  specialInstructionDetailText: {
+    fontSize: 12.5,
+    fontWeight: "500",
+    color: "#334155",
+    lineHeight: 18,
+  },
+
+  // ✅ New pill strip for advance/balance row in Bill Summary
+  advanceBalancePillStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 10,
+    gap: 6,
+  },
+  advanceBalancePillText: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    flex: 1,
   },
 
   feedbackCardContainer: {

@@ -864,6 +864,10 @@ export default function AdminAllOrdersScreen() {
   const paymentMethodType = activeOrder?.paymentMethod || 'cod';
   const isPaymentCod = String(paymentMethodType).toLowerCase() === 'cod';
 
+  // ✅ NEW: Advance / balance values for the Bill Summary breakdown
+  const advancePaidAmountNum = Number(activeOrder?.advancePaidAmount || 0);
+  const balanceToCollectNum = Number(activeOrder?.balanceAmountToCollect || 0);
+
   const currentStatus = activeOrder?.orderStatus || 'Placed';
   const isCurrentOrderAccepted =
     currentStatus.toLowerCase() !== 'placed' && currentStatus.toLowerCase() !== 'cancelled';
@@ -1043,7 +1047,7 @@ export default function AdminAllOrdersScreen() {
     resolvedSpecialInstruction.text
   );
 
-  // ✅ NEW: Human-friendly delivery type label.
+  // ✅ NEW: Human-friendly delivery type label (Standard / Doorstep / Doorstep + Service)
   const resolvedDeliveryTypeLabel = useMemo(() => {
     return formatDeliveryType(activeOrder?.deliveryType);
   }, [activeOrder?.deliveryType]);
@@ -2039,6 +2043,12 @@ export default function AdminAllOrdersScreen() {
                   </Animated.View>
                 </TouchableOpacity>
 
+                {/* ──────────────────────────────────────────────────────────
+                    ✅ VIEW DETAILS — now shows subtotal, delivery charge
+                    (with delivery type), coupon discount, advance paid,
+                    balance to collect, and payment mode for EVERY service
+                    type. Existing rows preserved.
+                    ────────────────────────────────────────────────────────── */}
                 {isPriceExpanded && (
                   <View style={styles.priceBreakdownFrame}>
                     {isCateringFlow && pricePerPlateNum > 0 && (
@@ -2064,7 +2074,9 @@ export default function AdminAllOrdersScreen() {
                       </View>
                     )}
                     <View style={styles.priceDescriptionRow}>
-                      <Text style={styles.priceDescriptionLabel}>Delivery & Kitchen</Text>
+                      <Text style={styles.priceDescriptionLabel}>
+                        Delivery & Kitchen{resolvedDeliveryTypeLabel ? ` (${resolvedDeliveryTypeLabel})` : ''}
+                      </Text>
                       <Text style={[styles.priceDescriptionValue, deliveryPriceNum === 0 && styles.freeTextHighlight]}>
                         {deliveryPriceNum === 0 ? 'FREE' : `+₹${deliveryPriceNum}`}
                       </Text>
@@ -2077,6 +2089,37 @@ export default function AdminAllOrdersScreen() {
                         <Text style={styles.discountValueText}>-₹{discountNum}</Text>
                       </View>
                     )}
+                    {advancePaidAmountNum > 0 && (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>Advance Paid</Text>
+                        <Text style={[styles.priceDescriptionValue, { color: '#2563EB', fontWeight: '800' }]}>
+                          ₹{advancePaidAmountNum}
+                        </Text>
+                      </View>
+                    )}
+                    {advancePaidAmountNum > 0 && balanceToCollectNum > 0 && (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>
+                          {isCashCollected ? 'Balance Collected' : 'Balance To Collect'}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.priceDescriptionValue,
+                            { color: isCashCollected ? '#16A34A' : '#D97706', fontWeight: '800' },
+                          ]}
+                        >
+                          ₹{balanceToCollectNum}
+                        </Text>
+                      </View>
+                    )}
+                    {resolvedDeliveryTypeLabel ? (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>Delivery Type</Text>
+                        <Text style={[styles.priceDescriptionValue, { color: '#2563EB', fontWeight: '800' }]}>
+                          {resolvedDeliveryTypeLabel}
+                        </Text>
+                      </View>
+                    ) : null}
                     <View style={styles.paymentModeStrip}>
                       <Text style={styles.paymentModeLabel}>Payment</Text>
                       <View
