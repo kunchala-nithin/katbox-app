@@ -49,6 +49,26 @@ const MONTHS_MAP: { [key: string]: number } = {
   JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Defensive JSON parser.
+   The MongoDB document may return `selections`, `items`, `addons`
+   either as a real Array/Object (when stored properly via Mixed) OR
+   as a JSON string (when they were passed through multipart/form-data
+   and stored verbatim as a string). This helper safely normalizes
+   both cases so downstream `Array.isArray()` checks always work.
+   ───────────────────────────────────────────────────────────────── */
+const parseIfJsonString = (value: any, fallback: any = null) => {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return fallback;
+  }
+};
+
 const getOccasionIcon = (occasionName: string): keyof typeof Ionicons.glyphMap => {
   if (!occasionName) return "sparkles-outline";
   const occ = occasionName.toLowerCase();
@@ -276,6 +296,18 @@ const resolveSpecialInstruction = (order: any): { tag: string; label: string; te
   const label = String(nested.label || order.specialInstructionLabel || "").trim();
   const text = String(nested.text || order.specialInstructionText || "").trim();
   return { tag, label, text };
+};
+
+// ✅ NEW: Resolve the best available image for homemade / quickbites orders,
+//    preferring the first dish image so the hero banner shows the actual food.
+const resolveHomemadeHeroImage = (order: any): string => {
+  if (!order) return "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400";
+  const items = Array.isArray(order.items) ? order.items : [];
+  const firstWithImage = items.find((i: any) => i && (i.image || i.imageUrl));
+  if (firstWithImage) return firstWithImage.image || firstWithImage.imageUrl;
+  if (order.menuImage) return order.menuImage;
+  if (order.restaurantImage) return order.restaurantImage;
+  return "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400";
 };
 
 function DeliverySlotCountdownWidget({
@@ -681,6 +713,9 @@ export default function MyOrdersScreen() {
   const [reschedulingLoading, setReschedulingLoading] = useState(false);
 
   const [pausedDates, setPausedDates] = useState<{ [key: string]: boolean }>({});
+
+  // ✅ NEW: Collapsible special-instruction toggle for the detail screen.
+  const [isDetailSpecialExpanded, setIsDetailSpecialExpanded] = useState<boolean>(false);
 
   const previewSheetAnim = useRef(new Animated.Value(400)).current;
   const rescheduleSheetAnim = useRef(new Animated.Value(400)).current;
@@ -1260,6 +1295,9 @@ export default function MyOrdersScreen() {
       selectedDeliveryDate: dateToInspect,
     });
 
+    // ✅ Reset the collapsible special instructions each time we open details.
+    setIsDetailSpecialExpanded(false);
+
     if (!isCatering && !isHomemade && order?.selections && typeof order.selections === "object" && !Array.isArray(order.selections)) {
       const keys = Object.keys(order.selections).filter((k) => k !== "pausedDates");
       const { dayName } = parseDateParts(dateToInspect);
@@ -1299,9 +1337,26 @@ export default function MyOrdersScreen() {
     return map;
   };
 
+  /* ─────────────────────────────────────────────────────────
+     ✅ NEW — Defensive resolution of selections for preview modal.
+     Handles both Array (catering), Object (mealbox map), and
+     JSON-string (legacy) forms of `previewOrder.selections`.
+     ───────────────────────────────────────────────────────── */
+  const resolvedPreviewSelections = useMemo(() => {
+    return parseIfJsonString(previewOrder?.selections, null);
+  }, [previewOrder]);
+
+  const resolvedPreviewAddons = useMemo(() => {
+    return parseIfJsonString(previewOrder?.addons, []);
+  }, [previewOrder]);
+
+  const resolvedPreviewItems = useMemo(() => {
+    return parseIfJsonString(previewOrder?.items, []);
+  }, [previewOrder]);
+
   const currentPreviewDaySelections =
-    previewOrder?.selections && previewActiveDay && !Array.isArray(previewOrder.selections)
-      ? previewOrder.selections[previewActiveDay] || []
+    resolvedPreviewSelections && previewActiveDay && !Array.isArray(resolvedPreviewSelections) && typeof resolvedPreviewSelections === "object"
+      ? resolvedPreviewSelections[previewActiveDay] || []
       : [];
   const groupedPreviewItemsMap = getGroupedMealBoxItemsBySection(currentPreviewDaySelections);
 
@@ -1385,12 +1440,16 @@ export default function MyOrdersScreen() {
 
   const getInvoiceLineItems = (order: any) => {
     if (!order) return [];
-    if (Array.isArray(order.items) && order.items.length > 0) {
-      return order.items;
+
+    const safeItems = parseIfJsonString(order.items, null);
+    if (Array.isArray(safeItems) && safeItems.length > 0) {
+      return safeItems;
     }
-    if (Array.isArray(order.selections) && order.selections.length > 0) {
+
+    const safeSelections = parseIfJsonString(order.selections, null);
+    if (Array.isArray(safeSelections) && safeSelections.length > 0) {
       const flatList: any[] = [];
-      order.selections.forEach((cat: any) => {
+      safeSelections.forEach((cat: any) => {
         const allSel = [...(cat.selected || []), ...(cat.extraSelected || [])];
         allSel.forEach((itm: any) => {
           if (itm && itm.name) flatList.push(itm);
@@ -1398,11 +1457,11 @@ export default function MyOrdersScreen() {
       });
       if (flatList.length > 0) return flatList;
     }
-    if (order.selections && typeof order.selections === "object" && !Array.isArray(order.selections)) {
+    if (safeSelections && typeof safeSelections === "object" && !Array.isArray(safeSelections)) {
       const allSelected: any[] = [];
-      Object.keys(order.selections).forEach((key) => {
-        if (key !== "pausedDates" && Array.isArray(order.selections[key])) {
-          order.selections[key].forEach((itm: any) => {
+      Object.keys(safeSelections).forEach((key) => {
+        if (key !== "pausedDates" && Array.isArray(safeSelections[key])) {
+          safeSelections[key].forEach((itm: any) => {
             if (itm && itm.name && !allSelected.some((s) => s.name === itm.name)) {
               allSelected.push(itm);
             }
@@ -1617,7 +1676,6 @@ export default function MyOrdersScreen() {
               <Text style={styles.invoiceTotalValue}>₹{invTotal}</Text>
             </View>
 
-            {/* ✅ Advance paid / balance collected rows for the invoice */}
             {invAdvancePaid > 0 && (
               <>
                 <View style={styles.invoiceCalcRow}>
@@ -1691,6 +1749,8 @@ export default function MyOrdersScreen() {
       selectedOrderDetails.paymentCaptured === true;
     const detailSpecial = resolveSpecialInstruction(selectedOrderDetails);
     const detailHasSpecial = !!(detailSpecial.tag || detailSpecial.label || detailSpecial.text);
+
+    const detailHeroImage = isHomemade ? resolveHomemadeHeroImage(selectedOrderDetails) : detailMenuImage;
 
     const activeDateTarget = selectedOrderDetails.selectedDeliveryDate || selectedDatesPerOrder[selectedOrderDetails.orderId] || selectedOrderDetails.deliveryDate || "Today";
     const matchedSchedule = isMealBox
@@ -1800,10 +1860,8 @@ export default function MyOrdersScreen() {
             </View>
 
             <Image
-              source={{
-                uri: "https://cdn-icons-png.flaticon.com/512/2830/2830312.png",
-              }}
-              style={styles.scooterMascotGraphic}
+              source={{ uri: detailHeroImage }}
+              style={styles.heroDishImage}
             />
           </View>
 
@@ -1902,11 +1960,10 @@ export default function MyOrdersScreen() {
             </View>
           )}
 
-          {/* ✅ Homemade/QuickBites items display in detail view */}
           {isHomemade && Array.isArray(selectedOrderDetails.items) && selectedOrderDetails.items.length > 0 && (
             <View style={styles.mealSpecCard}>
               <View style={styles.mealSpecMainRow}>
-                <Image source={{ uri: detailMenuImage }} style={styles.mealSpecImage} />
+                <Image source={{ uri: detailHeroImage }} style={styles.mealSpecImage} />
                 <View style={styles.mealSpecTextCol}>
                   <Text style={styles.mealSpecTitle}>{detailMenuName}</Text>
                   <Text style={styles.mealSpecSubtext}>
@@ -1976,22 +2033,54 @@ export default function MyOrdersScreen() {
             </View>
           )}
 
-          {/* ✅ Special instruction display for all flows */}
+          {isCatering && (
+            <View style={styles.cateringSelectedItemsBtnWrap}>
+              <TouchableOpacity
+                style={styles.cateringSelectedItemsBtn}
+                activeOpacity={0.85}
+                onPress={() => openPreviewModal(selectedOrderDetails)}
+              >
+                <Ionicons name="restaurant-outline" size={18} color="#166534" />
+                <Text style={styles.cateringSelectedItemsBtnText}>View Selected Items</Text>
+                <Ionicons name="chevron-forward" size={16} color="#166534" />
+              </TouchableOpacity>
+            </View>
+          )}
+
           {detailHasSpecial && (
-            <View style={styles.specialInstructionDetailBlock}>
-              <Text style={styles.specialInstructionDetailHeading}>Special Instructions</Text>
-              {detailSpecial.label ? (
-                <View style={styles.specialInstructionDetailRow}>
-                  <Text style={styles.specialInstructionDetailLabel}>Spice Level:</Text>
-                  <Text style={styles.specialInstructionDetailValue}>{detailSpecial.label}</Text>
+            <View style={styles.specialInstructionCollapsibleWrap}>
+              <TouchableOpacity
+                style={styles.specialInstructionToggleRow}
+                activeOpacity={0.75}
+                onPress={() => {
+                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                  setIsDetailSpecialExpanded((prev) => !prev);
+                }}
+              >
+                <Text style={styles.specialInstructionToggleText}>Special Instructions</Text>
+                <Ionicons
+                  name={isDetailSpecialExpanded ? "chevron-up" : "chevron-down"}
+                  size={16}
+                  color="#166534"
+                />
+              </TouchableOpacity>
+
+              {isDetailSpecialExpanded && (
+                <View style={styles.specialInstructionExpandedBody}>
+                  {detailSpecial.label ? (
+                    <View style={styles.specialInstructionDetailRow}>
+                      <Text style={styles.specialInstructionDetailLabel}>Spice Level:</Text>
+                      <Text style={styles.specialInstructionDetailValue}>{detailSpecial.label}</Text>
+                    </View>
+                  ) : null}
+                  {detailSpecial.text ? (
+                    <Text style={styles.specialInstructionDetailText}>{detailSpecial.text}</Text>
+                  ) : null}
+                  {!detailSpecial.label && !detailSpecial.text && detailSpecial.tag ? (
+                    <Text style={styles.specialInstructionDetailText}>{detailSpecial.tag}</Text>
+                  ) : null}
                 </View>
-              ) : null}
-              {detailSpecial.text ? (
-                <Text style={styles.specialInstructionDetailText}>{detailSpecial.text}</Text>
-              ) : null}
-              {!detailSpecial.label && !detailSpecial.text && detailSpecial.tag ? (
-                <Text style={styles.specialInstructionDetailText}>{detailSpecial.tag}</Text>
-              ) : null}
+              )}
             </View>
           )}
 
@@ -2117,13 +2206,6 @@ export default function MyOrdersScreen() {
             <WhatsNextStepperCard order={selectedOrderDetails} targetStatus={detailStatus} />
           </View>
 
-          {/* ──────────────────────────────────────────────────────────
-              ✅ BILL SUMMARY — now shows ALL required components for
-                 EVERY service type (homemade, quickbites, mealbox,
-                 catering): line items, subtotal, delivery/setup charge
-                 (with delivery type), discount (with coupon code),
-                 advance paid, balance to collect, and grand total.
-              ────────────────────────────────────────────────────────── */}
           <View style={[styles.orderSummaryCardBlock, isHomemade && { marginBottom: 16 }]}>
             <Text style={styles.orderSummaryCardTitle}>Bill Summary</Text>
 
@@ -2163,6 +2245,26 @@ export default function MyOrdersScreen() {
                 </Text>
               </View>
             )}
+
+            {!isHomemade && detailDeliveryTypeLabel ? (
+              <View style={styles.orderSummaryRow}>
+                <Text style={styles.orderSummaryLabel}>Delivery Type</Text>
+                <Text style={[styles.orderSummaryValue, { color: "#166538", fontWeight: "800" }]}>
+                  {detailDeliveryTypeLabel}
+                </Text>
+              </View>
+            ) : null}
+
+            <View style={styles.orderSummaryRow}>
+              <Text style={styles.orderSummaryLabel}>Payment Method</Text>
+              <Text style={styles.orderSummaryValue}>
+                {isDetailCashCollected
+                  ? "Cash Collected (Paid)"
+                  : isDetailCod
+                  ? "Cash on Delivery (40% Advance)"
+                  : "Online Paid (UPI/Card)"}
+              </Text>
+            </View>
 
             <View style={styles.orderSummaryDivider} />
 
@@ -2227,26 +2329,6 @@ export default function MyOrdersScreen() {
                 </View>
               </>
             )}
-
-            {detailDeliveryTypeLabel ? (
-              <View style={[styles.orderSummaryRow, { marginTop: 6 }]}>
-                <Text style={styles.orderSummaryLabel}>Delivery Type</Text>
-                <Text style={[styles.orderSummaryValue, { color: "#166538", fontWeight: "800" }]}>
-                  {detailDeliveryTypeLabel}
-                </Text>
-              </View>
-            ) : null}
-
-            <View style={styles.orderSummaryRow}>
-              <Text style={styles.orderSummaryLabel}>Payment Method</Text>
-              <Text style={styles.orderSummaryValue}>
-                {isDetailCashCollected
-                  ? "Cash Collected (Paid)"
-                  : isDetailCod
-                  ? "Cash on Delivery (40% Advance)"
-                  : "Online Paid (UPI/Card)"}
-              </Text>
-            </View>
           </View>
 
           {isHomemade && (
@@ -2692,9 +2774,11 @@ export default function MyOrdersScreen() {
                       </View>
                     )}
 
-                    <TouchableOpacity
-                      activeOpacity={0.9}
-                      onPress={() => toggleOrderStepper(orderId)}
+                    {/* ✅ CHANGED: This outer card is now a NON-pressable View
+                        for homemade service. Clicking the card no longer
+                        expands the order status stepper. Only the inner
+                        action buttons remain interactive. */}
+                    <View
                       style={[
                         styles.deliveryCard,
                         styles.cardWithBadgePadding,
@@ -2730,9 +2814,13 @@ export default function MyOrdersScreen() {
                             {deliveryAddressString}
                           </Text>
 
-                          <View style={styles.cardBadgesRowSimplified}>
-                            <Text style={styles.simplifiedBadgeText}>{homemadeItems.length} Dishes</Text>
-                            <Text style={styles.simplifiedBadgeText}>Chef: {dynamicChefName}</Text>
+                          <View style={styles.homemadeMetaCard}>
+                            <View style={styles.homemadeMetaCardItem}>
+                              <Ionicons name="restaurant-outline" size={12} color="#166534" />
+                              <Text style={styles.homemadeMetaCardText}>
+                                {homemadeItems.length} {homemadeItems.length === 1 ? "Dish" : "Dishes"}
+                              </Text>
+                            </View>
                           </View>
                         </View>
 
@@ -2780,7 +2868,7 @@ export default function MyOrdersScreen() {
                           <Text style={styles.actionBtnText}>Invoice</Text>
                         </TouchableOpacity>
                       </View>
-                    </TouchableOpacity>
+                    </View>
                   </View>
 
                   {isNotLastOrder && <View style={styles.orderDividerDotted} />}
@@ -2949,9 +3037,11 @@ export default function MyOrdersScreen() {
                       </View>
                     </View>
 
-                    <TouchableOpacity
-                      activeOpacity={0.9}
-                      onPress={() => toggleOrderStepper(orderId)}
+                    {/* ✅ CHANGED: This outer card is now a NON-pressable View
+                        for catering service. Clicking the card no longer
+                        expands the order status stepper. Only the inner
+                        action buttons remain interactive. */}
+                    <View
                       style={[
                         styles.deliveryCard,
                         styles.cardWithBadgePadding,
@@ -3066,7 +3156,7 @@ export default function MyOrdersScreen() {
                           <Text style={styles.actionBtnText}>Invoice</Text>
                         </TouchableOpacity>
                       </View>
-                    </TouchableOpacity>
+                    </View>
                   </View>
 
                   {isNotLastOrder && <View style={styles.orderDividerDotted} />}
@@ -3085,11 +3175,12 @@ export default function MyOrdersScreen() {
             let dynamicMenuName = order.menuName || "Gym Diet Plan";
             let dynamicMenuImage = order.menuImage || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400";
 
-            if (order.selections && typeof order.selections === "object" && !Array.isArray(order.selections)) {
-              const keys = Object.keys(order.selections).filter((k) => k !== "pausedDates");
+            const safeOrderSelections = parseIfJsonString(order.selections, null);
+            if (safeOrderSelections && typeof safeOrderSelections === "object" && !Array.isArray(safeOrderSelections)) {
+              const keys = Object.keys(safeOrderSelections).filter((k) => k !== "pausedDates");
               const matchedDayKey = keys.find((k) => k.toLowerCase().includes(dayName.toLowerCase()));
-              if (matchedDayKey && order.selections[matchedDayKey] && order.selections[matchedDayKey].length > 0) {
-                const firstSelection = order.selections[matchedDayKey][0];
+              if (matchedDayKey && safeOrderSelections[matchedDayKey] && safeOrderSelections[matchedDayKey].length > 0) {
+                const firstSelection = safeOrderSelections[matchedDayKey][0];
                 if (firstSelection.name) dynamicMenuName = `${firstSelection.name} (${matchedDayKey})`;
                 if (firstSelection.image) dynamicMenuImage = firstSelection.image;
               }
@@ -3552,12 +3643,12 @@ export default function MyOrdersScreen() {
               </Text>
             </View>
 
-            {!isPreviewCatering && !isPreviewHomemade && previewOrder?.selections && !Array.isArray(previewOrder.selections) && (
+            {!isPreviewCatering && !isPreviewHomemade && resolvedPreviewSelections && !Array.isArray(resolvedPreviewSelections) && typeof resolvedPreviewSelections === "object" && (
               <View style={styles.pillTabsWrapperBlock}>
-                {Object.keys(previewOrder.selections)
+                {Object.keys(resolvedPreviewSelections)
                   .filter((k) => k !== "pausedDates")
                   .map((dayKey) => {
-                    const dayItemsCount = previewOrder.selections[dayKey]?.length || 0;
+                    const dayItemsCount = resolvedPreviewSelections[dayKey]?.length || 0;
                     const isTabPillSelected = previewActiveDay.toLowerCase() === dayKey.toLowerCase();
                     return (
                       <TouchableOpacity
@@ -3615,8 +3706,8 @@ export default function MyOrdersScreen() {
                     </Text>
                   </View>
 
-                  {Array.isArray(previewOrder?.items) && previewOrder.items.length > 0 ? (
-                    previewOrder.items.map((dishItem: any, idx: number) => (
+                  {Array.isArray(resolvedPreviewItems) && resolvedPreviewItems.length > 0 ? (
+                    resolvedPreviewItems.map((dishItem: any, idx: number) => (
                       <View key={`conf-preview-homemade-${idx}`} style={styles.previewItemCard}>
                         <Image
                           source={{ uri: dishItem.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
@@ -3641,8 +3732,8 @@ export default function MyOrdersScreen() {
                 </View>
               ) : isPreviewCatering ? (
                 <View style={{ width: "100%" }}>
-                  {Array.isArray(previewOrder?.selections) &&
-                    previewOrder.selections.map((cat: any, index: number) => {
+                  {Array.isArray(resolvedPreviewSelections) && resolvedPreviewSelections.length > 0 ? (
+                    resolvedPreviewSelections.map((cat: any, index: number) => {
                       const allSelected = [...(cat.selected || []), ...(cat.extraSelected || [])];
                       if (!allSelected.length) return null;
 
@@ -3677,14 +3768,21 @@ export default function MyOrdersScreen() {
                           })}
                         </View>
                       );
-                    })}
+                    })
+                  ) : (
+                    <View style={styles.previewCategoryCard}>
+                      <Text style={styles.previewEmptyListText}>
+                        No platter selections found for this order.
+                      </Text>
+                    </View>
+                  )}
 
-                  {Array.isArray(previewOrder?.addons) && previewOrder.addons.length > 0 && (
+                  {Array.isArray(resolvedPreviewAddons) && resolvedPreviewAddons.length > 0 && (
                     <View style={styles.previewCategoryCard}>
                       <View style={styles.previewCategoryHeader}>
                         <Text style={styles.previewCategoryTitle}>Add-ons</Text>
                       </View>
-                      {previewOrder.addons.map((addon: any, idx: number) => (
+                      {resolvedPreviewAddons.map((addon: any, idx: number) => (
                         <View key={`conf-addon-preview-${idx}`} style={styles.previewItemCard}>
                           <Image
                             source={{ uri: addon.imageUrl || addon.image || "https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=120&auto=format&fit=crop" }}
@@ -3915,6 +4013,59 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#FFFFFF",
     letterSpacing: 0.5,
+  },
+  homemadeMetaCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginTop: 8,
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+  },
+  homemadeMetaCardItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 2,
+  },
+  homemadeMetaCardDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: "#CBD5E1",
+    marginHorizontal: 8,
+  },
+  homemadeMetaCardText: {
+    fontSize: 11.5,
+    fontWeight: "700",
+    color: "#334155",
+    letterSpacing: 0.1,
+  },
+  homemadeMetaPillsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 6,
+  },
+  homemadeMetaPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#DCFCE7",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  homemadeMetaPillText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#166534",
   },
   cardBadgesRowSimplified: {
     flexDirection: "row",
@@ -4209,7 +4360,62 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
 
-  // ✅ Special instruction detail block (customer detail view)
+  cateringSelectedItemsBtnWrap: {
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  cateringSelectedItemsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#DCFCE7",
+    borderRadius: 999,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    gap: 8,
+    alignSelf: "center",
+    shadowColor: "#166534",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  cateringSelectedItemsBtnText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#166534",
+    letterSpacing: 0.1,
+  },
+
+  specialInstructionCollapsibleWrap: {
+    paddingVertical: 4,
+    marginBottom: 14,
+    alignSelf: "flex-start",
+    width: "100%",
+  },
+  specialInstructionToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+  },
+  specialInstructionToggleText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#166534",
+    textDecorationLine: "underline",
+    textDecorationColor: "#166534",
+  },
+  specialInstructionExpandedBody: {
+    marginTop: 10,
+    paddingLeft: 2,
+    paddingRight: 8,
+  },
+
   specialInstructionDetailBlock: {
     backgroundColor: "#F0FDF4",
     borderRadius: 16,
@@ -4252,7 +4458,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
-  // ✅ New pill strip for advance/balance row in Bill Summary
   advanceBalancePillStrip: {
     flexDirection: "row",
     alignItems: "center",
@@ -4928,6 +5133,14 @@ const styles = StyleSheet.create({
     width: 110,
     height: 100,
     resizeMode: "contain",
+  },
+  heroDishImage: {
+    width: 96,
+    height: 96,
+    borderRadius: 16,
+    resizeMode: "cover",
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.25)",
   },
 
   mealSpecCard: {
