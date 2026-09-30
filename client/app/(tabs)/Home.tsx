@@ -1,5 +1,12 @@
 // Home.tsx
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  memo,
+} from 'react';
 import { BlurView } from 'expo-blur';
 import { refreshUser } from '@/src/lib/authStorage';
 import { useFocusEffect } from '@react-navigation/native';
@@ -20,6 +27,7 @@ import {
   NativeScrollEvent,
   Modal,
   Pressable,
+  InteractionManager,
 } from 'react-native';
 import {
   Ionicons,
@@ -116,129 +124,144 @@ const DEFAULT_COVER_IMAGES = [
   'https://images.unsplash.com/photo-1589302168068-964664d93dc0?w=800',
 ];
 
-// Reusable Auto-Scrolling Banner Carousel Component for Home Chef Cards
-const HomeChefBannerCarousel = ({
-  banners,
-  fallbackImage,
-  isOffline,
-}: {
-  banners: any[];
-  fallbackImage: string;
-  isOffline: boolean;
-}) => {
-  const scrollRef = useRef<ScrollView>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const activeIndexRef = useRef(0);
-  const isInteracting = useRef(false);
+// ─────────────────────────────────────────────────────────────────────────
+// ✅ PERF: Reusable Auto-Scrolling Banner Carousel (memoized)
+// ─────────────────────────────────────────────────────────────────────────
+const HomeChefBannerCarousel = memo(
+  ({
+    banners,
+    fallbackImage,
+    isOffline,
+  }: {
+    banners: any[];
+    fallbackImage: string;
+    isOffline: boolean;
+  }) => {
+    const scrollRef = useRef<ScrollView>(null);
+    const [activeIndex, setActiveIndex] = useState(0);
+    const activeIndexRef = useRef(0);
+    const isInteracting = useRef(false);
 
-  const bannerList =
-    banners && banners.length > 0
-      ? banners
-      : [{ url: fallbackImage }];
+    const bannerList =
+      banners && banners.length > 0 ? banners : [{ url: fallbackImage }];
 
-  const totalBanners = bannerList.length;
+    const totalBanners = bannerList.length;
 
-  useEffect(() => {
-    activeIndexRef.current = activeIndex;
-  }, [activeIndex]);
+    useEffect(() => {
+      activeIndexRef.current = activeIndex;
+    }, [activeIndex]);
 
-  useEffect(() => {
-    if (totalBanners <= 1) return;
+    useEffect(() => {
+      if (totalBanners <= 1) return;
 
-    const interval = setInterval(() => {
-      if (isInteracting.current) return;
+      const interval = setInterval(() => {
+        if (isInteracting.current) return;
 
-      const nextIndex = (activeIndexRef.current + 1) % totalBanners;
-      scrollRef.current?.scrollTo({
-        x: nextIndex * HOME_CARD_WIDTH,
-        animated: true,
-      });
-      setActiveIndex(nextIndex);
-    }, 3200);
+        const nextIndex = (activeIndexRef.current + 1) % totalBanners;
+        scrollRef.current?.scrollTo({
+          x: nextIndex * HOME_CARD_WIDTH,
+          animated: true,
+        });
+        setActiveIndex(nextIndex);
+      }, 3200);
 
-    return () => clearInterval(interval);
-  }, [totalBanners]);
+      return () => clearInterval(interval);
+    }, [totalBanners]);
 
-  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const contentOffsetX = event.nativeEvent.contentOffset.x;
-    const computedIndex = Math.round(contentOffsetX / HOME_CARD_WIDTH);
-    if (computedIndex >= 0 && computedIndex < totalBanners && computedIndex !== activeIndex) {
-      setActiveIndex(computedIndex);
-    }
-  };
+    const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const contentOffsetX = event.nativeEvent.contentOffset.x;
+      const computedIndex = Math.round(contentOffsetX / HOME_CARD_WIDTH);
+      if (
+        computedIndex >= 0 &&
+        computedIndex < totalBanners &&
+        computedIndex !== activeIndex
+      ) {
+        setActiveIndex(computedIndex);
+      }
+    };
 
-  return (
-    <View style={styles.homeCardCoverContainer}>
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        decelerationRate="fast"
-        scrollEventThrottle={16}
-        onScroll={handleScroll}
-        onTouchStart={() => {
-          isInteracting.current = true;
-        }}
-        onTouchEnd={() => {
-          setTimeout(() => {
-            isInteracting.current = false;
-          }, 2000);
-        }}
-        onScrollBeginDrag={() => {
-          isInteracting.current = true;
-        }}
-        onScrollEndDrag={() => {
-          setTimeout(() => {
-            isInteracting.current = false;
-          }, 2000);
-        }}
-        onMomentumScrollEnd={(e) => {
-          handleScroll(e);
-          setTimeout(() => {
-            isInteracting.current = false;
-          }, 1500);
-        }}
-        style={styles.homeCardBannerScrollView}
-      >
-        {bannerList.map((bannerObj: any, bIdx: number) => (
-          <Image
-            key={bIdx}
-            source={{ uri: bannerObj.url || fallbackImage }}
-            style={[
-              styles.homeCardCoverImage,
-              isOffline && styles.imageGrayscale,
-            ]}
-          />
-        ))}
-      </ScrollView>
+    return (
+      <View style={styles.homeCardCoverContainer}>
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          decelerationRate="fast"
+          scrollEventThrottle={16}
+          onScroll={handleScroll}
+          onTouchStart={() => {
+            isInteracting.current = true;
+          }}
+          onTouchEnd={() => {
+            setTimeout(() => {
+              isInteracting.current = false;
+            }, 2000);
+          }}
+          onScrollBeginDrag={() => {
+            isInteracting.current = true;
+          }}
+          onScrollEndDrag={() => {
+            setTimeout(() => {
+              isInteracting.current = false;
+            }, 2000);
+          }}
+          onMomentumScrollEnd={(e) => {
+            handleScroll(e);
+            setTimeout(() => {
+              isInteracting.current = false;
+            }, 1500);
+          }}
+          style={styles.homeCardBannerScrollView}
+        >
+          {bannerList.map((bannerObj: any, bIdx: number) => (
+            <Image
+              key={bIdx}
+              source={{ uri: bannerObj.url || fallbackImage }}
+              style={[
+                styles.homeCardCoverImage,
+                isOffline && styles.imageGrayscale,
+              ]}
+            />
+          ))}
+        </ScrollView>
 
-      {totalBanners > 1 && (
-        <View style={styles.homeCardPaginationContainer} pointerEvents="none">
-          {bannerList.map((_, dotIdx) => {
-            const isActive = dotIdx === activeIndex;
-            return (
-              <View
-                key={dotIdx}
-                style={[
-                  styles.homeCardPaginationDot,
-                  isActive && styles.homeCardPaginationDotActive,
-                ]}
-              />
-            );
-          })}
-        </View>
-      )}
-    </View>
-  );
-};
+        {totalBanners > 1 && (
+          <View style={styles.homeCardPaginationContainer} pointerEvents="none">
+            {bannerList.map((_, dotIdx) => {
+              const isActive = dotIdx === activeIndex;
+              return (
+                <View
+                  key={dotIdx}
+                  style={[
+                    styles.homeCardPaginationDot,
+                    isActive && styles.homeCardPaginationDotActive,
+                  ]}
+                />
+              );
+            })}
+          </View>
+        )}
+      </View>
+    );
+  }
+);
+
+HomeChefBannerCarousel.displayName = 'HomeChefBannerCarousel';
 
 export default function HomeScreen() {
   const router = useRouter();
   // ✅ Delivery location store (single source of truth for lat/lng)
-  const setDeliveryLocationInStore = useDeliveryLocationStore((s) => s.setDeliveryLocation);
-  const hydrateDeliveryLocation = useDeliveryLocationStore((s) => s.hydrateDeliveryLocation);
-  const [greeting, setGreeting] = useState<'Good Morning' | 'Good Afternoon' | 'Good Evening' | 'Welcome'>('Good Morning');
+  const setDeliveryLocationInStore = useDeliveryLocationStore(
+    (s) => s.setDeliveryLocation
+  );
+  const hydrateDeliveryLocation = useDeliveryLocationStore(
+    (s) => s.hydrateDeliveryLocation
+  );
+
+  const [greeting, setGreeting] = useState<
+    'Good Morning' | 'Good Afternoon' | 'Good Evening' | 'Welcome'
+  >('Good Morning');
   const [userName, setUserName] = useState<string>('User');
   const [currentUserId, setCurrentUserId] = useState<string>('');
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -246,7 +269,9 @@ export default function HomeScreen() {
   // ─── Dynamic Chef Data States ───
   const [chefsData, setChefsData] = useState<any[]>([]);
   const [chefsLoading, setChefsLoading] = useState<boolean>(true);
-  const [expandedCuisines, setExpandedCuisines] = useState<{ [key: string]: boolean }>({});
+  const [expandedCuisines, setExpandedCuisines] = useState<{
+    [key: string]: boolean;
+  }>({});
 
   // ─── Dynamic Banner States ───
   const [dynamicBanners, setDynamicBanners] = useState<BannerSlide[]>([]);
@@ -257,26 +282,34 @@ export default function HomeScreen() {
   const [cartItemCount, setCartItemCount] = useState<number>(0);
 
   // ─── Location / Address States ───
-  const [locationDisplay, setLocationDisplay] = useState<string>('Detecting location...');
+  const [locationDisplay, setLocationDisplay] = useState<string>(
+    'Detecting location...'
+  );
   const [isLoadingLocation, setIsLoadingLocation] = useState<boolean>(false);
   const [activeAddress, setActiveAddress] = useState<ActiveAddress | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string>('');
 
   // Screen-Open Permission Prompt Modal State
-  const [isPermissionPopupVisible, setIsPermissionPopupVisible] = useState<boolean>(false);
-  const [isRequestingPermission, setIsRequestingPermission] = useState<boolean>(false);
+  const [isPermissionPopupVisible, setIsPermissionPopupVisible] =
+    useState<boolean>(false);
+  const [isRequestingPermission, setIsRequestingPermission] =
+    useState<boolean>(false);
 
   // ─── Notification Permission Prompt States ───
-  const [isNotificationPopupVisible, setIsNotificationPopupVisible] = useState<boolean>(false);
-  const [isRequestingNotification, setIsRequestingNotification] = useState<boolean>(false);
+  const [isNotificationPopupVisible, setIsNotificationPopupVisible] =
+    useState<boolean>(false);
+  const [isRequestingNotification, setIsRequestingNotification] =
+    useState<boolean>(false);
   const hasPromptedNotificationRef = useRef<boolean>(false);
 
   // Coming Soon Popup Modal State for Hire Chef
-  const [isComingSoonModalVisible, setIsComingSoonModalVisible] = useState<boolean>(false);
+  const [isComingSoonModalVisible, setIsComingSoonModalVisible] =
+    useState<boolean>(false);
 
   // ─── Notifications Panel State ───
-  const [isNotificationsVisible, setIsNotificationsVisible] = useState<boolean>(false);
+  const [isNotificationsVisible, setIsNotificationsVisible] =
+    useState<boolean>(false);
 
   // ─── Bottom-of-Scroll Refresh States ───
   const [isRefreshingScreen, setIsRefreshingScreen] = useState<boolean>(false);
@@ -286,27 +319,36 @@ export default function HomeScreen() {
   // ─── Global "data is refreshing" guard ───
   const isDataRefreshingRef = useRef<boolean>(false);
 
-  // ✅ PERF: Throttle refs
+  // ✅ PERF: Throttle refs (reduced windows for fresher data)
   const lastUserRefreshAtRef = useRef<number>(0);
   const lastChefsFetchedAtRef = useRef<number>(0);
   const hasFocusedOnceRef = useRef<boolean>(false);
+  const isBootstrappedRef = useRef<boolean>(false);
 
   // Address bottom sheet
-  const [isAddressSheetVisible, setIsAddressSheetVisible] = useState<boolean>(false);
+  const [isAddressSheetVisible, setIsAddressSheetVisible] =
+    useState<boolean>(false);
 
   // Editing Address State
   const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
 
   // ─── Map Modal Initial-Value States ───
   const [isMapModalVisible, setIsMapModalVisible] = useState<boolean>(false);
-  const [mapInitialCoords, setMapInitialCoords] = useState<{ latitude: number; longitude: number }>({
-    latitude: 17.3850,
+  const [mapInitialCoords, setMapInitialCoords] = useState<{
+    latitude: number;
+    longitude: number;
+  }>({
+    latitude: 17.385,
     longitude: 78.4867,
   });
-  const [mapInitialPinnedAddress, setMapInitialPinnedAddress] = useState<string>('');
+  const [mapInitialPinnedAddress, setMapInitialPinnedAddress] =
+    useState<string>('');
   const [mapInitialHouseDetail, setMapInitialHouseDetail] = useState<string>('');
-  const [mapInitialCustomTagTitle, setMapInitialCustomTagTitle] = useState<string>('');
-  const [mapInitialAddressTag, setMapInitialAddressTag] = useState<'Home' | 'Work' | 'Other'>('Home');
+  const [mapInitialCustomTagTitle, setMapInitialCustomTagTitle] =
+    useState<string>('');
+  const [mapInitialAddressTag, setMapInitialAddressTag] = useState<
+    'Home' | 'Work' | 'Other'
+  >('Home');
 
   // Guard so GPS location is applied only once per session
   const hasAppliedGpsOnceRef = useRef<boolean>(false);
@@ -327,7 +369,9 @@ export default function HomeScreen() {
   const categoryScrollRef = useRef<ScrollView>(null);
 
   // Helper: format display string from address object
-  const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefined): string => {
+  const formatAddressDisplay = (
+    addr: ActiveAddress | SavedAddress | null | undefined
+  ): string => {
     if (!addr) return 'Select delivery location';
     if (addr.houseDetails && addr.houseDetails.trim().length > 0) {
       return `${addr.houseDetails}, ${addr.fullAddress}`;
@@ -336,7 +380,9 @@ export default function HomeScreen() {
   };
 
   // ✅ Push the active address into the global delivery-location store
-  const syncActiveAddressToStore = async (addr: ActiveAddress | null | undefined) => {
+  const syncActiveAddressToStore = async (
+    addr: ActiveAddress | null | undefined
+  ) => {
     if (!addr || !addr.fullAddress) return;
     try {
       await setDeliveryLocationInStore({
@@ -382,108 +428,141 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // fetchDynamicBanners
+  // ✅ PERF: fetchDynamicBanners — reduced throttle, no early-return when empty
   // ─────────────────────────────────────────────────────────────────────────
-  const fetchDynamicBanners = async (silent: boolean = false, force: boolean = false) => {
-    const now = Date.now();
-    if (!force && now - lastBannersFetchedAtRef.current < 30000) {
-      return;
-    }
-    try {
-      if (!silent && dynamicBanners.length === 0) {
-        setBannersLoading(true);
+  const fetchDynamicBanners = useCallback(
+    async (silent: boolean = false, force: boolean = false) => {
+      const now = Date.now();
+      // Only throttle if we already have data AND caller didn't force
+      if (
+        !force &&
+        dynamicBanners.length > 0 &&
+        now - lastBannersFetchedAtRef.current < 15000
+      ) {
+        return;
       }
-      const res = await api.get('/api/banners');
-      if (res.data && res.data.success && Array.isArray(res.data.banners) && res.data.banners.length > 0) {
-        const mapped: BannerSlide[] = res.data.banners
-          .map((b: any) => ({
-            id: b._id,
-            titlePrimary: b.titlePrimary || '',
-            titleSecondary: b.titleSecondary || '',
-            tagline: b.tagline || '',
-            badge: b.badge || '',
-            price: b.price || '',
-            unit: b.unit || '',
-            image: b.imageUrl,
-            isComingSoon: !!b.isComingSoon,
-            isFullBanner: !!b.isFullBanner,
-            ctaAction: b.ctaAction || '',
-            __displayOrder: Number(b.displayOrder) || 0,
-          }))
-          .sort((a: any, b: any) => a.__displayOrder - b.__displayOrder);
+      try {
+        if (!silent && dynamicBanners.length === 0) {
+          setBannersLoading(true);
+        }
+        const res = await api.get('/api/banners');
+        if (
+          res.data &&
+          res.data.success &&
+          Array.isArray(res.data.banners) &&
+          res.data.banners.length > 0
+        ) {
+          const mapped: BannerSlide[] = res.data.banners
+            .map((b: any) => ({
+              id: b._id,
+              titlePrimary: b.titlePrimary || '',
+              titleSecondary: b.titleSecondary || '',
+              tagline: b.tagline || '',
+              badge: b.badge || '',
+              price: b.price || '',
+              unit: b.unit || '',
+              image: b.imageUrl,
+              isComingSoon: !!b.isComingSoon,
+              isFullBanner: !!b.isFullBanner,
+              ctaAction: b.ctaAction || '',
+              __displayOrder: Number(b.displayOrder) || 0,
+            }))
+            .sort((a: any, b: any) => a.__displayOrder - b.__displayOrder);
 
-        const cleaned: BannerSlide[] = mapped.map(({ __displayOrder, ...rest }: any) => rest);
-        const withStaticLast = [...cleaned, STATIC_COMING_SOON_BANNER];
+          const cleaned: BannerSlide[] = mapped.map(
+            ({ __displayOrder, ...rest }: any) => rest
+          );
+          const withStaticLast = [...cleaned, STATIC_COMING_SOON_BANNER];
 
-        setDynamicBanners(withStaticLast);
-        lastBannersFetchedAtRef.current = Date.now();
-      } else {
-        setDynamicBanners([STATIC_COMING_SOON_BANNER]);
+          setDynamicBanners(withStaticLast);
+          lastBannersFetchedAtRef.current = Date.now();
+        } else {
+          setDynamicBanners([STATIC_COMING_SOON_BANNER]);
+        }
+      } catch (err) {
+        console.log('Home fetch dynamic banners error:', err);
+        if (dynamicBanners.length === 0) {
+          setDynamicBanners([STATIC_COMING_SOON_BANNER]);
+        }
+      } finally {
+        setBannersLoading(false);
       }
-    } catch (err) {
-      console.log('Home fetch dynamic banners error:', err);
-      if (dynamicBanners.length === 0) {
-        setDynamicBanners([STATIC_COMING_SOON_BANNER]);
-      }
-    } finally {
-      setBannersLoading(false);
-    }
-  };
+    },
+    [dynamicBanners.length]
+  );
 
   // ─────────────────────────────────────────────────────────────────────────
-  // fetchDynamicChefs
+  // ✅ PERF: fetchDynamicChefs — reduced throttle, no early-return when empty
   // ─────────────────────────────────────────────────────────────────────────
-  const fetchDynamicChefs = async (silent: boolean = false, force: boolean = false) => {
-    const now = Date.now();
-    if (!force && now - lastChefsFetchedAtRef.current < 20000) {
-      return;
-    }
-    try {
-      if (!silent && chefsData.length === 0) {
-        setChefsLoading(true);
+  const fetchDynamicChefs = useCallback(
+    async (silent: boolean = false, force: boolean = false) => {
+      const now = Date.now();
+      if (
+        !force &&
+        chefsData.length > 0 &&
+        now - lastChefsFetchedAtRef.current < 10000
+      ) {
+        return;
       }
-      const res = await api.get('/api/chefs');
-      if (res.data && res.data.chefs) {
-        const formatted = res.data.chefs.map((chef: any, i: number) => {
-          const hasBanners = chef.banners && chef.banners.length > 0;
-          const resolvedCover = hasBanners
-            ? chef.banners[0].url
-            : chef.coverImage || DEFAULT_COVER_IMAGES[i % DEFAULT_COVER_IMAGES.length];
+      try {
+        if (!silent && chefsData.length === 0) {
+          setChefsLoading(true);
+        }
+        const res = await api.get('/api/chefs');
+        if (res.data && res.data.chefs) {
+          const formatted = res.data.chefs.map((chef: any, i: number) => {
+            const hasBanners = chef.banners && chef.banners.length > 0;
+            const resolvedCover = hasBanners
+              ? chef.banners[0].url
+              : chef.coverImage ||
+                DEFAULT_COVER_IMAGES[i % DEFAULT_COVER_IMAGES.length];
 
-          return {
-            id: chef._id,
-            name: chef.name || 'Chef',
-            expText: chef.exp ? `${chef.exp} yrs experience` : '12 yrs experience',
-            locationText: chef.location || '3.1 km',
-            specialty: chef.specialty || 'South Indian, North Indian, Andhra Meals, Biryani, Mughlai, Street Food',
-            rating: chef.rating ? String(chef.rating) : '4.8',
-            ratingCount: chef.ratingCount ? String(chef.ratingCount) : '120',
-            orderCount: chef.orderCount ? String(chef.orderCount) : '98',
-            priceValue: chef.price !== undefined && chef.price !== null ? String(chef.price) : '139',
-            price: `Starts @ ₹${chef.price || 139}`,
-            avatar: chef.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200',
-            coverImage: resolvedCover,
-            banners: chef.banners || [],
-            foodType: chef.foodType || 'BOTH',
-            isAvailable: chef.isAvailable ?? true,
-          };
-        });
-        setChefsData(formatted);
-        lastChefsFetchedAtRef.current = Date.now();
+            return {
+              id: chef._id,
+              name: chef.name || 'Chef',
+              expText: chef.exp ? `${chef.exp} yrs experience` : '12 yrs experience',
+              locationText: chef.location || '3.1 km',
+              specialty:
+                chef.specialty ||
+                'South Indian, North Indian, Andhra Meals, Biryani, Mughlai, Street Food',
+              rating: chef.rating ? String(chef.rating) : '4.8',
+              ratingCount: chef.ratingCount ? String(chef.ratingCount) : '120',
+              orderCount: chef.orderCount ? String(chef.orderCount) : '98',
+              priceValue:
+                chef.price !== undefined && chef.price !== null
+                  ? String(chef.price)
+                  : '139',
+              price: `Starts @ ₹${chef.price || 139}`,
+              avatar:
+                chef.avatar ||
+                'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200',
+              coverImage: resolvedCover,
+              banners: chef.banners || [],
+              foodType: chef.foodType || 'BOTH',
+              isAvailable: chef.isAvailable ?? true,
+            };
+          });
+          setChefsData(formatted);
+          lastChefsFetchedAtRef.current = Date.now();
+        }
+      } catch (err) {
+        console.log('Home fetch dynamic chefs error:', err);
+      } finally {
+        setChefsLoading(false);
       }
-    } catch (err) {
-      console.log('Home fetch dynamic chefs error:', err);
-    } finally {
-      setChefsLoading(false);
-    }
-  };
+    },
+    [chefsData.length]
+  );
 
   // Fetch Cart Item Count
-  const fetchCartCount = async () => {
+  const fetchCartCount = useCallback(async () => {
     try {
       const res = await api.get('/api/cart');
       if (res.data.success && res.data.cart) {
-        const totalCount = res.data.cart.reduce((acc: number, item: any) => acc + (item.totalItems || 1), 0);
+        const totalCount = res.data.cart.reduce(
+          (acc: number, item: any) => acc + (item.totalItems || 1),
+          0
+        );
         setCartItemCount(totalCount);
       } else {
         setCartItemCount(0);
@@ -491,12 +570,12 @@ export default function HomeScreen() {
     } catch (err) {
       setCartItemCount(0);
     }
-  };
+  }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
-  // loadUserDataAndAddresses — TWO-PHASE
+  // loadUserDataAndAddresses — TWO-PHASE (cached → background refresh)
   // ─────────────────────────────────────────────────────────────────────────
-  const loadUserDataAndAddresses = async () => {
+  const loadUserDataAndAddresses = useCallback(async () => {
     try {
       // ─── PHASE 1: FAST — apply cached data right away ───
       const cachedUser = await getUser();
@@ -506,7 +585,11 @@ export default function HomeScreen() {
         setCurrentUser(cachedUser);
         activeUid = cachedUser.id || cachedUser._id || '';
         setCurrentUserId(activeUid);
-        if (cachedUser.name && cachedUser.name.trim().length > 0 && cachedUser.name.trim().toLowerCase() !== 'user') {
+        if (
+          cachedUser.name &&
+          cachedUser.name.trim().length > 0 &&
+          cachedUser.name.trim().toLowerCase() !== 'user'
+        ) {
           setUserName(cachedUser.name.trim());
         }
 
@@ -521,7 +604,10 @@ export default function HomeScreen() {
           setLocationDisplay(cachedUser.address.trim());
         }
 
-        if (cachedUser.savedAddresses && Array.isArray(cachedUser.savedAddresses)) {
+        if (
+          cachedUser.savedAddresses &&
+          Array.isArray(cachedUser.savedAddresses)
+        ) {
           setSavedAddresses(cachedUser.savedAddresses);
         }
       }
@@ -540,7 +626,11 @@ export default function HomeScreen() {
           const freshUid = freshUser.id || freshUser._id || activeUid;
           setCurrentUserId(freshUid);
 
-          if (freshUser.name && freshUser.name.trim().length > 0 && freshUser.name.trim().toLowerCase() !== 'user') {
+          if (
+            freshUser.name &&
+            freshUser.name.trim().length > 0 &&
+            freshUser.name.trim().toLowerCase() !== 'user'
+          ) {
             setUserName(freshUser.name.trim());
           }
 
@@ -555,7 +645,10 @@ export default function HomeScreen() {
             setLocationDisplay(freshUser.address.trim());
           }
 
-          if (freshUser.savedAddresses && Array.isArray(freshUser.savedAddresses)) {
+          if (
+            freshUser.savedAddresses &&
+            Array.isArray(freshUser.savedAddresses)
+          ) {
             setSavedAddresses(freshUser.savedAddresses);
           }
         })
@@ -565,9 +658,10 @@ export default function HomeScreen() {
     } catch (error) {
       console.log('Error loading logged in user data:', error);
     }
-  };
+  }, []);
 
   // ─── CENTRAL RELOAD ───
+  // ✅ PERF: Location check is fire-and-forget (not awaited)
   const reloadAllDynamicData = useCallback(async () => {
     isDataRefreshingRef.current = true;
     lastChefsFetchedAtRef.current = 0;
@@ -579,32 +673,64 @@ export default function HomeScreen() {
         fetchDynamicChefs(true, true),
         fetchDynamicBanners(true, true),
         fetchCartCount(),
-        checkLocationStatusAndPrompt(),
       ]);
+      // Fire and forget — don't block UI reload on GPS/permission
+      checkLocationStatusAndPrompt().catch(() => {});
     } catch (e) {
       console.log('Reload all dynamic data error:', e);
     } finally {
       isDataRefreshingRef.current = false;
     }
+  }, [loadUserDataAndAddresses, fetchDynamicChefs, fetchDynamicBanners, fetchCartCount]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ PERF: BOOTSTRAP — kick everything off in PARALLEL on mount.
+  //    Runs once. Non-blocking. Location check deferred.
+  // ─────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (isBootstrappedRef.current) return;
+    isBootstrappedRef.current = true;
+
+    // Hydrate persisted delivery location immediately
+    hydrateDeliveryLocation();
+
+    // Fire all network fetches in parallel — no waiting
+    loadUserDataAndAddresses();
+    fetchDynamicChefs(false, true);
+    fetchDynamicBanners(false, true);
+    fetchCartCount();
+
+    // Defer the (slower) location/permission checks so they don't
+    // contend with the initial data requests.
+    const task = InteractionManager.runAfterInteractions(() => {
+      checkLocationStatusAndPrompt().catch(() => {});
+    });
+
+    return () => task.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ─── useFocusEffect ───
+  // ✅ PERF: First focus is skipped because bootstrap already fetched.
+  //    Subsequent focuses use throttled silent refresh.
   useFocusEffect(
     useCallback(() => {
       const isFirstFocus = !hasFocusedOnceRef.current;
       hasFocusedOnceRef.current = true;
 
+      // Bootstrap already loaded data → skip redundant first-focus fetch
+      if (isFirstFocus) {
+        return;
+      }
+
+      // Silent background refresh on subsequent focuses
       loadUserDataAndAddresses();
-      fetchDynamicChefs(!isFirstFocus);
-      fetchDynamicBanners(!isFirstFocus);
+      fetchDynamicChefs(true);
+      fetchDynamicBanners(true);
       fetchCartCount();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
   );
-
-  // Hydrate the persisted delivery location on mount
-  useEffect(() => {
-    hydrateDeliveryLocation();
-  }, [hydrateDeliveryLocation]);
 
   // ─── BOTTOM-OF-SCROLL REFRESH ───
   const refreshWholeScreen = useCallback(async () => {
@@ -633,14 +759,15 @@ export default function HomeScreen() {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
     const paddingToBottom = 60;
     const isNearBottom =
-      layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+      layoutMeasurement.height + contentOffset.y >=
+      contentSize.height - paddingToBottom;
 
     if (isNearBottom && !isRefreshingRef.current) {
       refreshWholeScreen();
     }
   };
 
-  const checkLocationStatusAndPrompt = async () => {
+  const checkLocationStatusAndPrompt = useCallback(async () => {
     try {
       const servicesEnabled = await Location.hasServicesEnabledAsync();
       const { status } = await Location.getForegroundPermissionsAsync();
@@ -660,10 +787,7 @@ export default function HomeScreen() {
         setIsPermissionPopupVisible(true);
       }
     }
-  };
-
-  useEffect(() => {
-    checkLocationStatusAndPrompt();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ─── Register push token ───
@@ -671,7 +795,9 @@ export default function HomeScreen() {
     try {
       const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
       if (isExpoGo) {
-        console.log('📱 Running in Expo Go - skipping remote push token registration');
+        console.log(
+          '📱 Running in Expo Go - skipping remote push token registration'
+        );
         return false;
       }
 
@@ -743,13 +869,15 @@ export default function HomeScreen() {
     }
   };
 
+  // ✅ PERF: Defer notification permission prompt so it doesn't
+  //          compete with initial data fetches.
   useEffect(() => {
     if (hasPromptedNotificationRef.current) return;
     hasPromptedNotificationRef.current = true;
 
     const timer = setTimeout(() => {
       checkNotificationPermissionAndPrompt();
-    }, 800);
+    }, 1500);
 
     return () => clearTimeout(timer);
   }, []);
@@ -830,7 +958,7 @@ export default function HomeScreen() {
       }
 
       const currentLocation = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Highest,
+        accuracy: Location.Accuracy.Balanced, // ✅ PERF: Balanced is much faster than Highest
       });
 
       const coords = {
@@ -845,7 +973,11 @@ export default function HomeScreen() {
       if (reverseGeocode && reverseGeocode.length > 0) {
         const address = reverseGeocode[0];
         primaryName =
-          address.name || address.street || address.district || address.city || 'Current Location';
+          address.name ||
+          address.street ||
+          address.district ||
+          address.city ||
+          'Current Location';
         const city = address.city || address.subregion || address.region || '';
         fullLocation = city ? `${primaryName}, ${city}` : primaryName;
       }
@@ -926,7 +1058,7 @@ export default function HomeScreen() {
   const handleOpenEditAddress = (item: SavedAddress) => {
     setEditingAddressId(item.id);
     setMapInitialCoords({
-      latitude: item.latitude || 17.3850,
+      latitude: item.latitude || 17.385,
       longitude: item.longitude || 78.4867,
     });
     setMapInitialPinnedAddress(item.fullAddress);
@@ -950,7 +1082,10 @@ export default function HomeScreen() {
             const updated = savedAddresses.filter((a) => a.id !== item.id);
             let nextActive: ActiveAddress | null = activeAddress;
 
-            if (selectedAddressId === item.id || (activeAddress && activeAddress.id === item.id)) {
+            if (
+              selectedAddressId === item.id ||
+              (activeAddress && activeAddress.id === item.id)
+            ) {
               if (updated.length > 0) {
                 const nextItem = updated[0];
                 nextActive = {
@@ -986,8 +1121,11 @@ export default function HomeScreen() {
     setEditingAddressId(null);
     setMapInitialCoords(
       activeAddress && activeAddress.latitude !== 0 && activeAddress.longitude !== 0
-        ? { latitude: activeAddress.latitude, longitude: activeAddress.longitude }
-        : { latitude: 17.3850, longitude: 78.4867 }
+        ? {
+            latitude: activeAddress.latitude,
+            longitude: activeAddress.longitude,
+          }
+        : { latitude: 17.385, longitude: 78.4867 }
     );
     setMapInitialPinnedAddress(activeAddress?.fullAddress || '');
     setMapInitialHouseDetail('');
@@ -1003,7 +1141,13 @@ export default function HomeScreen() {
   };
 
   const handleMapConfirm = async (payload: AddressMapConfirmPayload) => {
-    const { coords, pinnedAddress, houseDetail: trimmedHouse, customTagTitle: tagInput, addressTag } = payload;
+    const {
+      coords,
+      pinnedAddress,
+      houseDetail: trimmedHouse,
+      customTagTitle: tagInput,
+      addressTag,
+    } = payload;
 
     const title =
       addressTag === 'Other' && tagInput.trim().length > 0
@@ -1113,8 +1257,14 @@ export default function HomeScreen() {
   const handleBannerScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const bannersForScroll =
       dynamicBanners.length > 0 ? dynamicBanners : [STATIC_COMING_SOON_BANNER];
-    const slide = Math.round(event.nativeEvent.contentOffset.x / (width - 32));
-    if (slide !== activeBannerIndex && slide >= 0 && slide < bannersForScroll.length) {
+    const slide = Math.round(
+      event.nativeEvent.contentOffset.x / (width - 32)
+    );
+    if (
+      slide !== activeBannerIndex &&
+      slide >= 0 &&
+      slide < bannersForScroll.length
+    ) {
       setActiveBannerIndex(slide);
     }
   };
@@ -1136,7 +1286,8 @@ export default function HomeScreen() {
     const isMealBox = item.id === '1' || item.name.includes('Meal Box');
     const isCatering = item.id === '2' || item.name.includes('Catering');
     const isHireChef = item.id === '3' || item.name.includes('Hire Chef');
-    const isFoodAndCravings = item.id === '4' || item.name.includes('Food & Cravings');
+    const isFoodAndCravings =
+      item.id === '4' || item.name.includes('Food & Cravings');
     const isQuickBites = item.id === '5' || item.name.includes('Quick Bites');
 
     if (isHireChef) {
@@ -1165,7 +1316,10 @@ export default function HomeScreen() {
     } else if (isFoodAndCravings) {
       router.push({
         pathname: '/screens/AllChefCards',
-        params: { fromCategory: 'Food & Cravings', filterFoodAndCravings: 'true' },
+        params: {
+          fromCategory: 'Food & Cravings',
+          filterFoodAndCravings: 'true',
+        },
       });
     } else if (item.id === '6' || item.name.includes('View All')) {
       router.push('/screens/AllChefCards');
@@ -1224,7 +1378,10 @@ export default function HomeScreen() {
     if (action === 'pickles' || action === 'homemade' || action === 'pickles&podis') {
       router.push({
         pathname: '/screens/AllChefCards',
-        params: { fromCategory: 'Pickles & Podis', filterCategory: 'Pickles & Podis' },
+        params: {
+          fromCategory: 'Pickles & Podis',
+          filterCategory: 'Pickles & Podis',
+        },
       });
       return;
     }
@@ -1232,7 +1389,10 @@ export default function HomeScreen() {
     if (action === 'foodandcravings' || action === 'food&cravings') {
       router.push({
         pathname: '/screens/AllChefCards',
-        params: { fromCategory: 'Food & Cravings', filterFoodAndCravings: 'true' },
+        params: {
+          fromCategory: 'Food & Cravings',
+          filterFoodAndCravings: 'true',
+        },
       });
       return;
     }
@@ -1255,32 +1415,43 @@ export default function HomeScreen() {
     return <MaterialCommunityIcons name={item.icon as any} size={22} color={color} />;
   };
 
-  const filteredChefs = chefsData.filter((chef) => {
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const chefName = (chef.name || '').toLowerCase();
-      const chefSpecialty = (chef.specialty || '').toLowerCase();
-      const chefLocation = (chef.locationText || '').toLowerCase();
+  // ✅ PERF: memoized filtered chefs list
+  const filteredChefs = useMemo(() => {
+    return chefsData.filter((chef) => {
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const chefName = (chef.name || '').toLowerCase();
+        const chefSpecialty = (chef.specialty || '').toLowerCase();
+        const chefLocation = (chef.locationText || '').toLowerCase();
 
-      const matchesSearch = chefName.includes(q) || chefSpecialty.includes(q) || chefLocation.includes(q);
-      if (!matchesSearch) return false;
-    }
+        const matchesSearch =
+          chefName.includes(q) ||
+          chefSpecialty.includes(q) ||
+          chefLocation.includes(q);
+        if (!matchesSearch) return false;
+      }
 
-    if (selectedTag === 'Veg') {
-      if (chef.foodType !== 'VEG') return false;
-    } else if (selectedTag === 'Non Veg') {
-      if (chef.foodType !== 'NONVEG' && chef.foodType !== 'BOTH') return false;
-    } else if (selectedTag === 'Biryani') {
-      const spec = (chef.specialty || '').toLowerCase();
-      const name = (chef.name || '').toLowerCase();
-      if (!spec.includes('biryani') && !name.includes('biryani')) return false;
-    } else if (selectedTag === 'North Indian') {
-      const spec = (chef.specialty || '').toLowerCase();
-      if (!spec.includes('north') && !spec.includes('punjabi') && !spec.includes('mughlai')) return false;
-    }
+      if (selectedTag === 'Veg') {
+        if (chef.foodType !== 'VEG') return false;
+      } else if (selectedTag === 'Non Veg') {
+        if (chef.foodType !== 'NONVEG' && chef.foodType !== 'BOTH') return false;
+      } else if (selectedTag === 'Biryani') {
+        const spec = (chef.specialty || '').toLowerCase();
+        const name = (chef.name || '').toLowerCase();
+        if (!spec.includes('biryani') && !name.includes('biryani')) return false;
+      } else if (selectedTag === 'North Indian') {
+        const spec = (chef.specialty || '').toLowerCase();
+        if (
+          !spec.includes('north') &&
+          !spec.includes('punjabi') &&
+          !spec.includes('mughlai')
+        )
+          return false;
+      }
 
-    return true;
-  });
+      return true;
+    });
+  }, [chefsData, searchQuery, selectedTag]);
 
   const handleSearchIconPress = () => {
     caterersSectionRef.current?.measureLayout(
@@ -1288,13 +1459,15 @@ export default function HomeScreen() {
       (x, y) => {
         mainScrollRef.current?.scrollTo({ y: y - 20, animated: true });
       },
-      () => { }
+      () => {}
     );
   };
 
   // Choose which banner list to render.
-  const bannersToRender =
-    dynamicBanners.length > 0 ? dynamicBanners : [STATIC_COMING_SOON_BANNER];
+  const bannersToRender = useMemo(
+    () => (dynamicBanners.length > 0 ? dynamicBanners : [STATIC_COMING_SOON_BANNER]),
+    [dynamicBanners]
+  );
 
   return (
     <View style={styles.rootContainer}>
@@ -1309,6 +1482,8 @@ export default function HomeScreen() {
         overScrollMode="always"
         onScroll={handleMainScroll}
         scrollEventThrottle={200}
+        // ✅ PERF: keep mounted & avoid JS-thread stalls during fling
+        removeClippedSubviews={Platform.OS === 'android'}
       >
         {/* ─── Top Header (Dark Forest) ─── */}
         <View style={styles.darkHeaderSection}>
@@ -1318,7 +1493,12 @@ export default function HomeScreen() {
               activeOpacity={0.8}
               onPress={() => setIsAddressSheetVisible(true)}
             >
-              <Ionicons name="location-sharp" size={23} color="#52B788" style={{ marginRight: 6 }} />
+              <Ionicons
+                name="location-sharp"
+                size={23}
+                color="#52B788"
+                style={{ marginRight: 6 }}
+              />
               <View>
                 <Text style={styles.deliverToLabel}>DELIVER TO</Text>
                 <View style={styles.locationNameRow}>
@@ -1326,9 +1506,18 @@ export default function HomeScreen() {
                     {locationDisplay}
                   </Text>
                   {isLoadingLocation ? (
-                    <ActivityIndicator size="small" color="#52B788" style={{ marginLeft: 4 }} />
+                    <ActivityIndicator
+                      size="small"
+                      color="#52B788"
+                      style={{ marginLeft: 4 }}
+                    />
                   ) : (
-                    <Ionicons name="chevron-down" size={13} color="#E5E7EB" style={{ marginLeft: 4 }} />
+                    <Ionicons
+                      name="chevron-down"
+                      size={13}
+                      color="#E5E7EB"
+                      style={{ marginLeft: 4 }}
+                    />
                   )}
                 </View>
               </View>
@@ -1351,8 +1540,8 @@ export default function HomeScreen() {
                 activeOpacity={0.75}
                 onPress={() => {
                   router.push({
-                    pathname: "/screens/CartScreen",
-                    params: { fromHome: "true" }
+                    pathname: '/screens/CartScreen',
+                    params: { fromHome: 'true' },
                   });
                 }}
               >
@@ -1372,7 +1561,9 @@ export default function HomeScreen() {
                 {greeting}, <Text style={styles.userNameText}>{userName}!</Text>
               </Text>
             </View>
-            <Text style={styles.greetingSubText}>Let's start your healthy meal journey</Text>
+            <Text style={styles.greetingSubText}>
+              Let's start your healthy meal journey
+            </Text>
           </View>
 
           <View style={styles.searchBarRow}>
@@ -1437,15 +1628,37 @@ export default function HomeScreen() {
                 return (
                   <View key={slide.id} style={styles.bannerSlideCard}>
                     <View style={styles.bannerLeftSection}>
-                      <View style={[styles.mealBadgePill, slide.isComingSoon && styles.comingSoonBadgePill]}>
-                        <View style={[styles.badgeGreenDot, slide.isComingSoon && styles.comingSoonBadgeDot]} />
-                        <Text style={[styles.mealBadgeText, slide.isComingSoon && styles.comingSoonBadgeText]}>
+                      <View
+                        style={[
+                          styles.mealBadgePill,
+                          slide.isComingSoon && styles.comingSoonBadgePill,
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.badgeGreenDot,
+                            slide.isComingSoon && styles.comingSoonBadgeDot,
+                          ]}
+                        />
+                        <Text
+                          style={[
+                            styles.mealBadgeText,
+                            slide.isComingSoon && styles.comingSoonBadgeText,
+                          ]}
+                        >
                           {slide.badge}
                         </Text>
                       </View>
 
-                      <Text style={styles.bannerTitlePrimary}>{slide.titlePrimary}</Text>
-                      <Text style={[styles.bannerTitleSecondary, slide.isComingSoon && styles.comingSoonTitleSecondary]}>
+                      <Text style={styles.bannerTitlePrimary}>
+                        {slide.titlePrimary}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.bannerTitleSecondary,
+                          slide.isComingSoon && styles.comingSoonTitleSecondary,
+                        ]}
+                      >
                         {slide.titleSecondary}
                       </Text>
                       <Text style={styles.bannerSubtitle}>{slide.tagline}</Text>
@@ -1456,8 +1669,15 @@ export default function HomeScreen() {
                           activeOpacity={0.85}
                           onPress={() => setIsComingSoonModalVisible(true)}
                         >
-                          <MaterialCommunityIcons name="clock-fast" size={14} color="#FBBF24" style={{ marginRight: 5 }} />
-                          <Text style={styles.bannerNotifyBtnText}>Coming Soon</Text>
+                          <MaterialCommunityIcons
+                            name="clock-fast"
+                            size={14}
+                            color="#FBBF24"
+                            style={{ marginRight: 5 }}
+                          />
+                          <Text style={styles.bannerNotifyBtnText}>
+                            Coming Soon
+                          </Text>
                         </TouchableOpacity>
                       ) : (
                         <TouchableOpacity
@@ -1465,8 +1685,15 @@ export default function HomeScreen() {
                           activeOpacity={0.85}
                           onPress={() => handleBannerCtaPress(slide)}
                         >
-                          <Text style={styles.bannerExploreBtnText}>Explore Plans</Text>
-                          <Feather name="arrow-right" size={13} color="#111813" style={{ marginLeft: 6 }} />
+                          <Text style={styles.bannerExploreBtnText}>
+                            Explore Plans
+                          </Text>
+                          <Feather
+                            name="arrow-right"
+                            size={13}
+                            color="#111813"
+                            style={{ marginLeft: 6 }}
+                          />
                         </TouchableOpacity>
                       )}
                     </View>
@@ -1484,14 +1711,25 @@ export default function HomeScreen() {
 
                       {slide.isComingSoon ? (
                         <View style={styles.comingSoonTagBanner}>
-                          <Ionicons name="sparkles" size={11} color="#FBBF24" style={{ marginRight: 4 }} />
-                          <Text style={styles.comingSoonTagText}>LAUNCHING SOON</Text>
+                          <Ionicons
+                            name="sparkles"
+                            size={11}
+                            color="#FBBF24"
+                            style={{ marginRight: 4 }}
+                          />
+                          <Text style={styles.comingSoonTagText}>
+                            LAUNCHING SOON
+                          </Text>
                         </View>
                       ) : (
                         <View style={styles.startsAtBadge}>
                           <Text style={styles.startsAtLabel}>STARTS AT</Text>
-                          <Text style={styles.startsAtPrice}>₹{slide.price || '—'}</Text>
-                          <Text style={styles.startsAtDuration}>{slide.unit || '/pack'}</Text>
+                          <Text style={styles.startsAtPrice}>
+                            ₹{slide.price || '—'}
+                          </Text>
+                          <Text style={styles.startsAtDuration}>
+                            {slide.unit || '/pack'}
+                          </Text>
                         </View>
                       )}
                     </View>
@@ -1549,7 +1787,9 @@ export default function HomeScreen() {
                             item.badge === '75 MIN' && styles.categoryQuickBadge,
                           ]}
                         >
-                          <Text style={styles.categoryHotBadgeText}>{item.badge}</Text>
+                          <Text style={styles.categoryHotBadgeText}>
+                            {item.badge}
+                          </Text>
                         </View>
                       )}
                     </View>
@@ -1591,7 +1831,9 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.couponDetails}>
-                <Text style={styles.couponHeading}>Flat ₹500 OFF on your first order</Text>
+                <Text style={styles.couponHeading}>
+                  Flat ₹500 OFF on your first order
+                </Text>
                 <View style={styles.couponCodeRow}>
                   <Text style={styles.useCodeLabel}>Use code: </Text>
                   <View style={styles.dashedCodeBox}>
@@ -1608,7 +1850,9 @@ export default function HomeScreen() {
               <View>
                 <Text style={styles.sectionTitle}>Top Home Made Caterers</Text>
                 <View style={styles.sectionSubRow}>
-                  <Text style={styles.sectionSubtitle}>Verified chefs delivering pure hygiene</Text>
+                  <Text style={styles.sectionSubtitle}>
+                    Verified chefs delivering pure hygiene
+                  </Text>
                   <MaterialCommunityIcons
                     name="shield-check"
                     size={14}
@@ -1624,7 +1868,12 @@ export default function HomeScreen() {
                 onPress={() => router.push('/screens/AllChefCards')}
               >
                 <Text style={styles.seeAllBtnText}>See all</Text>
-                <Feather name="arrow-right" size={13} color="#2D6A4F" style={{ marginLeft: 3 }} />
+                <Feather
+                  name="arrow-right"
+                  size={13}
+                  color="#2D6A4F"
+                  style={{ marginLeft: 3 }}
+                />
               </TouchableOpacity>
             </View>
 
@@ -1674,7 +1923,12 @@ export default function HomeScreen() {
                         style={{ marginRight: 5 }}
                       />
                     )}
-                    <Text style={[styles.filterPillText, isSelected && styles.filterPillTextActive]}>
+                    <Text
+                      style={[
+                        styles.filterPillText,
+                        isSelected && styles.filterPillTextActive,
+                      ]}
+                    >
                       {tag.name}
                     </Text>
                   </TouchableOpacity>
@@ -1688,10 +1942,23 @@ export default function HomeScreen() {
               contentContainerStyle={styles.caterersDeckScroll}
             >
               {chefsLoading && chefsData.length === 0 ? (
-                <View style={styles.caterersLoadingContainer}>
-                  <ActivityIndicator size="small" color="#15803D" />
-                  <Text style={styles.caterersLoadingText}>Loading verified chefs...</Text>
-                </View>
+                // ✅ PERF: Skeleton cards instead of a spinner (perceived speed)
+                <>
+                  {[0, 1, 2].map((i) => (
+                    <View
+                      key={`sk_${i}`}
+                      style={[styles.catererDeckCard, styles.skeletonCard]}
+                    >
+                      <View style={styles.skeletonImage} />
+                      <View style={styles.skeletonBody}>
+                        <View style={styles.skeletonLineWide} />
+                        <View style={styles.skeletonLineNarrow} />
+                        <View style={styles.skeletonLineWide} />
+                        <View style={styles.skeletonLineNarrow} />
+                      </View>
+                    </View>
+                  ))}
+                </>
               ) : filteredChefs.length > 0 ? (
                 filteredChefs.map((caterer) => {
                   const isFav = favorites[caterer.id];
@@ -1701,7 +1968,10 @@ export default function HomeScreen() {
                   return (
                     <TouchableOpacity
                       key={caterer.id}
-                      style={[styles.catererDeckCard, isOffline && styles.cardOffline]}
+                      style={[
+                        styles.catererDeckCard,
+                        isOffline && styles.cardOffline,
+                      ]}
                       activeOpacity={0.9}
                       onPress={() => {
                         if (isOffline) return;
@@ -1711,12 +1981,19 @@ export default function HomeScreen() {
                       <View style={styles.foodImageContainer}>
                         <HomeChefBannerCarousel
                           banners={caterer.banners}
-                          fallbackImage={caterer.coverImage || DEFAULT_COVER_IMAGES[0]}
+                          fallbackImage={
+                            caterer.coverImage || DEFAULT_COVER_IMAGES[0]
+                          }
                           isOffline={isOffline}
                         />
 
                         <View style={styles.cardBestsellerTag}>
-                          <MaterialIcons name="verified" size={9} color="#FFFFFF" style={{ marginRight: 3 }} />
+                          <MaterialIcons
+                            name="verified"
+                            size={9}
+                            color="#FFFFFF"
+                            style={{ marginRight: 3 }}
+                          />
                           <Text style={styles.cardBestsellerText}>Verified</Text>
                         </View>
 
@@ -1733,7 +2010,10 @@ export default function HomeScreen() {
                         </TouchableOpacity>
 
                         <View style={styles.chefAvatarPill}>
-                          <Image source={{ uri: caterer.avatar }} style={styles.chefImage} />
+                          <Image
+                            source={{ uri: caterer.avatar }}
+                            style={styles.chefImage}
+                          />
                         </View>
                       </View>
 
@@ -1745,9 +2025,16 @@ export default function HomeScreen() {
                         <View style={styles.ratingDistanceRow}>
                           <Ionicons name="star" size={12} color="#D97706" />
                           <Text style={styles.ratingNumber}>{caterer.rating}</Text>
-                          <Text style={styles.reviewsCount}>({caterer.ratingCount || '120+'})</Text>
+                          <Text style={styles.reviewsCount}>
+                            ({caterer.ratingCount || '120+'})
+                          </Text>
                           <Text style={styles.dotSeparator}>•</Text>
-                          <Text style={styles.distanceValue} numberOfLines={1}>{caterer.locationText}</Text>
+                          <Text
+                            style={styles.distanceValue}
+                            numberOfLines={1}
+                          >
+                            {caterer.locationText}
+                          </Text>
                         </View>
 
                         <View style={styles.cuisineTimeRow}>
@@ -1782,7 +2069,9 @@ export default function HomeScreen() {
                         <View style={styles.cardBottomRow}>
                           <View style={styles.pricingRow}>
                             <Text style={styles.perPlateLabel}>Starts @ </Text>
-                            <Text style={styles.priceGreen}>₹{caterer.priceValue}</Text>
+                            <Text style={styles.priceGreen}>
+                              ₹{caterer.priceValue}
+                            </Text>
                           </View>
 
                           <View style={styles.vegNonVegBadgeContainer}>
@@ -1796,16 +2085,22 @@ export default function HomeScreen() {
                                 <View style={styles.nonVegInnerTriangle} />
                               </View>
                             )}
-                            {caterer.foodType !== 'VEG' && caterer.foodType !== 'NONVEG' && (
-                              <View style={styles.bothBadgeRow}>
-                                <View style={styles.vegBadgeCircle}>
-                                  <View style={styles.vegInnerDot} />
+                            {caterer.foodType !== 'VEG' &&
+                              caterer.foodType !== 'NONVEG' && (
+                                <View style={styles.bothBadgeRow}>
+                                  <View style={styles.vegBadgeCircle}>
+                                    <View style={styles.vegInnerDot} />
+                                  </View>
+                                  <View
+                                    style={[
+                                      styles.nonVegBadgeCircle,
+                                      { marginLeft: 3 },
+                                    ]}
+                                  >
+                                    <View style={styles.nonVegInnerTriangle} />
+                                  </View>
                                 </View>
-                                <View style={[styles.nonVegBadgeCircle, { marginLeft: 3 }]}>
-                                  <View style={styles.nonVegInnerTriangle} />
-                                </View>
-                              </View>
-                            )}
+                              )}
                           </View>
                         </View>
                       </View>
@@ -1820,7 +2115,9 @@ export default function HomeScreen() {
                 })
               ) : (
                 <View style={styles.caterersLoadingContainer}>
-                  <Text style={styles.caterersLoadingText}>No chefs found for this category</Text>
+                  <Text style={styles.caterersLoadingText}>
+                    No chefs found for this category
+                  </Text>
                 </View>
               )}
             </ScrollView>
@@ -1830,28 +2127,44 @@ export default function HomeScreen() {
             <View style={styles.trustCard}>
               <View style={styles.trustItem}>
                 <MaterialCommunityIcons name="moped" size={22} color="#2D6A4F" />
-                <Text style={styles.trustItemText}>On-time{'\n'}Delivery</Text>
+                <Text style={styles.trustItemText}>
+                  On-time{'\n'}Delivery
+                </Text>
               </View>
 
               <View style={styles.trustDivider} />
 
               <View style={styles.trustItem}>
-                <MaterialCommunityIcons name="shopping-outline" size={20} color="#2D6A4F" />
-                <Text style={styles.trustItemText}>No Minimum{'\n'}Order</Text>
+                <MaterialCommunityIcons
+                  name="shopping-outline"
+                  size={20}
+                  color="#2D6A4F"
+                />
+                <Text style={styles.trustItemText}>
+                  No Minimum{'\n'}Order
+                </Text>
               </View>
 
               <View style={styles.trustDivider} />
 
               <View style={styles.trustItem}>
                 <Ionicons name="leaf-outline" size={20} color="#2D6A4F" />
-                <Text style={styles.trustItemText}>100%{'\n'}Homemade</Text>
+                <Text style={styles.trustItemText}>
+                  100%{'\n'}Homemade
+                </Text>
               </View>
 
               <View style={styles.trustDivider} />
 
               <View style={styles.trustItem}>
-                <MaterialCommunityIcons name="shield-check-outline" size={20} color="#2D6A4F" />
-                <Text style={styles.trustItemText}>Hygienic &{'\n'}Safe</Text>
+                <MaterialCommunityIcons
+                  name="shield-check-outline"
+                  size={20}
+                  color="#2D6A4F"
+                />
+                <Text style={styles.trustItemText}>
+                  Hygienic &{'\n'}Safe
+                </Text>
               </View>
             </View>
           </View>
@@ -1860,10 +2173,11 @@ export default function HomeScreen() {
           {isRefreshingScreen && (
             <View style={styles.screenRefreshFooter}>
               <ActivityIndicator size="small" color="#15803D" />
-              <Text style={styles.screenRefreshFooterText}>Refreshing screen…</Text>
+              <Text style={styles.screenRefreshFooterText}>
+                Refreshing screen…
+              </Text>
             </View>
           )}
-
         </View>
       </ScrollView>
 
@@ -1893,7 +2207,9 @@ export default function HomeScreen() {
             <View style={styles.notificationPanelHeader}>
               <View style={styles.notificationPanelHeaderLeft}>
                 <View style={styles.notificationPanelIconDot} />
-                <Text style={styles.notificationPanelHeaderTitle}>Notifications</Text>
+                <Text style={styles.notificationPanelHeaderTitle}>
+                  Notifications
+                </Text>
               </View>
               <TouchableOpacity
                 onPress={() => setIsNotificationsVisible(false)}
@@ -1915,35 +2231,66 @@ export default function HomeScreen() {
               keyboardShouldPersistTaps="handled"
             >
               <View style={styles.notificationItemRow}>
-                <View style={[styles.notificationItemIconWrap, { backgroundColor: 'rgba(74, 222, 128, 0.14)' }]}>
+                <View
+                  style={[
+                    styles.notificationItemIconWrap,
+                    { backgroundColor: 'rgba(74, 222, 128, 0.14)' },
+                  ]}
+                >
                   <Ionicons name="sparkles-outline" size={16} color="#4ADE80" />
                 </View>
                 <View style={styles.notificationItemTextCol}>
-                  <Text style={styles.notificationItemTitle}>Welcome to Katbox!</Text>
+                  <Text style={styles.notificationItemTitle}>
+                    Welcome to Katbox!
+                  </Text>
                   <Text style={styles.notificationItemBody}>
-                    Your trusted home for hygienic meal boxes, catering & homemade foods.
+                    Your trusted home for hygienic meal boxes, catering &
+                    homemade foods.
                   </Text>
                 </View>
               </View>
 
               <View style={styles.notificationItemRow}>
-                <View style={[styles.notificationItemIconWrap, { backgroundColor: 'rgba(251, 191, 36, 0.16)' }]}>
-                  <MaterialCommunityIcons name="firework" size={16} color="#FBBF24" />
+                <View
+                  style={[
+                    styles.notificationItemIconWrap,
+                    { backgroundColor: 'rgba(251, 191, 36, 0.16)' },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="firework"
+                    size={16}
+                    color="#FBBF24"
+                  />
                 </View>
                 <View style={styles.notificationItemTextCol}>
-                  <Text style={styles.notificationItemTitle}>Ganesh Chaturthi Special</Text>
+                  <Text style={styles.notificationItemTitle}>
+                    Ganesh Chaturthi Special
+                  </Text>
                   <Text style={styles.notificationItemBody}>
-                    Flat ₹500 OFF on your first order. Use code KATBOX500 at checkout.
+                    Flat ₹500 OFF on your first order. Use code KATBOX500 at
+                    checkout.
                   </Text>
                 </View>
               </View>
 
               <View style={styles.notificationItemRow}>
-                <View style={[styles.notificationItemIconWrap, { backgroundColor: 'rgba(96, 165, 250, 0.14)' }]}>
-                  <MaterialCommunityIcons name="silverware-fork-knife" size={16} color="#60A5FA" />
+                <View
+                  style={[
+                    styles.notificationItemIconWrap,
+                    { backgroundColor: 'rgba(96, 165, 250, 0.14)' },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="silverware-fork-knife"
+                    size={16}
+                    color="#60A5FA"
+                  />
                 </View>
                 <View style={styles.notificationItemTextCol}>
-                  <Text style={styles.notificationItemTitle}>Katbox Catering</Text>
+                  <Text style={styles.notificationItemTitle}>
+                    Katbox Catering
+                  </Text>
                   <Text style={styles.notificationItemBody}>
                     Book live event catering for weddings, pujas & parties.
                   </Text>
@@ -1951,23 +2298,42 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.notificationItemRow}>
-                <View style={[styles.notificationItemIconWrap, { backgroundColor: 'rgba(74, 222, 128, 0.14)' }]}>
-                  <MaterialCommunityIcons name="food-takeout-box-outline" size={16} color="#4ADE80" />
+                <View
+                  style={[
+                    styles.notificationItemIconWrap,
+                    { backgroundColor: 'rgba(74, 222, 128, 0.14)' },
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="food-takeout-box-outline"
+                    size={16}
+                    color="#4ADE80"
+                  />
                 </View>
                 <View style={styles.notificationItemTextCol}>
-                  <Text style={styles.notificationItemTitle}>Katbox Mealbox</Text>
+                  <Text style={styles.notificationItemTitle}>
+                    Katbox Mealbox
+                  </Text>
                   <Text style={styles.notificationItemBody}>
-                    Fresh daily thalis & custom meal plans delivered to your door.
+                    Fresh daily thalis & custom meal plans delivered to your
+                    door.
                   </Text>
                 </View>
               </View>
 
               <View style={styles.notificationItemRow}>
-                <View style={[styles.notificationItemIconWrap, { backgroundColor: 'rgba(244, 114, 182, 0.14)' }]}>
+                <View
+                  style={[
+                    styles.notificationItemIconWrap,
+                    { backgroundColor: 'rgba(244, 114, 182, 0.14)' },
+                  ]}
+                >
                   <Ionicons name="home-outline" size={16} color="#F472B6" />
                 </View>
                 <View style={styles.notificationItemTextCol}>
-                  <Text style={styles.notificationItemTitle}>Katbox Homemade Foods</Text>
+                  <Text style={styles.notificationItemTitle}>
+                    Katbox Homemade Foods
+                  </Text>
                   <Text style={styles.notificationItemBody}>
                     Authentic home-cooked pickles, podis & regional specials.
                   </Text>
@@ -2016,11 +2382,15 @@ export default function HomeScreen() {
             <Text style={styles.comingSoonCardTitle}>Hire Chef On Demand</Text>
             <View style={styles.comingSoonPillTag}>
               <View style={styles.comingSoonPulseDot} />
-              <Text style={styles.comingSoonPillTagText}>Launching Very Soon</Text>
+              <Text style={styles.comingSoonPillTagText}>
+                Launching Very Soon
+              </Text>
             </View>
 
             <Text style={styles.comingSoonCardDescription}>
-              We are carefully vetting top five-star home chefs and catering masters across Hyderabad to cook live in your kitchen for private dinners, family functions, and celebrations.
+              We are carefully vetting top five-star home chefs and catering
+              masters across Hyderabad to cook live in your kitchen for private
+              dinners, family functions, and celebrations.
             </Text>
 
             <View style={styles.comingSoonFeaturesList}>
@@ -2028,21 +2398,27 @@ export default function HomeScreen() {
                 <View style={styles.comingSoonCheckCircle}>
                   <Ionicons name="checkmark" size={13} color="#15803D" />
                 </View>
-                <Text style={styles.comingSoonFeatureText}>Experienced, verified master cooks</Text>
+                <Text style={styles.comingSoonFeatureText}>
+                  Experienced, verified master cooks
+                </Text>
               </View>
 
               <View style={styles.comingSoonFeatureRow}>
                 <View style={styles.comingSoonCheckCircle}>
                   <Ionicons name="checkmark" size={13} color="#15803D" />
                 </View>
-                <Text style={styles.comingSoonFeatureText}>Live, hygienic custom meal preparation</Text>
+                <Text style={styles.comingSoonFeatureText}>
+                  Live, hygienic custom meal preparation
+                </Text>
               </View>
 
               <View style={styles.comingSoonFeatureRow}>
                 <View style={styles.comingSoonCheckCircle}>
                   <Ionicons name="checkmark" size={13} color="#15803D" />
                 </View>
-                <Text style={styles.comingSoonFeatureText}>Hassle-free kitchen cleanup included</Text>
+                <Text style={styles.comingSoonFeatureText}>
+                  Hassle-free kitchen cleanup included
+                </Text>
               </View>
             </View>
 
@@ -2051,8 +2427,15 @@ export default function HomeScreen() {
               activeOpacity={0.88}
               onPress={() => setIsComingSoonModalVisible(false)}
             >
-              <Text style={styles.comingSoonActionBtnText}>Got it, Notify Me!</Text>
-              <Feather name="bell" size={16} color="#FFFFFF" style={{ marginLeft: 8 }} />
+              <Text style={styles.comingSoonActionBtnText}>
+                Got it, Notify Me!
+              </Text>
+              <Feather
+                name="bell"
+                size={16}
+                color="#FFFFFF"
+                style={{ marginLeft: 8 }}
+              />
             </TouchableOpacity>
           </View>
         </View>
@@ -2063,7 +2446,7 @@ export default function HomeScreen() {
         visible={isPermissionPopupVisible}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => { }}
+        onRequestClose={() => {}}
       >
         <View style={styles.permissionModalBackdrop}>
           <View style={styles.permissionCardContainer}>
@@ -2072,19 +2455,36 @@ export default function HomeScreen() {
               <View style={styles.permissionPulseDot} />
             </View>
 
-            <Text style={styles.permissionCardTitle}>Find Nearby Chefs & Meals</Text>
+            <Text style={styles.permissionCardTitle}>
+              Find Nearby Chefs & Meals
+            </Text>
             <Text style={styles.permissionCardDescription}>
-              Allow location access to discover hygienic home caterers, live chefs, and fresh meal boxes delivering to your exact doorstep.
+              Allow location access to discover hygienic home caterers, live
+              chefs, and fresh meal boxes delivering to your exact doorstep.
             </Text>
 
             <View style={styles.permissionFeaturesList}>
               <View style={styles.permissionFeatureItem}>
-                <Ionicons name="checkmark-circle" size={16} color="#15803D" style={{ marginRight: 8 }} />
-                <Text style={styles.permissionFeatureText}>Accurate delivery time estimations</Text>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={16}
+                  color="#15803D"
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={styles.permissionFeatureText}>
+                  Accurate delivery time estimations
+                </Text>
               </View>
               <View style={styles.permissionFeatureItem}>
-                <Ionicons name="checkmark-circle" size={16} color="#15803D" style={{ marginRight: 8 }} />
-                <Text style={styles.permissionFeatureText}>Verified home chefs nearest to you</Text>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={16}
+                  color="#15803D"
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={styles.permissionFeatureText}>
+                  Verified home chefs nearest to you
+                </Text>
               </View>
             </View>
 
@@ -2098,8 +2498,15 @@ export default function HomeScreen() {
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
                 <>
-                  <Text style={styles.permissionAllowButtonText}>Allow Location Access</Text>
-                  <Feather name="arrow-right" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
+                  <Text style={styles.permissionAllowButtonText}>
+                    Allow Location Access
+                  </Text>
+                  <Feather
+                    name="arrow-right"
+                    size={16}
+                    color="#FFFFFF"
+                    style={{ marginLeft: 6 }}
+                  />
                 </>
               )}
             </TouchableOpacity>
@@ -2116,29 +2523,59 @@ export default function HomeScreen() {
       >
         <View style={styles.permissionModalBackdrop}>
           <View style={styles.permissionCardContainer}>
-            <View style={[styles.permissionIllustrationCircle, { backgroundColor: '#DBEAFE' }]}>
+            <View
+              style={[
+                styles.permissionIllustrationCircle,
+                { backgroundColor: '#DBEAFE' },
+              ]}
+            >
               <Ionicons name="notifications" size={38} color="#2563EB" />
-              <View style={[styles.permissionPulseDot, { borderColor: 'rgba(37, 99, 235, 0.3)' }]} />
+              <View
+                style={[
+                  styles.permissionPulseDot,
+                  { borderColor: 'rgba(37, 99, 235, 0.3)' },
+                ]}
+              />
             </View>
 
-            <Text style={styles.permissionCardTitle}>Stay Updated with Katbox</Text>
+            <Text style={styles.permissionCardTitle}>
+              Stay Updated with Katbox
+            </Text>
             <Text style={styles.permissionCardDescription}>
-              Allow notifications to get instant updates on your order status, delivery progress, and exclusive offers.
+              Allow notifications to get instant updates on your order status,
+              delivery progress, and exclusive offers.
             </Text>
 
             <View style={styles.permissionFeaturesList}>
               <View style={styles.permissionFeatureItem}>
-                <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginRight: 8 }} />
-                <Text style={styles.permissionFeatureText}>Real-time order & delivery updates</Text>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={16}
+                  color="#2563EB"
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={styles.permissionFeatureText}>
+                  Real-time order & delivery updates
+                </Text>
               </View>
               <View style={styles.permissionFeatureItem}>
-                <Ionicons name="checkmark-circle" size={16} color="#2563EB" style={{ marginRight: 8 }} />
-                <Text style={styles.permissionFeatureText}>Chef acceptance & status alerts</Text>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={16}
+                  color="#2563EB"
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={styles.permissionFeatureText}>
+                  Chef acceptance & status alerts
+                </Text>
               </View>
             </View>
 
             <TouchableOpacity
-              style={[styles.permissionAllowButton, { backgroundColor: '#2563EB', shadowColor: '#2563EB' }]}
+              style={[
+                styles.permissionAllowButton,
+                { backgroundColor: '#2563EB', shadowColor: '#2563EB' },
+              ]}
               activeOpacity={0.88}
               onPress={handleAllowNotificationPopup}
               disabled={isRequestingNotification}
@@ -2147,8 +2584,15 @@ export default function HomeScreen() {
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
                 <>
-                  <Text style={styles.permissionAllowButtonText}>Allow Notifications</Text>
-                  <Feather name="arrow-right" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
+                  <Text style={styles.permissionAllowButtonText}>
+                    Allow Notifications
+                  </Text>
+                  <Feather
+                    name="arrow-right"
+                    size={16}
+                    color="#FFFFFF"
+                    style={{ marginLeft: 6 }}
+                  />
                 </>
               )}
             </TouchableOpacity>
@@ -2158,7 +2602,11 @@ export default function HomeScreen() {
               onPress={() => setIsNotificationPopupVisible(false)}
               activeOpacity={0.7}
             >
-              <Text style={{ fontSize: 12.5, color: '#64748B', fontWeight: '600' }}>Maybe later</Text>
+              <Text
+                style={{ fontSize: 12.5, color: '#64748B', fontWeight: '600' }}
+              >
+                Maybe later
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2184,7 +2632,9 @@ export default function HomeScreen() {
             <View style={styles.sheetHeaderRow}>
               <View>
                 <Text style={styles.sheetTitle}>Choose Delivery Location</Text>
-                <Text style={styles.sheetSubtitle}>Select, edit, or manage saved addresses</Text>
+                <Text style={styles.sheetSubtitle}>
+                  Select, edit, or manage saved addresses
+                </Text>
               </View>
               <TouchableOpacity
                 style={styles.sheetCloseBtn}
@@ -2201,32 +2651,64 @@ export default function HomeScreen() {
             >
               {activeAddress && activeAddress.fullAddress ? (
                 <View style={{ marginBottom: 14 }}>
-                  <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', letterSpacing: 0.4, marginBottom: 8 }}>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: '800',
+                      color: '#64748B',
+                      letterSpacing: 0.4,
+                      marginBottom: 8,
+                    }}
+                  >
                     ACTIVE ADDRESS
                   </Text>
-                  <View style={[styles.savedAddressItemCard, styles.savedAddressItemCardActive]}>
+                  <View
+                    style={[
+                      styles.savedAddressItemCard,
+                      styles.savedAddressItemCardActive,
+                    ]}
+                  >
                     <TouchableOpacity
                       style={styles.savedAddressMainTouchable}
                       activeOpacity={0.8}
                       onPress={() => setIsAddressSheetVisible(false)}
                     >
-                      <View style={[styles.savedAddressIconCircle, styles.savedAddressIconCircleActive]}>
+                      <View
+                        style={[
+                          styles.savedAddressIconCircle,
+                          styles.savedAddressIconCircleActive,
+                        ]}
+                      >
                         <Ionicons name="navigate" size={17} color="#FFFFFF" />
                       </View>
                       <View style={styles.savedAddressTextCol}>
                         <View style={styles.savedAddressTitleRow}>
-                          <Text style={styles.savedAddressItemTitle}>{activeAddress.title || 'Current'}</Text>
+                          <Text style={styles.savedAddressItemTitle}>
+                            {activeAddress.title || 'Current'}
+                          </Text>
                           <View style={styles.activeCheckPill}>
-                            <Ionicons name="checkmark-circle" size={13} color="#15803D" />
-                            <Text style={styles.activeCheckPillText}>Active</Text>
+                            <Ionicons
+                              name="checkmark-circle"
+                              size={13}
+                              color="#15803D"
+                            />
+                            <Text style={styles.activeCheckPillText}>
+                              Active
+                            </Text>
                           </View>
                         </View>
                         {activeAddress.houseDetails ? (
-                          <Text style={styles.savedAddressHouseString} numberOfLines={1}>
+                          <Text
+                            style={styles.savedAddressHouseString}
+                            numberOfLines={1}
+                          >
                             {activeAddress.houseDetails}
                           </Text>
                         ) : null}
-                        <Text style={styles.savedAddressFullString} numberOfLines={2}>
+                        <Text
+                          style={styles.savedAddressFullString}
+                          numberOfLines={2}
+                        >
                           {activeAddress.fullAddress}
                         </Text>
                       </View>
@@ -2235,7 +2717,15 @@ export default function HomeScreen() {
                 </View>
               ) : null}
 
-              <Text style={{ fontSize: 11, fontWeight: '800', color: '#64748B', letterSpacing: 0.4, marginBottom: 8 }}>
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: '800',
+                  color: '#64748B',
+                  letterSpacing: 0.4,
+                  marginBottom: 8,
+                }}
+              >
                 SAVED ADDRESSES
               </Text>
 
@@ -2247,43 +2737,77 @@ export default function HomeScreen() {
                   return (
                     <View
                       key={item.id}
-                      style={[styles.savedAddressItemCard, isSelected && styles.savedAddressItemCardActive]}
+                      style={[
+                        styles.savedAddressItemCard,
+                        isSelected && styles.savedAddressItemCardActive,
+                      ]}
                     >
                       <TouchableOpacity
                         style={styles.savedAddressMainTouchable}
                         activeOpacity={0.8}
                         onPress={() => handleSelectSavedAddress(item)}
                       >
-                        <View style={[styles.savedAddressIconCircle, isSelected && styles.savedAddressIconCircleActive]}>
+                        <View
+                          style={[
+                            styles.savedAddressIconCircle,
+                            isSelected && styles.savedAddressIconCircleActive,
+                          ]}
+                        >
                           {item.tag === 'Home' && (
-                            <Ionicons name="home" size={17} color={isSelected ? '#FFFFFF' : '#15803D'} />
+                            <Ionicons
+                              name="home"
+                              size={17}
+                              color={isSelected ? '#FFFFFF' : '#15803D'}
+                            />
                           )}
                           {item.tag === 'Work' && (
-                            <Ionicons name="briefcase" size={17} color={isSelected ? '#FFFFFF' : '#15803D'} />
+                            <Ionicons
+                              name="briefcase"
+                              size={17}
+                              color={isSelected ? '#FFFFFF' : '#15803D'}
+                            />
                           )}
                           {item.tag === 'Other' && (
-                            <Ionicons name="bookmark" size={17} color={isSelected ? '#FFFFFF' : '#15803D'} />
+                            <Ionicons
+                              name="bookmark"
+                              size={17}
+                              color={isSelected ? '#FFFFFF' : '#15803D'}
+                            />
                           )}
                         </View>
 
                         <View style={styles.savedAddressTextCol}>
                           <View style={styles.savedAddressTitleRow}>
-                            <Text style={styles.savedAddressItemTitle}>{item.title}</Text>
+                            <Text style={styles.savedAddressItemTitle}>
+                              {item.title}
+                            </Text>
                             {isSelected && (
                               <View style={styles.activeCheckPill}>
-                                <Ionicons name="checkmark-circle" size={13} color="#15803D" />
-                                <Text style={styles.activeCheckPillText}>Active</Text>
+                                <Ionicons
+                                  name="checkmark-circle"
+                                  size={13}
+                                  color="#15803D"
+                                />
+                                <Text style={styles.activeCheckPillText}>
+                                  Active
+                                </Text>
                               </View>
                             )}
                           </View>
 
                           {item.houseDetails ? (
-                            <Text style={styles.savedAddressHouseString} numberOfLines={1}>
+                            <Text
+                              style={styles.savedAddressHouseString}
+                              numberOfLines={1}
+                            >
                               {item.houseDetails}
                             </Text>
                           ) : null}
 
-                          <Text style={styles.savedAddressFullString} numberOfLines={2}>
+                          <Text
+                            style={styles.savedAddressFullString}
+                            numberOfLines={2}
+                          >
                             {item.fullAddress}
                           </Text>
                         </View>
@@ -2311,10 +2835,18 @@ export default function HomeScreen() {
                 })
               ) : (
                 <View style={styles.emptySavedAddressesBox}>
-                  <Ionicons name="location-outline" size={32} color="#94A3B8" style={{ marginBottom: 6 }} />
-                  <Text style={styles.emptySavedAddressesTitle}>No saved addresses yet</Text>
+                  <Ionicons
+                    name="location-outline"
+                    size={32}
+                    color="#94A3B8"
+                    style={{ marginBottom: 6 }}
+                  />
+                  <Text style={styles.emptySavedAddressesTitle}>
+                    No saved addresses yet
+                  </Text>
                   <Text style={styles.emptySavedAddressesSubtitle}>
-                    Add your home, office, or custom locations for quick 1-tap checkout.
+                    Add your home, office, or custom locations for quick 1-tap
+                    checkout.
                   </Text>
                 </View>
               )}
@@ -2329,7 +2861,9 @@ export default function HomeScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.addNewAddressTitle}>Add New Address</Text>
-                  <Text style={styles.addNewAddressSubtitle}>Pin exact location on real detailed map</Text>
+                  <Text style={styles.addNewAddressSubtitle}>
+                    Pin exact location on real detailed map
+                  </Text>
                 </View>
                 <Feather name="chevron-right" size={18} color="#94A3B8" />
               </TouchableOpacity>
@@ -2355,7 +2889,7 @@ export default function HomeScreen() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Styles — UNCHANGED from original Home.tsx.
+// Styles — mostly unchanged; added skeleton styles at the end.
 // ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   rootContainer: {
@@ -2369,7 +2903,8 @@ const styles = StyleSheet.create({
 
   darkHeaderSection: {
     backgroundColor: '#111813',
-    paddingTop: Platform.OS === 'ios' ? 52 : (StatusBar.currentHeight || 0) + 12,
+    paddingTop:
+      Platform.OS === 'ios' ? 52 : (StatusBar.currentHeight || 0) + 12,
     paddingHorizontal: 16,
     paddingBottom: 0,
     zIndex: 20,
@@ -3844,5 +4379,35 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     color: '#64748B',
     marginTop: 1,
+  },
+
+  // ✅ NEW: Skeleton loader styles
+  skeletonCard: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#F1F5F9',
+  },
+  skeletonImage: {
+    width: '100%',
+    height: 120,
+    backgroundColor: '#E2E8F0',
+  },
+  skeletonBody: {
+    paddingTop: 18,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+  },
+  skeletonLineWide: {
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#E2E8F0',
+    marginBottom: 8,
+    width: '85%',
+  },
+  skeletonLineNarrow: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EEF2F7',
+    marginBottom: 8,
+    width: '55%',
   },
 });

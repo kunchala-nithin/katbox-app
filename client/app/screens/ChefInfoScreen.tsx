@@ -418,7 +418,7 @@ export default function ChefInfoScreen() {
   const resolvedSpecialty = (specialty as string) || chefProfile?.specialty || "Royal Awadh Biryani, Andhra Meals, Tandoori";
   const resolvedExpText = (expText as string) || (chefProfile?.exp ? `${chefProfile.exp} yrs experience` : "14+ yrs experience");
 
-  // ⭐ NEW: Pull the FSSAI number stored on the chef document (set via AddChefs → /api/chefs).
+  // ⭐ Pull the FSSAI number stored on the chef document (set via AddChefs → /api/chefs).
   // Returned by getChefs/getMyChef as `fssaiNo`. Falls back to empty string so we can
   // show a graceful default instead of "undefined".
   const resolvedFssaiNo = useMemo(() => {
@@ -765,10 +765,26 @@ export default function ChefInfoScreen() {
                       }
                     }}
                   >
-                    <Image
-                      source={{ uri: cat.heroImageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400" }}
-                      style={styles.dishCardImage}
-                    />
+                    {/* ⭐ Image wrapper so the Quick Delivery badge can sit
+                        flush against the card's top-right corner, merging with it. */}
+                    <View style={styles.dishCardImageWrapper}>
+                      <Image
+                        source={{ uri: cat.heroImageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400" }}
+                        style={styles.dishCardImage}
+                      />
+
+                      {/* ⭐ Quick Delivery badge — merged into the top-right corner.
+                          Only rendered for the Quick Bites category.
+                          Rounded only on bottom-left so it appears flush with the card's
+                          rounded top-right edge. */}
+                      {isQuickBites && (
+                        <View style={styles.quickDeliveryBadge}>
+                          <Ionicons name="flash" size={10} color="#FFFFFF" />
+                          <Text style={styles.quickDeliveryBadgeText}>Quick Delivery</Text>
+                        </View>
+                      )}
+                    </View>
+
                     <View style={styles.dishCardContent}>
                       <Text style={styles.dishCardTitle} numberOfLines={1}>{cat.name}</Text>
                     </View>
@@ -1508,11 +1524,50 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 2,
   },
+  // ⭐ Wrapper around the category image so we can position the
+  // Quick Delivery badge flush against the card's top-right corner.
+  dishCardImageWrapper: {
+    width: "100%",
+    height: 124,
+    position: "relative",
+    backgroundColor: KATBOX.cardSoft,
+  },
   dishCardImage: {
     width: "100%",
     height: 124,
     resizeMode: "cover",
     backgroundColor: KATBOX.cardSoft,
+  },
+  // ⭐ Quick Delivery tag shown ONLY for Quick Bites category cards.
+  // Merged into the top-right corner of the card:
+  //  • top: 0, right: 0     → flush against the card's top-right edges
+  //  • borderTopRightRadius: 16 → matches the card's rounded top-right corner
+  //  • borderBottomLeftRadius: 12 → smooth bottom-left curve
+  //  • other corners 0 → invisible because they sit flush with the card edges
+  quickDeliveryBadge: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: KATBOX.primary,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderTopRightRadius: 16,
+    borderBottomLeftRadius: 12,
+    gap: 3,
+    zIndex: 5,
+    shadowColor: KATBOX.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  quickDeliveryBadgeText: {
+    fontSize: 9.5,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: 0.1,
   },
   dishCardContent: {
     padding: 11,

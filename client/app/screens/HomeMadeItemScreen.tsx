@@ -397,35 +397,78 @@ const HomeMadeItemScreen = () => {
     const cartCount = itemQuantities[item.id] || 0;
     const itemUnavailable = item.isAvailable === false;
 
-    return (
-      <View style={[styles.menuItemCard, itemUnavailable && styles.menuItemCardDisabled]}>
-        {/* ✅ BLACK SHADE OVERLAY: appears only when the chef has marked
-            the dish as unavailable. Uses pointerEvents="none" so it does
-            not swallow taps on the ADD button (which is hidden anyway),
-            and lets the "Unavailable" badge remain fully readable. */}
-        {itemUnavailable && (
-          <View style={styles.unavailableShade} pointerEvents="none">
-            <View style={styles.unavailableBadge}>
-              <Ionicons name="close-circle" size={14} color="#FFFFFF" />
-              <Text style={styles.unavailableBadgeText}>Unavailable</Text>
+    // ─── UNAVAILABLE STATE ────────────────────────────────────────────
+    // When the chef has toggled this dish OFF, we render a "dead" card:
+    //  • whole card is wrapped in a View with pointerEvents="none" so
+    //    nothing inside it can be tapped, long-pressed, or selected
+    //  • every visual element is desaturated / greyed (black & white)
+    //  • the ADD / counter is replaced by a plain grey "Not Available" pill
+    //  • NO big overlay badge is drawn in the middle of the card anymore
+    if (itemUnavailable) {
+      return (
+        <View
+          style={[styles.menuItemCard, styles.menuItemCardDisabled]}
+          pointerEvents="none"
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+        >
+          {/* LEFT: Text Content (greyed) */}
+          <View style={styles.itemDetails}>
+            <View style={styles.itemNameRow}>
+              <View style={[styles.vegIconWrapper, styles.vegIconWrapperGrey]}>
+                <View style={[styles.vegIconDot, styles.vegIconDotGrey]} />
+              </View>
+              <Text style={[styles.itemName, styles.textGrey]} numberOfLines={1}>
+                {item.name}
+              </Text>
+            </View>
+
+            {item.description && (
+              <Text style={[styles.itemDescription, styles.textGrey]} numberOfLines={2}>
+                {item.description}
+              </Text>
+            )}
+
+            <View style={styles.priceRow}>
+              <Text style={[styles.itemPrice, styles.textGrey]}>₹{currentPrice}</Text>
+              <View style={[styles.qtyButton, styles.qtyButtonGrey]}>
+                <Text style={[styles.qtyText, styles.textGrey]}>{currentQty}</Text>
+              </View>
             </View>
           </View>
-        )}
 
+          {/* RIGHT: Image + "Not Available" pill */}
+          <View style={styles.itemImageWrapper}>
+            <View style={styles.itemImageContainer}>
+              <Image
+                source={{ uri: item.image || "https://via.placeholder.com/150" }}
+                style={[styles.menuItemImage, styles.menuItemImageGrey]}
+              />
+            </View>
+
+            <View style={styles.notAvailablePill}>
+              <Text style={styles.notAvailablePillText}>Not Available</Text>
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    // ─── AVAILABLE STATE (unchanged behaviour) ────────────────────────
+    return (
+      <View style={styles.menuItemCard}>
         {/* LEFT: Text Content */}
         <View style={styles.itemDetails}>
           <View style={styles.itemNameRow}>
             <View style={[styles.vegIconWrapper, !item.veg && styles.nonVegIconWrapper]}>
               <View style={[styles.vegIconDot, !item.veg && styles.nonVegIconDot]} />
             </View>
-            <Text style={[styles.itemName, itemUnavailable && styles.textMuted]}>
-              {item.name}
-            </Text>
+            <Text style={styles.itemName}>{item.name}</Text>
           </View>
 
           {item.description && (
             <Text
-              style={[styles.itemDescription, itemUnavailable && styles.textMuted]}
+              style={styles.itemDescription}
               numberOfLines={isExpanded ? undefined : 2}
             >
               {item.description}
@@ -441,13 +484,12 @@ const HomeMadeItemScreen = () => {
           )}
 
           <View style={styles.priceRow}>
-            <Text style={[styles.itemPrice, itemUnavailable && styles.textMuted]}>₹{currentPrice}</Text>
+            <Text style={styles.itemPrice}>₹{currentPrice}</Text>
 
             {item.availableQuantities && item.availableQuantities.length > 1 ? (
               <TouchableOpacity
-                style={[styles.qtyButton, itemUnavailable && styles.qtyButtonDisabled]}
+                style={styles.qtyButton}
                 onPress={() => openQuantitySelector(item)}
-                disabled={itemUnavailable}
               >
                 <Text style={styles.qtyText}>{currentQty}</Text>
                 <Ionicons name="chevron-down" size={14} color={KATBOX.textPrimary} />
@@ -464,24 +506,16 @@ const HomeMadeItemScreen = () => {
         <TouchableOpacity 
           style={styles.itemImageWrapper}
           onPress={() => openQuantitySelector(item)}
-          activeOpacity={itemUnavailable ? 1 : 0.85}
-          disabled={itemUnavailable}
+          activeOpacity={0.85}
         >
           <View style={styles.itemImageContainer}>
             <Image
               source={{ uri: item.image || "https://via.placeholder.com/150" }}
-              style={[styles.menuItemImage, itemUnavailable && styles.menuItemImageDim]}
+              style={styles.menuItemImage}
             />
           </View>
 
-          {itemUnavailable ? (
-            // ✅ When unavailable, we replace the counter/ADD with a
-            // muted "Not Available" pill so the customer clearly sees
-            // that the dish cannot be ordered right now.
-            <View style={styles.notAvailablePill}>
-              <Text style={styles.notAvailablePillText}>Not Available</Text>
-            </View>
-          ) : cartCount === 0 ? (
+          {cartCount === 0 ? (
             <TouchableOpacity
               style={styles.addButtonOnImage}
               onPress={(e) => {
@@ -1202,40 +1236,15 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04, 
     shadowRadius: 8,
     elevation: 2,
-    position: "relative",   // ✅ needed for absolute shade overlay
-    overflow: "hidden",     // ✅ clips the shade to the rounded card
+    position: "relative",
   },
-  // Subtle desaturation of the whole card when the dish is unavailable
+  // ✅ Greyed-out "dead" card when the chef toggles the dish OFF.
+  // Fully desaturated: light grey bg, neutral border, no colored accents.
   menuItemCardDisabled: {
-    borderColor: "#D1D5DB",
-    backgroundColor: "#F3F4F6",
-  },
-  // ✅ BLACK SHADE OVERLAY — covers the entire card with a
-  // semi-transparent black veil when the chef toggles the item OFF.
-  unavailableShade: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0, 0, 0, 0.55)",
-    zIndex: 20,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  unavailableBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "rgba(0, 0, 0, 0.85)",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.35)",
-  },
-  unavailableBadgeText: {
-    color: "#FFFFFF",
-    fontSize: 12.5,
-    fontWeight: "900",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
+    backgroundColor: "#EFEFEF",
+    borderColor: "#D4D4D4",
+    shadowOpacity: 0.02,
+    elevation: 0,
   },
   itemDetails: {
     flex: 1,
@@ -1258,6 +1267,11 @@ const styles = StyleSheet.create({
     marginRight: 8,
     backgroundColor: KATBOX.card,
   },
+  // ✅ Neutral grey veg marker for unavailable dishes
+  vegIconWrapperGrey: {
+    borderColor: "#9CA3AF",
+    backgroundColor: "#EFEFEF",
+  },
   nonVegIconWrapper: {
     borderColor: KATBOX.danger,
   },
@@ -1266,6 +1280,10 @@ const styles = StyleSheet.create({
     height: 6,
     backgroundColor: KATBOX.primaryLight,
     borderRadius: 3,
+  },
+  // ✅ Neutral grey dot for unavailable dishes
+  vegIconDotGrey: {
+    backgroundColor: "#9CA3AF",
   },
   nonVegIconDot: {
     backgroundColor: KATBOX.danger,
@@ -1276,6 +1294,10 @@ const styles = StyleSheet.create({
     color: KATBOX.textPrimary,
     flex: 1,
     letterSpacing: -0.2,
+  },
+  // ✅ Shared "grey text" style used on every text element of a dead card
+  textGrey: {
+    color: "#9CA3AF",
   },
   itemDescription: {
     fontSize: 13,
@@ -1314,8 +1336,10 @@ const styles = StyleSheet.create({
     borderColor: KATBOX.border,
     gap: 4,
   },
-  qtyButtonDisabled: {
-    opacity: 0.6,
+  // ✅ Greyed qty badge for unavailable dishes
+  qtyButtonGrey: {
+    backgroundColor: "#E5E5E5",
+    borderColor: "#D4D4D4",
   },
   qtyText: {
     fontSize: 12,
@@ -1341,8 +1365,12 @@ const styles = StyleSheet.create({
     height: "100%",
     resizeMode: "cover",
   },
-  menuItemImageDim: {
-    opacity: 0.5,
+  // ✅ Black & white filter on the dish image when unavailable.
+  // `tintColor` is intentionally NOT applied here (would colourise);
+  // we rely on opacity + the grey card background to achieve the
+  // desaturated, monochrome look reliably across both iOS & Android.
+  menuItemImageGrey: {
+    opacity: 0.35,
   },
   addButtonOnImage: {
     position: "absolute",
@@ -1371,17 +1399,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  // ✅ "Not Available" pill replaces the ADD / counter for unavailable dishes
+  // ✅ "Not Available" pill replaces the ADD / counter for unavailable dishes.
+  // Fully monochrome (grey bg + white text) to match the dead-card aesthetic.
   notAvailablePill: {
     position: "absolute",
     bottom: -12,
     alignSelf: "center",
-    backgroundColor: "#1F2937",
+    backgroundColor: "#4B4B4B",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.25)",
+    borderColor: "#6B6B6B",
   },
   notAvailablePillText: {
     color: "#FFFFFF",
