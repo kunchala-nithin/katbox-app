@@ -15,14 +15,13 @@ import {
   Switch,
   Dimensions,
   Modal,
-  Pressable,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import api from '@/src/lib/api';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 
 interface BannerForm {
   titlePrimary: string;
@@ -37,8 +36,6 @@ interface BannerForm {
   displayOrder: string;
   ctaAction: string;
   imageUri: string | null;
-  // When editing, we keep the existing remote URL so the preview still shows
-  // an image even before the user picks a new one.
   existingImageUrl: string | null;
 }
 
@@ -77,16 +74,33 @@ const EMPTY_FORM: BannerForm = {
   existingImageUrl: null,
 };
 
+// Convert a BannerRecord → BannerForm (used for prefilling)
+const bannerToForm = (banner: BannerRecord): BannerForm => ({
+  titlePrimary: banner.titlePrimary || '',
+  titleSecondary: banner.titleSecondary || '',
+  tagline: banner.tagline || '',
+  badge: banner.badge || '',
+  price: banner.price || '',
+  unit: banner.unit || '',
+  isComingSoon: !!banner.isComingSoon,
+  isFullBanner: !!banner.isFullBanner,
+  isActive: banner.isActive !== false,
+  displayOrder: String(banner.displayOrder ?? 0),
+  ctaAction: banner.ctaAction || '',
+  imageUri: null,
+  existingImageUrl: banner.imageUrl || null,
+});
+
 const AddBannerScreen = () => {
   const router = useRouter();
 
-  // ─── Form state (used for both create and edit) ───
   const [form, setForm] = useState<BannerForm>(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isLoadingList, setIsLoadingList] = useState<boolean>(true);
+
   const [bannerList, setBannerList] = useState<BannerRecord[]>([]);
-  const [isFormVisible, setIsFormVisible] = useState<boolean>(false);
+  const [isLoadingList, setIsLoadingList] = useState<boolean>(true);
+
   const [deleteTarget, setDeleteTarget] = useState<BannerRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
@@ -94,38 +108,67 @@ const AddBannerScreen = () => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  // ────────────────────────────────────────────────────────────────────────
-  // Fetch all banners (including inactive) for the management list.
-  // ────────────────────────────────────────────────────────────────────────
-  const fetchAllBanners = useCallback(async (silent: boolean = false) => {
-    try {
-      if (!silent) setIsLoadingList(true);
-      const res = await api.get('/api/banners', { params: { includeInactive: 'true' } });
-      if (res.data && res.data.success && Array.isArray(res.data.banners)) {
-        setBannerList(res.data.banners);
-      } else {
+  // ─────────────────────────────────────────────────────────────────────────
+  // Fetch all banners
+  // On SUCCESS:
+  //   • If the list is NOT empty and we are NOT already editing, prefill the
+  //     form with the FIRST banner so the Live Preview shows it by default.
+  //   • Skips prefill if the user has already tapped a card / started editing
+  //     (i.e. `editingId` is set) so we never clobber their work.
+  // ─────────────────────────────────────────────────────────────────────────
+  const fetchAllBanners = useCallback(
+    async (silent: boolean = false) => {
+      try {
+        if (!silent) setIsLoadingList(true);
+        const res = await api.get('/api/banners', {
+          params: { includeInactive: 'true' },
+        });
+        if (
+          res.data &&
+          res.data.success &&
+          Array.isArray(res.data.banners) &&
+          res.data.banners.length > 0
+        ) {
+          setBannerList(res.data.banners);
+
+          // ✅ Default-select the 1st banner on initial open (only if the user
+          //    hasn't already started editing something else).
+          setEditingId((currentEditingId) => {
+            if (!currentEditingId) {
+              const first = res.data.banners[0] as BannerRecord;
+              setForm(bannerToForm(first));
+              return first._id;
+            }
+            return currentEditingId;
+          });
+        } else {
+          setBannerList([]);
+        }
+      } catch (err) {
+        console.log('fetchAllBanners error:', err);
         setBannerList([]);
+      } finally {
+        setIsLoadingList(false);
       }
-    } catch (err) {
-      console.log('fetchAllBanners error:', err);
-      setBannerList([]);
-    } finally {
-      setIsLoadingList(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   useEffect(() => {
     fetchAllBanners();
   }, [fetchAllBanners]);
 
-  // ────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
   // Image picker
-  // ────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
   const pickImage = async () => {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Permission needed', 'Please allow access to your photos to upload a banner image.');
+        Alert.alert(
+          'Permission needed',
+          'Please allow access to your photos to upload a banner image.'
+        );
         return;
       }
 
@@ -145,47 +188,63 @@ const AddBannerScreen = () => {
     }
   };
 
-  // ────────────────────────────────────────────────────────────────────────
-  // Open form for CREATE
-  // ────────────────────────────────────────────────────────────────────────
-  const openCreateForm = () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // Reset / Edit
+  // ─────────────────────────────────────────────────────────────────────────
+  const resetFormToCreate = () => {
     setEditingId(null);
     setForm({ ...EMPTY_FORM });
-    setIsFormVisible(true);
   };
 
-  // ────────────────────────────────────────────────────────────────────────
-  // Open form for EDIT (prefill all fields)
-  // ────────────────────────────────────────────────────────────────────────
-  const openEditForm = (banner: BannerRecord) => {
+  const handleEditBanner = (banner: BannerRecord) => {
     setEditingId(banner._id);
-    setForm({
-      titlePrimary: banner.titlePrimary || '',
-      titleSecondary: banner.titleSecondary || '',
-      tagline: banner.tagline || '',
-      badge: banner.badge || '',
-      price: banner.price || '',
-      unit: banner.unit || '',
-      isComingSoon: !!banner.isComingSoon,
-      isFullBanner: !!banner.isFullBanner,
-      isActive: banner.isActive !== false,
-      displayOrder: String(banner.displayOrder ?? 0),
-      ctaAction: banner.ctaAction || '',
-      imageUri: null,
-      existingImageUrl: banner.imageUrl || null,
-    });
-    setIsFormVisible(true);
+    setForm(bannerToForm(banner));
   };
 
-  const closeForm = () => {
-    setIsFormVisible(false);
-    setEditingId(null);
-    setForm({ ...EMPTY_FORM });
+  // ─────────────────────────────────────────────────────────────────────────
+  // Delete
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleDeleteRequest = (banner: BannerRecord) => {
+    setDeleteTarget(banner);
   };
 
-  // ────────────────────────────────────────────────────────────────────────
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      await api.delete(`/api/banners/${deleteTarget._id}`);
+
+      const wasEditingDeleted = editingId === deleteTarget._id;
+      const remaining = bannerList.filter((b) => b._id !== deleteTarget._id);
+
+      setBannerList(remaining);
+      setDeleteTarget(null);
+
+      // If we deleted the banner currently being edited:
+      //   • Fall back to the new first banner (so Live Preview stays filled)
+      //   • Or reset to create mode if nothing remains.
+      if (wasEditingDeleted) {
+        if (remaining.length > 0) {
+          setEditingId(remaining[0]._id);
+          setForm(bannerToForm(remaining[0]));
+        } else {
+          resetFormToCreate();
+        }
+      }
+
+      // Silent re-sync with the server to guarantee we're not out of date.
+      await fetchAllBanners(true);
+    } catch (err: any) {
+      console.log('Delete banner error:', err);
+      Alert.alert('Error', err?.response?.data?.message || 'Failed to delete banner.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Validation
-  // ────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
   const validate = (): boolean => {
     const hasImage = form.imageUri || form.existingImageUrl;
     if (!hasImage) {
@@ -194,24 +253,25 @@ const AddBannerScreen = () => {
     }
     if (!form.isFullBanner) {
       if (!form.titlePrimary.trim() || !form.titleSecondary.trim()) {
-        Alert.alert('Missing title', 'Please fill in both title lines (or enable Full Banner mode).');
+        Alert.alert(
+          'Missing title',
+          'Please fill in both title lines (or enable Full Banner mode).'
+        );
         return false;
       }
     }
     return true;
   };
 
-  // ────────────────────────────────────────────────────────────────────────
-  // Submit — create OR update
-  // ────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // Submit
+  // ─────────────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!validate()) return;
     setIsSubmitting(true);
     try {
       const data = new FormData();
 
-      // Only append image if a NEW one was picked. When editing without a new
-      // image, the backend keeps the existing one (safe replace).
       if (form.imageUri) {
         const uri = form.imageUri;
         const filename = uri.split('/').pop() || `banner_${Date.now()}.jpg`;
@@ -242,42 +302,36 @@ const AddBannerScreen = () => {
         });
       }
 
-      closeForm();
-      await fetchAllBanners(true);
+      Alert.alert(
+        'Success',
+        editingId ? 'Banner updated successfully.' : 'Banner added successfully.',
+        [
+          {
+            text: 'OK',
+            onPress: async () => {
+              // Refresh, then re-select the 1st banner so the Live Preview
+              // keeps showing something meaningful after submit.
+              await fetchAllBanners(true);
+              if (editingId === null && bannerList.length === 0) {
+                // Just created the very first banner → fetch will default-select it.
+              }
+            },
+          },
+        ]
+      );
     } catch (err: any) {
       console.log('Submit banner error:', err);
       Alert.alert(
         'Error',
-        err?.response?.data?.message || `Failed to ${editingId ? 'update' : 'add'} banner.`
+        err?.response?.data?.message ||
+          `Failed to ${editingId ? 'update' : 'add'} banner.`
       );
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // ────────────────────────────────────────────────────────────────────────
-  // Delete confirmation
-  // ────────────────────────────────────────────────────────────────────────
-  const handleDeleteRequest = (banner: BannerRecord) => {
-    setDeleteTarget(banner);
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!deleteTarget) return;
-    setIsDeleting(true);
-    try {
-      await api.delete(`/api/banners/${deleteTarget._id}`);
-      setDeleteTarget(null);
-      await fetchAllBanners(true);
-    } catch (err: any) {
-      console.log('Delete banner error:', err);
-      Alert.alert('Error', err?.response?.data?.message || 'Failed to delete banner.');
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
-  // Preview image source (new pick wins, else existing remote URL)
+  // Preview image source — new pick wins, otherwise existing remote URL
   const previewImageSource =
     form.imageUri != null
       ? { uri: form.imageUri }
@@ -294,10 +348,10 @@ const AddBannerScreen = () => {
         <TouchableOpacity style={styles.headerBackBtn} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={22} color="#F9FAFB" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Manage Banners</Text>
-        <TouchableOpacity style={styles.headerAddBtn} onPress={openCreateForm}>
-          <Ionicons name="add" size={22} color="#F9FAFB" />
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>
+          {editingId ? 'Edit Banner' : 'Add New Banner'}
+        </Text>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView
@@ -305,434 +359,450 @@ const AddBannerScreen = () => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* ─── Management list header ─── */}
-        <View style={styles.listHeaderRow}>
+        {/* ═══════════════════════════════════════════════════════════════════
+            LIVE PREVIEW section
+            ─────────────────────────────────────────────────────────────────
+            TOP:  A single live preview card that mirrors the CURRENT FORM
+                  state (1:1 with Home.tsx banner look) — always up-to-date
+                  as you type, toggle options, or pick a new image.
+            BELOW: A horizontal scroll strip of every existing banner you can
+                  tap to load into the editor + a "+ Add New Banner" card.
+            ═══════════════════════════════════════════════════════════════════ */}
+        <View style={styles.previewHeaderRow}>
+          <Text style={styles.sectionLabel}>LIVE PREVIEW</Text>
+          {editingId && (
+            <View style={styles.editingPill}>
+              <View style={styles.editingPillDot} />
+              <Text style={styles.editingPillText}>Editing</Text>
+            </View>
+          )}
+        </View>
+
+        {/* ─── CURRENT FORM LIVE PREVIEW ─── */}
+        <View style={styles.previewWrap}>
+          {form.isFullBanner ? (
+            <View style={styles.bannerFullSlideCard}>
+              {previewImageSource ? (
+                <Image
+                  source={previewImageSource}
+                  style={styles.bannerFullImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.previewPlaceholder}>
+                  <Ionicons name="image-outline" size={28} color="#4ADE80" />
+                  <Text style={styles.previewPlaceholderText}>Full Image Banner</Text>
+                </View>
+              )}
+            </View>
+          ) : (
+            <View style={styles.bannerSlideCard}>
+              <View style={styles.bannerLeftSection}>
+                <View
+                  style={[
+                    styles.mealBadgePill,
+                    form.isComingSoon && styles.comingSoonBadgePill,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.badgeGreenDot,
+                      form.isComingSoon && styles.comingSoonBadgeDot,
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.mealBadgeText,
+                      form.isComingSoon && styles.comingSoonBadgeText,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {form.badge || 'BADGE'}
+                  </Text>
+                </View>
+
+                <Text style={styles.bannerTitlePrimary} numberOfLines={1}>
+                  {form.titlePrimary || 'Title Line 1'}
+                </Text>
+                <Text
+                  style={[
+                    styles.bannerTitleSecondary,
+                    form.isComingSoon && styles.comingSoonTitleSecondary,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {form.titleSecondary || 'Title Line 2'}
+                </Text>
+                <Text style={styles.bannerSubtitle} numberOfLines={2}>
+                  {form.tagline || 'Tagline goes here...'}
+                </Text>
+
+                {form.isComingSoon ? (
+                  <View style={styles.bannerNotifyBtn}>
+                    <MaterialCommunityIcons
+                      name="clock-fast"
+                      size={14}
+                      color="#FBBF24"
+                      style={{ marginRight: 5 }}
+                    />
+                    <Text style={styles.bannerNotifyBtnText}>Coming Soon</Text>
+                  </View>
+                ) : (
+                  <View style={styles.bannerExploreBtn}>
+                    <Text style={styles.bannerExploreBtnText}>Explore Plans</Text>
+                    <Feather
+                      name="arrow-right"
+                      size={13}
+                      color="#111813"
+                      style={{ marginLeft: 6 }}
+                    />
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.bannerRightSection}>
+                {previewImageSource ? (
+                  <Image
+                    source={previewImageSource}
+                    style={styles.bannerFoodImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.previewPlaceholder}>
+                    <Ionicons name="image-outline" size={24} color="#4ADE80" />
+                  </View>
+                )}
+
+                {form.isComingSoon ? (
+                  <View style={styles.comingSoonTagBanner}>
+                    <Ionicons
+                      name="sparkles"
+                      size={11}
+                      color="#FBBF24"
+                      style={{ marginRight: 4 }}
+                    />
+                    <Text style={styles.comingSoonTagText}>LAUNCHING SOON</Text>
+                  </View>
+                ) : (
+                  <View style={styles.startsAtBadge}>
+                    <Text style={styles.startsAtLabel}>STARTS AT</Text>
+                    <Text style={styles.startsAtPrice}>₹{form.price || '00'}</Text>
+                    <Text style={styles.startsAtDuration}>{form.unit || '/pack'}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* ─── EXISTING BANNERS STRIP (scrollable, tap to edit) ─── */}
+        <View style={styles.stripHeaderRow}>
           <Text style={styles.sectionLabel}>
-            ALL BANNERS ({bannerList.length})
+            YOUR BANNERS {bannerList.length > 0 ? `(${bannerList.length})` : ''}
           </Text>
-          <TouchableOpacity onPress={() => fetchAllBanners()} activeOpacity={0.7}>
-            <Feather name="refresh-cw" size={15} color="#52B788" />
+          <TouchableOpacity
+            onPress={() => fetchAllBanners()}
+            activeOpacity={0.7}
+            style={styles.refreshBtn}
+          >
+            <Feather name="refresh-cw" size={12} color="#52B788" />
+            <Text style={styles.refreshBtnText}>Refresh</Text>
           </TouchableOpacity>
         </View>
 
         {isLoadingList ? (
-          <View style={styles.listLoadingBox}>
-            <ActivityIndicator size="small" color="#15803D" />
-            <Text style={styles.listLoadingText}>Loading banners…</Text>
-          </View>
-        ) : bannerList.length === 0 ? (
-          <View style={styles.emptyListBox}>
-            <Ionicons name="images-outline" size={34} color="#4ADE80" />
-            <Text style={styles.emptyListTitle}>No banners yet</Text>
-            <Text style={styles.emptyListSubtitle}>
-              Tap the + button at the top right to add your first banner.
-            </Text>
+          <View style={styles.stripLoadingBox}>
+            <ActivityIndicator size="small" color="#4ADE80" />
+            <Text style={styles.stripLoadingText}>Loading banners…</Text>
           </View>
         ) : (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.cardListScroll}
+            contentContainerStyle={styles.stripScroll}
           >
-            {bannerList.map((banner) => (
-              <View key={banner._id} style={styles.manageCard}>
-                {/* ─── Top-right action icons ─── */}
-                <View style={styles.manageCardActionsRow} pointerEvents="box-none">
-                  <TouchableOpacity
-                    style={[styles.manageCardIconBtn, styles.manageCardEditBtn]}
-                    activeOpacity={0.85}
-                    onPress={() => openEditForm(banner)}
-                  >
-                    <Feather name="edit-2" size={13} color="#FFFFFF" />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.manageCardIconBtn, styles.manageCardDeleteBtn]}
-                    activeOpacity={0.85}
-                    onPress={() => handleDeleteRequest(banner)}
-                  >
-                    <Feather name="trash-2" size={13} color="#FFFFFF" />
-                  </TouchableOpacity>
-                </View>
+            {/* Existing banners — tap to load into editor */}
+            {bannerList.map((banner) => {
+              const isCurrentlyEditing = editingId === banner._id;
+              return (
+                <TouchableOpacity
+                  key={banner._id}
+                  style={[
+                    styles.stripCardWrap,
+                    isCurrentlyEditing && styles.stripCardWrapActive,
+                  ]}
+                  activeOpacity={0.92}
+                  onPress={() => handleEditBanner(banner)}
+                >
+                  {/* ✅ Delete icon only (top-right) */}
+                  <View style={styles.stripCardActionsRow} pointerEvents="box-none">
+                    <TouchableOpacity
+                      style={[styles.stripCardIconBtn, styles.stripCardDeleteBtn]}
+                      activeOpacity={0.85}
+                      onPress={() => handleDeleteRequest(banner)}
+                    >
+                      <Feather name="trash-2" size={13} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  </View>
 
-                {/* ─── Banner preview (mini version of Home banner) ─── */}
-                <View style={styles.manageCardPreview}>
-                  {banner.isFullBanner ? (
-                    <Image
-                      source={{ uri: banner.imageUrl }}
-                      style={styles.manageCardFullImage}
-                      resizeMode="cover"
-                    />
-                  ) : (
-                    <View style={styles.manageCardSplitRow}>
-                      <View style={styles.manageCardLeftCol}>
-                        {!!banner.badge && (
-                          <View
-                            style={[
-                              styles.manageBadgePill,
-                              banner.isComingSoon && styles.manageBadgePillSoon,
-                            ]}
-                          >
+                  {/* Mini banner preview */}
+                  <View style={styles.stripCardPreview}>
+                    {banner.isFullBanner ? (
+                      <Image
+                        source={{ uri: banner.imageUrl }}
+                        style={styles.stripCardFullImage}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.stripCardSplitRow}>
+                        <View style={styles.stripCardLeftCol}>
+                          {!!banner.badge && (
                             <View
                               style={[
-                                styles.manageBadgeDot,
-                                banner.isComingSoon && styles.manageBadgeDotSoon,
+                                styles.stripBadgePill,
+                                banner.isComingSoon && styles.stripBadgePillSoon,
                               ]}
-                            />
-                            <Text
-                              style={[
-                                styles.manageBadgeText,
-                                banner.isComingSoon && styles.manageBadgeTextSoon,
-                              ]}
-                              numberOfLines={1}
                             >
-                              {banner.badge}
-                            </Text>
-                          </View>
-                        )}
-                        <Text style={styles.manageTitlePrimary} numberOfLines={1}>
-                          {banner.titlePrimary}
-                        </Text>
-                        <Text
-                          style={[
-                            styles.manageTitleSecondary,
-                            banner.isComingSoon && styles.manageTitleSecondarySoon,
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {banner.titleSecondary}
-                        </Text>
+                              <View
+                                style={[
+                                  styles.stripBadgeDot,
+                                  banner.isComingSoon && styles.stripBadgeDotSoon,
+                                ]}
+                              />
+                              <Text
+                                style={[
+                                  styles.stripBadgeText,
+                                  banner.isComingSoon && styles.stripBadgeTextSoon,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {banner.badge}
+                              </Text>
+                            </View>
+                          )}
+                          <Text style={styles.stripTitlePrimary} numberOfLines={1}>
+                            {banner.titlePrimary}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.stripTitleSecondary,
+                              banner.isComingSoon && styles.stripTitleSecondarySoon,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {banner.titleSecondary}
+                          </Text>
+                        </View>
+                        <View style={styles.stripCardRightCol}>
+                          <Image
+                            source={{ uri: banner.imageUrl }}
+                            style={styles.stripCardFoodImage}
+                            resizeMode="cover"
+                          />
+                          {!banner.isComingSoon && !!banner.price && (
+                            <View style={styles.stripPricePill}>
+                              <Text style={styles.stripPriceText}>₹{banner.price}</Text>
+                            </View>
+                          )}
+                        </View>
                       </View>
-                      <View style={styles.manageCardRightCol}>
-                        <Image
-                          source={{ uri: banner.imageUrl }}
-                          style={styles.manageCardFoodImage}
-                          resizeMode="cover"
-                        />
-                        {!banner.isComingSoon && !!banner.price && (
-                          <View style={styles.managePricePill}>
-                            <Text style={styles.managePriceText}>₹{banner.price}</Text>
-                          </View>
-                        )}
-                      </View>
-                    </View>
-                  )}
-                </View>
+                    )}
+                  </View>
 
-                {/* ─── Meta row ─── */}
-                <View style={styles.manageCardMetaRow}>
-                  <View style={styles.manageCardMetaLeft}>
-                    <Text style={styles.manageCardOrderText}>
-                      Order #{banner.displayOrder ?? 0}
-                    </Text>
+                  {/* Meta footer */}
+                  <View style={styles.stripCardMetaRow}>
                     <View
                       style={[
-                        styles.manageCardStatusDot,
-                        banner.isActive ? styles.manageCardStatusDotActive : styles.manageCardStatusDotInactive,
+                        styles.stripCardStatusDot,
+                        banner.isActive
+                          ? styles.stripCardStatusDotActive
+                          : styles.stripCardStatusDotInactive,
                       ]}
                     />
-                    <Text style={styles.manageCardStatusText}>
-                      {banner.isActive ? 'Active' : 'Inactive'}
+                    <Text style={styles.stripCardStatusText}>
+                      {banner.isActive ? 'Active' : 'Hidden'}
+                    </Text>
+                    <View style={styles.stripCardMetaDivider} />
+                    <Text style={styles.stripCardOrderText}>
+                      #{banner.displayOrder ?? 0}
                     </Text>
                     {banner.isComingSoon && (
                       <>
-                        <View style={styles.manageCardMetaDivider} />
-                        <Text style={styles.manageCardSoonText}>Coming Soon</Text>
+                        <View style={styles.stripCardMetaDivider} />
+                        <Text style={styles.stripCardSoonText}>Coming Soon</Text>
                       </>
                     )}
                   </View>
-                </View>
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* + Add New Banner card (always last) */}
+            <TouchableOpacity
+              style={styles.addNewCard}
+              activeOpacity={0.85}
+              onPress={resetFormToCreate}
+            >
+              <View style={styles.addNewIconCircle}>
+                <Ionicons name="add" size={24} color="#4ADE80" />
               </View>
-            ))}
+              <Text style={styles.addNewTitle}>Add New Banner</Text>
+              <Text style={styles.addNewSubtitle}>Tap to fill the form below</Text>
+            </TouchableOpacity>
           </ScrollView>
+        )}
+
+        {/* ─── Image Picker ─── */}
+        <Text style={styles.sectionLabel}>
+          BANNER IMAGE {!form.existingImageUrl ? '*' : ''}
+        </Text>
+        <TouchableOpacity style={styles.imagePicker} activeOpacity={0.85} onPress={pickImage}>
+          {previewImageSource ? (
+            <Image
+              source={previewImageSource}
+              style={styles.imagePickerPreview}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.imagePickerEmpty}>
+              <Ionicons name="cloud-upload-outline" size={30} color="#15803D" />
+              <Text style={styles.imagePickerEmptyText}>Tap to upload image</Text>
+              <Text style={styles.imagePickerEmptySub}>
+                Recommended 1200×800 · auto-compressed
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        {editingId && form.existingImageUrl && !form.imageUri && (
+          <Text style={styles.keepImageHint}>
+            Current image is kept. Pick a new one to replace it.
+          </Text>
+        )}
+
+        {/* ─── Inputs ─── */}
+        <Text style={styles.sectionLabel}>BANNER DETAILS</Text>
+
+        <InputField
+          label="Title Line 1"
+          placeholder="e.g. Festive Feasts,"
+          value={form.titlePrimary}
+          onChangeText={(t) => updateField('titlePrimary', t)}
+        />
+        <InputField
+          label="Title Line 2"
+          placeholder="e.g. Served with Love"
+          value={form.titleSecondary}
+          onChangeText={(t) => updateField('titleSecondary', t)}
+        />
+        <InputField
+          label="Tagline"
+          placeholder="e.g. Let Bappa bless your celebrations with authentic catering spreads made fresh."
+          value={form.tagline}
+          onChangeText={(t) => updateField('tagline', t)}
+          multiline
+        />
+        <InputField
+          label="Badge"
+          placeholder="e.g. CATERING SERVICE"
+          value={form.badge}
+          onChangeText={(t) => updateField('badge', t)}
+        />
+
+        <View style={styles.rowTwoCol}>
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <InputField
+              label="Price"
+              placeholder="e.g. 129"
+              value={form.price}
+              onChangeText={(t) => updateField('price', t)}
+              keyboardType="numeric"
+            />
+          </View>
+          <View style={{ flex: 1, marginLeft: 8 }}>
+            <InputField
+              label="Unit"
+              placeholder="e.g. /platter"
+              value={form.unit}
+              onChangeText={(t) => updateField('unit', t)}
+            />
+          </View>
+        </View>
+
+        <InputField
+          label="CTA Action (optional)"
+          placeholder="e.g. Catering, MealBox, QuickBites, Pickles"
+          value={form.ctaAction}
+          onChangeText={(t) => updateField('ctaAction', t)}
+        />
+
+        <InputField
+          label="Display Order"
+          placeholder="e.g. 1"
+          value={form.displayOrder}
+          onChangeText={(t) => updateField('displayOrder', t)}
+          keyboardType="numeric"
+        />
+
+        {/* ─── Toggles ─── */}
+        <Text style={styles.sectionLabel}>OPTIONS</Text>
+        <ToggleRow
+          label="Full Image Banner"
+          subtitle="Render as a single full-bleed image (no text overlay)"
+          value={form.isFullBanner}
+          onValueChange={(v) => updateField('isFullBanner', v)}
+        />
+        <ToggleRow
+          label="Coming Soon"
+          subtitle="Show a 'Coming Soon' badge instead of an Explore button"
+          value={form.isComingSoon}
+          onValueChange={(v) => updateField('isComingSoon', v)}
+        />
+        <ToggleRow
+          label="Active"
+          subtitle="Show this banner on the Home screen"
+          value={form.isActive}
+          onValueChange={(v) => updateField('isActive', v)}
+        />
+
+        {/* ─── Submit ─── */}
+        <TouchableOpacity
+          style={[styles.submitBtn, isSubmitting && { opacity: 0.7 }]}
+          activeOpacity={0.88}
+          onPress={handleSubmit}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <>
+              <Text style={styles.submitBtnText}>
+                {editingId ? 'Update Banner' : 'Publish Banner'}
+              </Text>
+              <Feather
+                name={editingId ? 'save' : 'check-circle'}
+                size={17}
+                color="#FFFFFF"
+                style={{ marginLeft: 8 }}
+              />
+            </>
+          )}
+        </TouchableOpacity>
+
+        {editingId && (
+          <TouchableOpacity
+            style={styles.resetBtn}
+            activeOpacity={0.75}
+            onPress={resetFormToCreate}
+            disabled={isSubmitting}
+          >
+            <Feather name="x-circle" size={14} color="#94A3B8" />
+            <Text style={styles.resetBtnText}>Cancel editing and start fresh</Text>
+          </TouchableOpacity>
         )}
 
         <View style={{ height: 40 }} />
       </ScrollView>
-
-      {/* ─── FORM MODAL (Create / Edit) ─── */}
-      <Modal
-        visible={isFormVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={closeForm}
-      >
-        <View style={styles.formModalBackdrop}>
-          <View style={styles.formModalCard}>
-            {/* Modal header */}
-            <View style={styles.formModalHeader}>
-              <Text style={styles.formModalTitle}>
-                {editingId ? 'Edit Banner' : 'Add New Banner'}
-              </Text>
-              <TouchableOpacity style={styles.formModalCloseBtn} onPress={closeForm}>
-                <Ionicons name="close" size={20} color="#94A3B8" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={styles.formModalScroll}
-              contentContainerStyle={styles.formModalScrollContent}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-            >
-              {/* ─── Live Preview ─── */}
-              <Text style={styles.sectionLabel}>LIVE PREVIEW</Text>
-              <View style={styles.previewWrap}>
-                {form.isFullBanner ? (
-                  <View style={styles.bannerFullSlideCard}>
-                    {previewImageSource ? (
-                      <Image
-                        source={previewImageSource}
-                        style={styles.bannerFullImage}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <View style={styles.previewPlaceholder}>
-                        <Ionicons name="image-outline" size={28} color="#4ADE80" />
-                        <Text style={styles.previewPlaceholderText}>Full Image Banner</Text>
-                      </View>
-                    )}
-                  </View>
-                ) : (
-                  <View style={styles.bannerSlideCard}>
-                    <View style={styles.bannerLeftSection}>
-                      <View
-                        style={[
-                          styles.mealBadgePill,
-                          form.isComingSoon && styles.comingSoonBadgePill,
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.badgeGreenDot,
-                            form.isComingSoon && styles.comingSoonBadgeDot,
-                          ]}
-                        />
-                        <Text
-                          style={[
-                            styles.mealBadgeText,
-                            form.isComingSoon && styles.comingSoonBadgeText,
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {form.badge || 'BADGE'}
-                        </Text>
-                      </View>
-
-                      <Text style={styles.bannerTitlePrimary} numberOfLines={1}>
-                        {form.titlePrimary || 'Title Line 1'}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.bannerTitleSecondary,
-                          form.isComingSoon && styles.comingSoonTitleSecondary,
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {form.titleSecondary || 'Title Line 2'}
-                      </Text>
-                      <Text style={styles.bannerSubtitle} numberOfLines={2}>
-                        {form.tagline || 'Tagline goes here...'}
-                      </Text>
-
-                      {form.isComingSoon ? (
-                        <View style={styles.bannerNotifyBtn}>
-                          <MaterialCommunityIcons
-                            name="clock-fast"
-                            size={14}
-                            color="#FBBF24"
-                            style={{ marginRight: 5 }}
-                          />
-                          <Text style={styles.bannerNotifyBtnText}>Coming Soon</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.bannerExploreBtn}>
-                          <Text style={styles.bannerExploreBtnText}>Explore Plans</Text>
-                          <Feather
-                            name="arrow-right"
-                            size={13}
-                            color="#111813"
-                            style={{ marginLeft: 6 }}
-                          />
-                        </View>
-                      )}
-                    </View>
-
-                    <View style={styles.bannerRightSection}>
-                      {previewImageSource ? (
-                        <Image
-                          source={previewImageSource}
-                          style={styles.bannerFoodImage}
-                          resizeMode="cover"
-                        />
-                      ) : (
-                        <View style={styles.previewPlaceholder}>
-                          <Ionicons name="image-outline" size={24} color="#4ADE80" />
-                        </View>
-                      )}
-
-                      {form.isComingSoon ? (
-                        <View style={styles.comingSoonTagBanner}>
-                          <Ionicons name="sparkles" size={11} color="#FBBF24" style={{ marginRight: 4 }} />
-                          <Text style={styles.comingSoonTagText}>LAUNCHING SOON</Text>
-                        </View>
-                      ) : (
-                        <View style={styles.startsAtBadge}>
-                          <Text style={styles.startsAtLabel}>STARTS AT</Text>
-                          <Text style={styles.startsAtPrice}>₹{form.price || '00'}</Text>
-                          <Text style={styles.startsAtDuration}>{form.unit || '/pack'}</Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                )}
-              </View>
-
-              {/* ─── Image picker ─── */}
-              <Text style={styles.sectionLabel}>
-                BANNER IMAGE {!form.existingImageUrl ? '*' : ''}
-              </Text>
-              <TouchableOpacity
-                style={styles.imagePicker}
-                activeOpacity={0.85}
-                onPress={pickImage}
-              >
-                {previewImageSource ? (
-                  <Image
-                    source={previewImageSource}
-                    style={styles.imagePickerPreview}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={styles.imagePickerEmpty}>
-                    <Ionicons name="cloud-upload-outline" size={30} color="#15803D" />
-                    <Text style={styles.imagePickerEmptyText}>Tap to upload image</Text>
-                    <Text style={styles.imagePickerEmptySub}>
-                      Recommended 1200×800 · auto-compressed
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-
-              {editingId && form.existingImageUrl && !form.imageUri && (
-                <Text style={styles.imageKeepHint}>
-                  Current image kept. Pick a new one to replace it (old one is auto-deleted from Cloudinary).
-                </Text>
-              )}
-
-              {/* ─── Detail inputs ─── */}
-              <Text style={styles.sectionLabel}>BANNER DETAILS</Text>
-
-              <InputField
-                label="Title Line 1"
-                placeholder="e.g. Festive Feasts,"
-                value={form.titlePrimary}
-                onChangeText={(t) => updateField('titlePrimary', t)}
-              />
-              <InputField
-                label="Title Line 2"
-                placeholder="e.g. Served with Love"
-                value={form.titleSecondary}
-                onChangeText={(t) => updateField('titleSecondary', t)}
-              />
-              <InputField
-                label="Tagline"
-                placeholder="e.g. Let Bappa bless your celebrations with authentic catering spreads made fresh."
-                value={form.tagline}
-                onChangeText={(t) => updateField('tagline', t)}
-                multiline
-              />
-              <InputField
-                label="Badge"
-                placeholder="e.g. CATERING SERVICE"
-                value={form.badge}
-                onChangeText={(t) => updateField('badge', t)}
-              />
-
-              <View style={styles.rowTwoCol}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <InputField
-                    label="Price"
-                    placeholder="e.g. 129"
-                    value={form.price}
-                    onChangeText={(t) => updateField('price', t)}
-                    keyboardType="numeric"
-                  />
-                </View>
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                  <InputField
-                    label="Unit"
-                    placeholder="e.g. /platter"
-                    value={form.unit}
-                    onChangeText={(t) => updateField('unit', t)}
-                  />
-                </View>
-              </View>
-
-              <InputField
-                label="CTA Action (optional)"
-                placeholder="e.g. Catering, MealBox, QuickBites, Pickles"
-                value={form.ctaAction}
-                onChangeText={(t) => updateField('ctaAction', t)}
-              />
-
-              <InputField
-                label="Display Order"
-                placeholder="e.g. 1"
-                value={form.displayOrder}
-                onChangeText={(t) => updateField('displayOrder', t)}
-                keyboardType="numeric"
-              />
-
-              {/* ─── Toggles ─── */}
-              <Text style={styles.sectionLabel}>OPTIONS</Text>
-              <ToggleRow
-                label="Full Image Banner"
-                subtitle="Render as a single full-bleed image (no text overlay)"
-                value={form.isFullBanner}
-                onValueChange={(v) => updateField('isFullBanner', v)}
-              />
-              <ToggleRow
-                label="Coming Soon"
-                subtitle="Show a 'Coming Soon' badge instead of an Explore button"
-                value={form.isComingSoon}
-                onValueChange={(v) => updateField('isComingSoon', v)}
-              />
-              <ToggleRow
-                label="Active"
-                subtitle="Show this banner on the Home screen"
-                value={form.isActive}
-                onValueChange={(v) => updateField('isActive', v)}
-              />
-
-              {/* ─── Submit ─── */}
-              <TouchableOpacity
-                style={[styles.submitBtn, isSubmitting && { opacity: 0.7 }]}
-                activeOpacity={0.88}
-                onPress={handleSubmit}
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Text style={styles.submitBtnText}>
-                      {editingId ? 'Update Banner' : 'Publish Banner'}
-                    </Text>
-                    <Feather
-                      name={editingId ? 'save' : 'check-circle'}
-                      size={17}
-                      color="#FFFFFF"
-                      style={{ marginLeft: 8 }}
-                    />
-                  </>
-                )}
-              </TouchableOpacity>
-
-              <View style={{ height: 30 }} />
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
 
       {/* ─── DELETE CONFIRMATION MODAL ─── */}
       <Modal
@@ -746,10 +816,10 @@ const AddBannerScreen = () => {
             <View style={styles.deleteIconWrap}>
               <Feather name="trash-2" size={26} color="#DC2626" />
             </View>
-            <Text style={styles.deleteModalTitle}>Delete Banner?</Text>
+            <Text style={styles.deleteModalTitle}>Delete this banner?</Text>
             <Text style={styles.deleteModalDescription}>
-              Are you sure you want to delete this banner? This action cannot be undone and the
-              image will be removed from Cloudinary.
+              Are you sure you want to delete this banner? This action cannot be
+              undone and the image will be removed from Cloudinary.
             </Text>
 
             {deleteTarget && (
@@ -804,7 +874,7 @@ const AddBannerScreen = () => {
   );
 };
 
-// ─── Reusable input ───
+// ─── Small reusable input ───
 const InputField = ({
   label,
   placeholder,
@@ -863,6 +933,10 @@ export default AddBannerScreen;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Styles
+// • Banner preview styles mirror Home.tsx 1:1 — unchanged.
+// • Input, toggle, submit, image picker — unchanged.
+// • Strip card wrapper, delete icon button, active-state ring, mini-card,
+//   "+ Add New" card, delete modal, editing pill — all preserved.
 // ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#111813' },
@@ -881,136 +955,142 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#26342A',
   },
   headerTitle: { fontSize: 17, fontWeight: '800', color: '#F9FAFB' },
-  headerAddBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#15803D', alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: '#15803D',
-    shadowColor: '#15803D', shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35, shadowRadius: 6, elevation: 4,
-  },
 
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingBottom: 60 },
 
-  listHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 8,
-  },
   sectionLabel: {
     fontSize: 10.5, fontWeight: '800', color: '#52B788',
     letterSpacing: 1, marginTop: 20, marginBottom: 10,
   },
 
-  listLoadingBox: {
+  previewHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  editingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(74, 222, 128, 0.14)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(74, 222, 128, 0.4)',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  editingPillDot: {
+    width: 5, height: 5, borderRadius: 2.5,
+    backgroundColor: '#4ADE80', marginRight: 5,
+  },
+  editingPillText: {
+    fontSize: 9.5, color: '#86EFAC', fontWeight: '800', letterSpacing: 0.3,
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Existing banners strip
+  // ─────────────────────────────────────────────────────────────────────────
+  stripHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 22,
+  },
+  refreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#1A241D',
+    borderWidth: 1,
+    borderColor: '#26342A',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  refreshBtnText: {
+    fontSize: 10.5,
+    color: '#86EFAC',
+    fontWeight: '700',
+    marginLeft: 5,
+  },
+  stripLoadingBox: {
     paddingVertical: 30,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
-    gap: 8,
-  },
-  listLoadingText: { color: '#86EFAC', fontSize: 12.5, fontWeight: '600' },
-
-  emptyListBox: {
-    paddingVertical: 34,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: 10,
     backgroundColor: '#132117',
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#223628',
-    borderStyle: 'dashed',
   },
-  emptyListTitle: {
-    fontSize: 14, fontWeight: '800', color: '#F9FAFB', marginTop: 10,
-  },
-  emptyListSubtitle: {
-    fontSize: 11.5, color: '#94A3B8', textAlign: 'center',
-    marginTop: 4, lineHeight: 16,
-  },
-
-  // ─── Scrollable management cards ───
-  cardListScroll: {
+  stripLoadingText: { color: '#86EFAC', fontSize: 12.5, fontWeight: '600' },
+  stripScroll: {
     paddingVertical: 4,
     paddingRight: 4,
   },
-  manageCard: {
-    width: 250,
-    backgroundColor: '#132117',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#223628',
+
+  stripCardWrap: {
+    width: 240,
+    borderRadius: 16,
     marginRight: 12,
-    padding: 10,
     position: 'relative',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 10,
-    elevation: 6,
   },
-  // Top-right edit + delete icons
-  manageCardActionsRow: {
+  stripCardWrapActive: {
+    borderWidth: 2,
+    borderColor: '#4ADE80',
+    borderRadius: 18,
+    padding: 0,
+    shadowColor: '#4ADE80',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+
+  stripCardActionsRow: {
     position: 'absolute',
-    top: 14,
-    right: 14,
+    top: 8,
+    right: 8,
     flexDirection: 'row',
     zIndex: 10,
   },
-  manageCardIconBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
+  stripCardIconBtn: {
+    width: 28, height: 28, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 5,
   },
-  manageCardEditBtn: {
-    backgroundColor: '#2563EB',
-    marginRight: 6,
-  },
-  manageCardDeleteBtn: {
+  stripCardDeleteBtn: {
     backgroundColor: '#DC2626',
   },
 
-  manageCardPreview: {
+  stripCardPreview: {
     width: '100%',
-    height: 130,
+    height: 118,
     borderRadius: 14,
     overflow: 'hidden',
     backgroundColor: '#0F1A13',
     borderWidth: 1,
     borderColor: '#1E2E23',
   },
-  manageCardFullImage: {
-    width: '100%',
-    height: '100%',
-  },
-  manageCardSplitRow: {
-    flexDirection: 'row',
-    flex: 1,
-  },
-  manageCardLeftCol: {
+  stripCardFullImage: { width: '100%', height: '100%' },
+  stripCardSplitRow: { flexDirection: 'row', flex: 1 },
+  stripCardLeftCol: {
     flex: 1.15,
     paddingHorizontal: 10,
     paddingVertical: 10,
     justifyContent: 'center',
   },
-  manageCardRightCol: {
-    flex: 1,
-    position: 'relative',
-  },
-  manageCardFoodImage: {
-    width: '100%',
-    height: '100%',
-  },
-  manageBadgePill: {
+  stripCardRightCol: { flex: 1, position: 'relative' },
+  stripCardFoodImage: { width: '100%', height: '100%' },
+  stripBadgePill: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(34, 197, 94, 0.12)',
@@ -1023,28 +1103,27 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(74, 222, 128, 0.4)',
     maxWidth: '100%',
   },
-  manageBadgePillSoon: {
+  stripBadgePillSoon: {
     backgroundColor: 'rgba(251, 191, 36, 0.14)',
     borderColor: 'rgba(251, 191, 36, 0.45)',
   },
-  manageBadgeDot: {
+  stripBadgeDot: {
     width: 4, height: 4, borderRadius: 2,
     backgroundColor: '#4ADE80', marginRight: 4,
   },
-  manageBadgeDotSoon: { backgroundColor: '#FBBF24' },
-  manageBadgeText: {
+  stripBadgeDotSoon: { backgroundColor: '#FBBF24' },
+  stripBadgeText: {
     color: '#86EFAC', fontSize: 7.5, fontWeight: '800', letterSpacing: 0.3,
   },
-  manageBadgeTextSoon: { color: '#FDE68A' },
-  manageTitlePrimary: {
+  stripBadgeTextSoon: { color: '#FDE68A' },
+  stripTitlePrimary: {
     fontSize: 12.5, fontWeight: '900', color: '#FFFFFF', lineHeight: 15,
   },
-  manageTitleSecondary: {
+  stripTitleSecondary: {
     fontSize: 12.5, fontWeight: '900', color: '#4ADE80', lineHeight: 15,
   },
-  manageTitleSecondarySoon: { color: '#FBBF24' },
-
-  managePricePill: {
+  stripTitleSecondarySoon: { color: '#FBBF24' },
+  stripPricePill: {
     position: 'absolute',
     bottom: 6,
     right: 6,
@@ -1055,38 +1134,71 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  managePriceText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900' },
+  stripPriceText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900' },
 
-  manageCardMetaRow: {
-    marginTop: 10,
+  stripCardMetaRow: {
+    marginTop: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 10,
+    backgroundColor: '#132117',
+    borderWidth: 1,
+    borderColor: '#223628',
   },
-  manageCardMetaLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  stripCardStatusDot: {
+    width: 6, height: 6, borderRadius: 3, marginRight: 5,
   },
-  manageCardOrderText: {
-    fontSize: 10.5, color: '#94A3B8', fontWeight: '700',
+  stripCardStatusDotActive: { backgroundColor: '#4ADE80' },
+  stripCardStatusDotInactive: { backgroundColor: '#64748B' },
+  stripCardStatusText: {
+    fontSize: 10, color: '#94A3B8', fontWeight: '700',
   },
-  manageCardStatusDot: {
-    width: 6, height: 6, borderRadius: 3, marginLeft: 8, marginRight: 4,
-  },
-  manageCardStatusDotActive: { backgroundColor: '#4ADE80' },
-  manageCardStatusDotInactive: { backgroundColor: '#64748B' },
-  manageCardStatusText: {
-    fontSize: 10.5, color: '#94A3B8', fontWeight: '700',
-  },
-  manageCardMetaDivider: {
-    width: 1, height: 10, backgroundColor: '#334155',
+  stripCardMetaDivider: {
+    width: 1, height: 9, backgroundColor: '#334155',
     marginHorizontal: 6,
   },
-  manageCardSoonText: {
-    fontSize: 10.5, color: '#FBBF24', fontWeight: '800',
+  stripCardOrderText: {
+    fontSize: 10, color: '#94A3B8', fontWeight: '700',
+  },
+  stripCardSoonText: {
+    fontSize: 10, color: '#FBBF24', fontWeight: '800',
   },
 
-  // ─── Banner live preview styles (mirror Home.tsx) ───
+  addNewCard: {
+    width: 200,
+    height: 160,
+    paddingVertical: 18,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#132117',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#15803D',
+    borderStyle: 'dashed',
+    marginRight: 4,
+  },
+  addNewIconCircle: {
+    width: 46, height: 46, borderRadius: 23,
+    backgroundColor: 'rgba(74, 222, 128, 0.14)',
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 8,
+  },
+  addNewTitle: {
+    fontSize: 12.5, fontWeight: '800', color: '#F9FAFB',
+    textAlign: 'center',
+  },
+  addNewSubtitle: {
+    fontSize: 10, color: '#94A3B8',
+    marginTop: 3, textAlign: 'center', lineHeight: 13,
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Banner live preview styles (mirror Home.tsx) — UNCHANGED
+  // ─────────────────────────────────────────────────────────────────────────
   previewWrap: {
     borderRadius: 22, overflow: 'hidden',
     shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
@@ -1118,29 +1230,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(251, 191, 36, 0.14)',
     borderColor: 'rgba(251, 191, 36, 0.45)',
   },
-  badgeGreenDot: {
-    width: 5, height: 5, borderRadius: 2.5,
-    backgroundColor: '#4ADE80', marginRight: 5,
-  },
+  badgeGreenDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#4ADE80', marginRight: 5 },
   comingSoonBadgeDot: { backgroundColor: '#FBBF24' },
-  mealBadgeText: {
-    color: '#86EFAC', fontSize: 8.5, fontWeight: '800', letterSpacing: 0.4,
-  },
-  comingSoonBadgeText: {
-    color: '#FDE68A', fontSize: 8.5, fontWeight: '800', letterSpacing: 0.4,
-  },
-  bannerTitlePrimary: {
-    fontSize: 17.5, fontWeight: '900', color: '#FFFFFF',
-    lineHeight: 21, letterSpacing: -0.2,
-  },
-  bannerTitleSecondary: {
-    fontSize: 17.5, fontWeight: '900', color: '#4ADE80',
-    lineHeight: 21, letterSpacing: -0.2,
-  },
+  mealBadgeText: { color: '#86EFAC', fontSize: 8.5, fontWeight: '800', letterSpacing: 0.4 },
+  comingSoonBadgeText: { color: '#FDE68A', fontSize: 8.5, fontWeight: '800', letterSpacing: 0.4 },
+  bannerTitlePrimary: { fontSize: 17.5, fontWeight: '900', color: '#FFFFFF', lineHeight: 21, letterSpacing: -0.2 },
+  bannerTitleSecondary: { fontSize: 17.5, fontWeight: '900', color: '#4ADE80', lineHeight: 21, letterSpacing: -0.2 },
   comingSoonTitleSecondary: { color: '#FBBF24' },
-  bannerSubtitle: {
-    fontSize: 10, color: '#D1D5DB', marginTop: 4, lineHeight: 14,
-  },
+  bannerSubtitle: { fontSize: 10, color: '#D1D5DB', marginTop: 4, lineHeight: 14 },
   bannerExploreBtn: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#FFFFFF', paddingHorizontal: 13, paddingVertical: 6.5,
@@ -1187,15 +1284,16 @@ const styles = StyleSheet.create({
   imagePickerEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   imagePickerEmptyText: { color: '#D1D5DB', fontSize: 13, fontWeight: '700', marginTop: 8 },
   imagePickerEmptySub: { color: '#6B7280', fontSize: 10.5, marginTop: 3 },
-  imageKeepHint: {
-    fontSize: 10.5, color: '#94A3B8', marginTop: 8, lineHeight: 15, fontStyle: 'italic',
+  keepImageHint: {
+    fontSize: 10.5,
+    color: '#94A3B8',
+    marginTop: 8,
+    lineHeight: 15,
+    fontStyle: 'italic',
   },
 
   inputGroup: { marginBottom: 14 },
-  inputLabel: {
-    fontSize: 11.5, fontWeight: '700', color: '#9CA3AF',
-    marginBottom: 6, letterSpacing: 0.3,
-  },
+  inputLabel: { fontSize: 11.5, fontWeight: '700', color: '#9CA3AF', marginBottom: 6, letterSpacing: 0.3 },
   input: {
     backgroundColor: '#1A241D', borderRadius: 12,
     borderWidth: 1, borderColor: '#26342A',
@@ -1223,52 +1321,53 @@ const styles = StyleSheet.create({
   },
   submitBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: 0.2 },
 
-  // ─── Form modal ───
-  formModalBackdrop: {
-    flex: 1, backgroundColor: 'rgba(10, 18, 13, 0.85)',
-    justifyContent: 'flex-end',
+  resetBtn: {
+    marginTop: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
   },
-  formModalCard: {
-    backgroundColor: '#111813',
-    borderTopLeftRadius: 26, borderTopRightRadius: 26,
-    maxHeight: height * 0.94,
-    paddingTop: 14,
-    borderTopWidth: 1, borderColor: '#26342A',
+  resetBtnText: {
+    color: '#94A3B8',
+    fontSize: 12.5,
+    fontWeight: '700',
   },
-  formModalHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingBottom: 12,
-    borderBottomWidth: 1, borderBottomColor: '#1E2E23',
-  },
-  formModalTitle: { fontSize: 16.5, fontWeight: '800', color: '#F9FAFB' },
-  formModalCloseBtn: {
-    width: 34, height: 34, borderRadius: 17,
-    backgroundColor: '#1A241D', alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: '#26342A',
-  },
-  formModalScroll: { flex: 1 },
-  formModalScrollContent: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 40 },
 
-  // ─── Delete confirmation modal ───
+  // ─────────────────────────────────────────────────────────────────────────
+  // Delete confirmation modal
+  // ─────────────────────────────────────────────────────────────────────────
   deleteModalBackdrop: {
-    flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    justifyContent: 'center', alignItems: 'center',
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 24,
   },
   deleteModalCard: {
-    width: '100%', maxWidth: 380,
+    width: '100%',
+    maxWidth: 380,
     backgroundColor: '#0F1A13',
     borderRadius: 22,
-    paddingVertical: 22, paddingHorizontal: 20,
+    paddingVertical: 22,
+    paddingHorizontal: 20,
     alignItems: 'center',
-    borderWidth: 1, borderColor: '#26342A',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.5, shadowRadius: 20, elevation: 24,
+    borderWidth: 1,
+    borderColor: '#26342A',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 24,
   },
   deleteIconWrap: {
-    width: 62, height: 62, borderRadius: 31,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
     backgroundColor: 'rgba(220, 38, 38, 0.14)',
-    alignItems: 'center', justifyContent: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 12,
   },
   deleteModalTitle: {
@@ -1279,10 +1378,14 @@ const styles = StyleSheet.create({
     lineHeight: 18, marginTop: 8, marginBottom: 14,
   },
   deletePreviewRow: {
-    width: '100%', flexDirection: 'row', alignItems: 'center',
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#132117',
-    borderRadius: 12, padding: 8,
-    borderWidth: 1, borderColor: '#223628',
+    borderRadius: 12,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#223628',
     marginBottom: 16,
   },
   deletePreviewImg: {

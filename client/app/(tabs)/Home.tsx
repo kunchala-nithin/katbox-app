@@ -45,7 +45,7 @@ import {
 import AddressMapModal, {
   AddressMapConfirmPayload,
 } from '@/src/components/AddressMapModal';
-// ✅ NEW: single-source-of-truth for delivery location (survives back navigation)
+// ✅ single-source-of-truth for delivery location (survives back navigation)
 import { useDeliveryLocationStore } from '@/src/store/deliveryLocationStore';
 
 const { width, height } = Dimensions.get('window');
@@ -91,7 +91,7 @@ const STATIC_COMING_SOON_BANNER: BannerSlide = {
   ctaAction: '',
 };
 
-// ✅ UPDATED: Quick Bites (with "75 MIN" badge) inserted at position 5, View All moved to position 6
+// ✅ Quick Bites (with "75 MIN" badge) inserted at position 5, View All moved to position 6
 const CATEGORIES: CategoryItem[] = [
   { id: '1', name: 'Meal Boxes', icon: 'food-takeout-box-outline', type: 'mci', badge: 'HOT' },
   { id: '2', name: 'Catering', icon: 'silverware-fork-knife', type: 'mci' },
@@ -235,7 +235,7 @@ const HomeChefBannerCarousel = ({
 
 export default function HomeScreen() {
   const router = useRouter();
-  // ✅ NEW: Delivery location store (single source of truth for lat/lng)
+  // ✅ Delivery location store (single source of truth for lat/lng)
   const setDeliveryLocationInStore = useDeliveryLocationStore((s) => s.setDeliveryLocation);
   const hydrateDeliveryLocation = useDeliveryLocationStore((s) => s.hydrateDeliveryLocation);
   const [greeting, setGreeting] = useState<'Good Morning' | 'Good Afternoon' | 'Good Evening' | 'Welcome'>('Good Morning');
@@ -248,7 +248,7 @@ export default function HomeScreen() {
   const [chefsLoading, setChefsLoading] = useState<boolean>(true);
   const [expandedCuisines, setExpandedCuisines] = useState<{ [key: string]: boolean }>({});
 
-  // ─── ✅ Dynamic Banner States ───
+  // ─── Dynamic Banner States ───
   const [dynamicBanners, setDynamicBanners] = useState<BannerSlide[]>([]);
   const [bannersLoading, setBannersLoading] = useState<boolean>(true);
   const lastBannersFetchedAtRef = useRef<number>(0);
@@ -267,7 +267,7 @@ export default function HomeScreen() {
   const [isPermissionPopupVisible, setIsPermissionPopupVisible] = useState<boolean>(false);
   const [isRequestingPermission, setIsRequestingPermission] = useState<boolean>(false);
 
-  // ─── ✅ Notification Permission Prompt States ───
+  // ─── Notification Permission Prompt States ───
   const [isNotificationPopupVisible, setIsNotificationPopupVisible] = useState<boolean>(false);
   const [isRequestingNotification, setIsRequestingNotification] = useState<boolean>(false);
   const hasPromptedNotificationRef = useRef<boolean>(false);
@@ -286,7 +286,7 @@ export default function HomeScreen() {
   // ─── Global "data is refreshing" guard ───
   const isDataRefreshingRef = useRef<boolean>(false);
 
-  // ✅ PERF: Throttle refs — prevent duplicate network calls on rapid focus events
+  // ✅ PERF: Throttle refs
   const lastUserRefreshAtRef = useRef<number>(0);
   const lastChefsFetchedAtRef = useRef<number>(0);
   const hasFocusedOnceRef = useRef<boolean>(false);
@@ -297,7 +297,7 @@ export default function HomeScreen() {
   // Editing Address State
   const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
 
-  // ─── Map Modal Initial-Value States (fed into <AddressMapModal />) ───
+  // ─── Map Modal Initial-Value States ───
   const [isMapModalVisible, setIsMapModalVisible] = useState<boolean>(false);
   const [mapInitialCoords, setMapInitialCoords] = useState<{ latitude: number; longitude: number }>({
     latitude: 17.3850,
@@ -324,7 +324,6 @@ export default function HomeScreen() {
   const bannerScrollRef = useRef<ScrollView>(null);
   const mainScrollRef = useRef<ScrollView>(null);
   const caterersSectionRef = useRef<View>(null);
-  // ✅ ref for the horizontal Quick-Category scroller
   const categoryScrollRef = useRef<ScrollView>(null);
 
   // Helper: format display string from address object
@@ -336,11 +335,7 @@ export default function HomeScreen() {
     return addr.fullAddress || 'Select delivery location';
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // ✅ Push the active address into the global delivery-location store so
-  //    downstream screens (Checkout, Orders, Admin) can read lat/lng
-  //    without prop-drilling through 8 screens.
-  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ Push the active address into the global delivery-location store
   const syncActiveAddressToStore = async (addr: ActiveAddress | null | undefined) => {
     if (!addr || !addr.fullAddress) return;
     try {
@@ -387,15 +382,7 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ✅ fetchDynamicBanners
-  //    Fetches banners from the backend and maps them to BannerSlide.
-  //    Sorts by displayOrder ascending, then appends the ONE static
-  //    Coming Soon banner at the very LAST position.
-  //
-  //    ✅ NO FALLBACK STATIC BANNERS ANYMORE.
-  //    If the API returns zero banners, the Home carousel will render ONLY
-  //    the static Coming Soon banner at the last position (so the carousel
-  //    is never empty).
+  // fetchDynamicBanners
   // ─────────────────────────────────────────────────────────────────────────
   const fetchDynamicBanners = async (silent: boolean = false, force: boolean = false) => {
     const now = Date.now();
@@ -408,7 +395,6 @@ export default function HomeScreen() {
       }
       const res = await api.get('/api/banners');
       if (res.data && res.data.success && Array.isArray(res.data.banners) && res.data.banners.length > 0) {
-        // 1) Map API records → BannerSlide
         const mapped: BannerSlide[] = res.data.banners
           .map((b: any) => ({
             id: b._id,
@@ -422,29 +408,21 @@ export default function HomeScreen() {
             isComingSoon: !!b.isComingSoon,
             isFullBanner: !!b.isFullBanner,
             ctaAction: b.ctaAction || '',
-            // Keep raw order for sorting
             __displayOrder: Number(b.displayOrder) || 0,
           }))
-          // 2) Sort by displayOrder ascending (backend already does this, but
-          //    we sort again defensively in case order changes client-side)
           .sort((a: any, b: any) => a.__displayOrder - b.__displayOrder);
 
-        // 3) Strip the sort-only field
         const cleaned: BannerSlide[] = mapped.map(({ __displayOrder, ...rest }: any) => rest);
-
-        // 4) ✅ Append the ONE static Coming Soon banner at the LAST position
         const withStaticLast = [...cleaned, STATIC_COMING_SOON_BANNER];
 
         setDynamicBanners(withStaticLast);
         lastBannersFetchedAtRef.current = Date.now();
       } else {
-        // No banners in DB yet → show ONLY the static Coming Soon banner
         setDynamicBanners([STATIC_COMING_SOON_BANNER]);
       }
     } catch (err) {
       console.log('Home fetch dynamic banners error:', err);
       if (dynamicBanners.length === 0) {
-        // On error → still show ONLY the static Coming Soon banner
         setDynamicBanners([STATIC_COMING_SOON_BANNER]);
       }
     } finally {
@@ -453,19 +431,14 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ✅ PERF: fetchDynamicChefs with throttle + smart loading state
-  //    - `silent = true`  → do NOT show loading spinner
-  //    - `force = true`   → bypass the 20-second throttle
-  //    - When chefsData already exists, we never flip chefsLoading back to true
+  // fetchDynamicChefs
   // ─────────────────────────────────────────────────────────────────────────
   const fetchDynamicChefs = async (silent: boolean = false, force: boolean = false) => {
     const now = Date.now();
     if (!force && now - lastChefsFetchedAtRef.current < 20000) {
-      // Recently fetched — skip to avoid redundant network calls
       return;
     }
     try {
-      // Only show the big loading state if we truly have no data yet
       if (!silent && chefsData.length === 0) {
         setChefsLoading(true);
       }
@@ -521,9 +494,7 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ✅ PERF: loadUserDataAndAddresses — TWO-PHASE
-  //    Phase 1: Read AsyncStorage instantly → paint name/address immediately
-  //    Phase 2: Background network refresh → update silently when it arrives
+  // loadUserDataAndAddresses — TWO-PHASE
   // ─────────────────────────────────────────────────────────────────────────
   const loadUserDataAndAddresses = async () => {
     try {
@@ -545,7 +516,6 @@ export default function HomeScreen() {
           if (cachedUser.activeAddress.id) {
             setSelectedAddressId(cachedUser.activeAddress.id);
           }
-          // ✅ push cached active address to the store immediately
           syncActiveAddressToStore(cachedUser.activeAddress);
         } else if (cachedUser.address && cachedUser.address.trim().length > 0) {
           setLocationDisplay(cachedUser.address.trim());
@@ -559,7 +529,6 @@ export default function HomeScreen() {
       // ─── PHASE 2: BACKGROUND — refresh from server, non-blocking ───
       const now = Date.now();
       if (now - lastUserRefreshAtRef.current < 15000) {
-        // Recently refreshed — skip
         return;
       }
       lastUserRefreshAtRef.current = now;
@@ -581,7 +550,6 @@ export default function HomeScreen() {
             if (freshUser.activeAddress.id) {
               setSelectedAddressId(freshUser.activeAddress.id);
             }
-            // ✅ push freshly-fetched active address to the store
             syncActiveAddressToStore(freshUser.activeAddress);
           } else if (freshUser.address && freshUser.address.trim().length > 0) {
             setLocationDisplay(freshUser.address.trim());
@@ -599,18 +567,17 @@ export default function HomeScreen() {
     }
   };
 
-  // ─── CENTRAL RELOAD (pull-to-refresh) — forces fresh data ───
+  // ─── CENTRAL RELOAD ───
   const reloadAllDynamicData = useCallback(async () => {
     isDataRefreshingRef.current = true;
-    // Reset throttles so reload forces a real refresh
     lastChefsFetchedAtRef.current = 0;
     lastUserRefreshAtRef.current = 0;
     lastBannersFetchedAtRef.current = 0;
     try {
       await Promise.allSettled([
         loadUserDataAndAddresses(),
-        fetchDynamicChefs(true, true), // silent + force
-        fetchDynamicBanners(true, true), // silent + force
+        fetchDynamicChefs(true, true),
+        fetchDynamicBanners(true, true),
         fetchCartCount(),
         checkLocationStatusAndPrompt(),
       ]);
@@ -621,25 +588,20 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // ✅ PERF: useFocusEffect — only the FIRST focus shows loading spinners
-  //    Subsequent focuses are silent + throttled
-  // ─────────────────────────────────────────────────────────────────────────
+  // ─── useFocusEffect ───
   useFocusEffect(
     useCallback(() => {
       const isFirstFocus = !hasFocusedOnceRef.current;
       hasFocusedOnceRef.current = true;
 
-      // Fire all in parallel, without awaiting (non-blocking)
-      loadUserDataAndAddresses();          // Instant from cache + bg refresh
-      fetchDynamicChefs(!isFirstFocus);    // silent on subsequent focuses
-      fetchDynamicBanners(!isFirstFocus);  // silent on subsequent focuses
+      loadUserDataAndAddresses();
+      fetchDynamicChefs(!isFirstFocus);
+      fetchDynamicBanners(!isFirstFocus);
       fetchCartCount();
     }, [])
   );
 
-  // ✅ Hydrate the persisted delivery location on mount so back-navigation
-  //    and app restarts still remember lat/lng of the same user.
+  // Hydrate the persisted delivery location on mount
   useEffect(() => {
     hydrateDeliveryLocation();
   }, [hydrateDeliveryLocation]);
@@ -704,11 +666,7 @@ export default function HomeScreen() {
     checkLocationStatusAndPrompt();
   }, []);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // ✅ Register (or refresh) the current user's Expo push token on the
-  //    backend. Idempotent — the server just overwrites the pushToken field.
-  //    Silent no-op on Expo Go or simulators.
-  // ─────────────────────────────────────────────────────────────────────────
+  // ─── Register push token ───
   const registerPushTokenForCurrentUser = async (): Promise<boolean> => {
     try {
       const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
@@ -743,23 +701,18 @@ export default function HomeScreen() {
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // ✅ Check notification permission and show the prompt modal if needed.
-  //    If already granted, silently registers the token so a reinstall or
-  //    token rotation is handled automatically.
-  // ─────────────────────────────────────────────────────────────────────────
+  // ─── Notification permission ───
   const checkNotificationPermissionAndPrompt = async () => {
     try {
       const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
-      if (isExpoGo) return;              // Silently skip in Expo Go
-      if (!Device.isDevice) return;      // Silently skip on simulator
+      if (isExpoGo) return;
+      if (!Device.isDevice) return;
 
       const { status } = await Notifications.getPermissionsAsync();
 
       if (status !== 'granted') {
         setIsNotificationPopupVisible(true);
       } else {
-        // Already granted — make sure token is registered
         await registerPushTokenForCurrentUser();
       }
     } catch (err) {
@@ -767,9 +720,6 @@ export default function HomeScreen() {
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // ✅ User tapped "Allow Notifications" in the prompt modal.
-  // ─────────────────────────────────────────────────────────────────────────
   const handleAllowNotificationPopup = async () => {
     setIsRequestingNotification(true);
     try {
@@ -784,8 +734,6 @@ export default function HomeScreen() {
       if (status === 'granted') {
         await registerPushTokenForCurrentUser();
       }
-      // Whether granted or denied, close the modal — the OS remembers
-      // the user's choice, so we should not nag repeatedly.
       setIsNotificationPopupVisible(false);
     } catch (err) {
       console.log('Notification permission request error:', err);
@@ -795,11 +743,6 @@ export default function HomeScreen() {
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // ✅ On first mount of Home (i.e. first authenticated screen), after a
-  //    short delay so the screen paints first, check notification permission.
-  //    The ref prevents this from firing on every remount within the session.
-  // ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (hasPromptedNotificationRef.current) return;
     hasPromptedNotificationRef.current = true;
@@ -927,7 +870,6 @@ export default function HomeScreen() {
         address: formatAddressDisplay(gpsActive),
       });
 
-      // ✅ GPS-detected location → push to store
       await syncActiveAddressToStore(gpsActive);
 
       hasAppliedGpsOnceRef.current = true;
@@ -976,10 +918,8 @@ export default function HomeScreen() {
       address: formatAddressDisplay(newActive),
     });
 
-    // ✅ user picked a saved address → push to store
     await syncActiveAddressToStore(newActive);
 
-    // ✅ Force a fresh fetch since the delivery location changed
     fetchDynamicChefs(true, true);
   };
 
@@ -1033,7 +973,6 @@ export default function HomeScreen() {
 
             await persistSavedAddresses(updated, nextActive);
 
-            // ✅ if the active address was replaced, sync the new one
             if (nextActive) {
               await syncActiveAddressToStore(nextActive);
             }
@@ -1100,7 +1039,6 @@ export default function HomeScreen() {
 
       await persistSavedAddresses(updated, newActive);
       setSelectedAddressId(editingAddressId);
-      // ✅ edited address is now active → sync to store
       await syncActiveAddressToStore(newActive);
     } else {
       const duplicate = isAddressDuplicate(
@@ -1127,7 +1065,6 @@ export default function HomeScreen() {
         };
         await persistSavedAddresses(updated, newActive);
         setSelectedAddressId(duplicate.id);
-        // ✅ dedup-matched address is now active → sync to store
         await syncActiveAddressToStore(newActive);
       } else {
         const newAddressItem: SavedAddress = {
@@ -1155,7 +1092,6 @@ export default function HomeScreen() {
 
         await persistSavedAddresses(updatedList, newActive);
         setSelectedAddressId(newAddressItem.id);
-        // ✅ brand-new address is now active → sync to store
         await syncActiveAddressToStore(newActive);
       }
     }
@@ -1163,7 +1099,6 @@ export default function HomeScreen() {
     setEditingAddressId(null);
     setIsMapModalVisible(false);
 
-    // ✅ Force a fresh fetch since the delivery location changed
     fetchDynamicChefs(true, true);
   };
 
@@ -1184,7 +1119,6 @@ export default function HomeScreen() {
     }
   };
 
-  // ✅ detect whether the last category ("View All") is currently visible
   const handleCategoryScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const maxScrollX = contentSize.width - layoutMeasurement.width;
@@ -1192,8 +1126,6 @@ export default function HomeScreen() {
     setShowViewAllHint(!isAtEnd);
   };
 
-  // ✅ tapping "view all →" hint navigates to the SAME destination
-  //    as tapping the "View All" category (i.e. AllChefCards page).
   const handleViewAllHintPress = () => {
     setSelectedCategory('6');
     router.push('/screens/AllChefCards');
@@ -1236,14 +1168,34 @@ export default function HomeScreen() {
         params: { fromCategory: 'Food & Cravings', filterFoodAndCravings: 'true' },
       });
     } else if (item.id === '6' || item.name.includes('View All')) {
-      // ✅ SAME destination as the "view all →" underlined hint
       router.push('/screens/AllChefCards');
     }
   };
 
-  // ✅ dynamic banner CTA handler (uses ctaAction from admin form)
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ UPDATED: dynamic banner CTA handler
+  //    Behavior:
+  //      • If `ctaAction` is EMPTY (or whitespace only) → DO NOTHING.
+  //        Tapping the banner / "Explore Plans" has no effect.
+  //      • Otherwise, route to /screens/AllChefCards with the matching filter:
+  //          - "catering"                    → filterCatering
+  //          - "mealbox" / "meal box"        → filterMealBox
+  //          - "quickbites" / "quick bites"  → filterQuickBites
+  //          - "pickles" / "homemade"        → filterCategory=Pickles & Podis
+  //          - "foodandcravings"             → filterFoodAndCravings
+  //          - unrecognized non-empty value  → AllChefCards (all chefs)
+  //    Matching is case-insensitive and tolerant of extra spaces.
+  // ─────────────────────────────────────────────────────────────────────────
   const handleBannerCtaPress = (slide: BannerSlide) => {
-    const action = (slide.ctaAction || '').trim().toLowerCase();
+    const rawCta = (slide.ctaAction || '').trim();
+
+    // ✅ If CTA is empty → no navigation at all.
+    if (rawCta.length === 0) {
+      return;
+    }
+
+    // Normalize: lowercase + strip all whitespace so "Meal Box" == "mealbox"
+    const action = rawCta.toLowerCase().replace(/\s+/g, '');
 
     if (action === 'catering') {
       router.push({
@@ -1252,28 +1204,40 @@ export default function HomeScreen() {
       });
       return;
     }
-    if (action === 'mealbox' || action === 'meal box') {
+
+    if (action === 'mealbox' || action === 'mealboxes') {
       router.push({
         pathname: '/screens/AllChefCards',
         params: { fromCategory: 'Meal Box', filterMealBox: 'true' },
       });
       return;
     }
-    if (action === 'pickles' || action === 'homemade') {
-      router.push({
-        pathname: '/screens/AllChefCards',
-        params: { fromCategory: 'Pickles & Podis', filterCategory: 'Pickles & Podis' },
-      });
-      return;
-    }
-    if (action === 'quickbites' || action === 'quick bites') {
+
+    if (action === 'quickbites' || action === 'quickbite') {
       router.push({
         pathname: '/screens/AllChefCards',
         params: { fromCategory: 'Quick Bites', filterQuickBites: 'true' },
       });
       return;
     }
-    // Default → all chefs
+
+    if (action === 'pickles' || action === 'homemade' || action === 'pickles&podis') {
+      router.push({
+        pathname: '/screens/AllChefCards',
+        params: { fromCategory: 'Pickles & Podis', filterCategory: 'Pickles & Podis' },
+      });
+      return;
+    }
+
+    if (action === 'foodandcravings' || action === 'food&cravings') {
+      router.push({
+        pathname: '/screens/AllChefCards',
+        params: { fromCategory: 'Food & Cravings', filterFoodAndCravings: 'true' },
+      });
+      return;
+    }
+
+    // Fallback: a non-empty, unrecognized CTA → still go to AllChefCards
     router.push('/screens/AllChefCards');
   };
 
@@ -1328,10 +1292,7 @@ export default function HomeScreen() {
     );
   };
 
-  // ✅ Choose which banner list to render.
-  //    Dynamic banners (which already have the static Coming Soon appended at
-  //    the LAST position by fetchDynamicBanners) win. Otherwise show ONLY the
-  //    static Coming Soon banner (no fallback statics anymore).
+  // Choose which banner list to render.
   const bannersToRender =
     dynamicBanners.length > 0 ? dynamicBanners : [STATIC_COMING_SOON_BANNER];
 
@@ -1606,10 +1567,6 @@ export default function HomeScreen() {
               })}
             </ScrollView>
 
-            {/* ✅ "view all →" underlined hint now sits BELOW the
-                category bar. Shows only when the last (View All) category is
-                off-screen. Tapping navigates to the SAME destination as the
-                View All category. */}
             {showViewAllHint && (
               <TouchableOpacity
                 style={styles.viewAllHintContainer}
@@ -2776,7 +2733,6 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
 
-  /* ─── CATEGORY STRIP (Premium) ─── */
   categoryGridSection: {
     paddingHorizontal: 0,
     marginBottom: 18,
