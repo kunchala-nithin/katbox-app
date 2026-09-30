@@ -51,13 +51,6 @@ import { useDeliveryLocationStore } from '@/src/store/deliveryLocationStore';
 const { width, height } = Dimensions.get('window');
 const HOME_CARD_WIDTH = 220;
 
-// ─── Banner Images Imported From Assets Folder (FALLBACK ONLY) ───
-const BANNER_IMG_1 = require('@/assets/images/banner1.png');
-const BANNER_IMG_2 = require('@/assets/images/banner2.png');
-const BANNER_IMG_3 = require('@/assets/images/banner3.png');
-const BANNER_IMG_4 = require('@/assets/images/banner4.png');
-const BANNER_IMG_5 = require('@/assets/images/banner5.png');
-
 // ─── Interfaces ───
 interface CategoryItem {
   id: string;
@@ -81,72 +74,22 @@ interface BannerSlide {
   ctaAction?: string;
 }
 
-// ─── FALLBACK Static Data (used only if API returns nothing) ───
-const FALLBACK_BANNER_SLIDES: BannerSlide[] = [
-  {
-    id: '1',
-    titlePrimary: '',
-    titleSecondary: '',
-    tagline: '',
-    badge: '',
-    image: BANNER_IMG_1,
-    isComingSoon: false,
-    isFullBanner: true,
-  },
-  {
-    id: '2',
-    titlePrimary: 'Festive Feasts,',
-    titleSecondary: 'Served with Love',
-    tagline: 'Let Bappa bless your celebrations with authentic catering spreads made fresh.',
-    badge: 'CATERING SERVICE',
-    price: '129',
-    unit: '/platter',
-    image: BANNER_IMG_2,
-    isComingSoon: false,
-  },
-  {
-    id: '3',
-    titlePrimary: 'Traditional',
-    titleSecondary: 'Katbox Platters',
-    tagline: 'Wholesome Event Platters  with authentic flavours, served on banana leaf.',
-    badge: 'CATERING MEAL PLANS',
-    price: '129',
-    unit: '/platter',
-    image: BANNER_IMG_3,
-    isComingSoon: false,
-  },
-  {
-    id: '4',
-    titlePrimary: 'Wholesome',
-    titleSecondary: 'Daily Meal Boxes',
-    tagline: 'Homestyle meals with dal, rotis and curries, delivered fresh to your door.',
-    badge: 'MEAL BOX PLANS',
-    price: '99',
-    unit: '/Meal',
-    image: BANNER_IMG_4,
-    isComingSoon: false,
-  },
-  {
-    id: '5',
-    titlePrimary: 'Taste Tradition',
-    titleSecondary: 'In Every Bite',
-    tagline: 'Authentic pickles, karam podis and sweets, crafted the homemade way.',
-    badge: 'HOMEMADE FOODS',
-    price: '99',
-    unit: 'onwards',
-    image: BANNER_IMG_5,
-    isComingSoon: false,
-  },
-  {
-    id: '6',
-    titlePrimary: 'Personal Master Chef',
-    titleSecondary: 'At Your Kitchen',
-    tagline: 'Luxury on-demand home chefs cooking custom feasts live at your venue.',
-    badge: 'COMING SOON',
-    image: 'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?w=1200&auto=format&fit=crop&q=80',
-    isComingSoon: true,
-  },
-];
+// ─── ✅ The ONE static banner that is ALWAYS kept at the LAST position.
+//    It is never sent to / rendered from the API — it is appended by Home.tsx
+//    after all dynamic banners have been loaded. All other banners are 100%
+//    DB-driven via GET /api/banners. ───
+const STATIC_COMING_SOON_BANNER: BannerSlide = {
+  id: 'static_coming_soon',
+  titlePrimary: 'Personal Master Chef',
+  titleSecondary: 'At Your Kitchen',
+  tagline: 'Luxury on-demand home chefs cooking custom feasts live at your venue.',
+  badge: 'COMING SOON',
+  image:
+    'https://images.unsplash.com/photo-1577219491135-ce391730fb2c?w=1200&auto=format&fit=crop&q=80',
+  isComingSoon: true,
+  isFullBanner: false,
+  ctaAction: '',
+};
 
 // ✅ UPDATED: Quick Bites (with "75 MIN" badge) inserted at position 5, View All moved to position 6
 const CATEGORIES: CategoryItem[] = [
@@ -305,7 +248,7 @@ export default function HomeScreen() {
   const [chefsLoading, setChefsLoading] = useState<boolean>(true);
   const [expandedCuisines, setExpandedCuisines] = useState<{ [key: string]: boolean }>({});
 
-  // ─── ✅ NEW: Dynamic Banner States ───
+  // ─── ✅ Dynamic Banner States ───
   const [dynamicBanners, setDynamicBanners] = useState<BannerSlide[]>([]);
   const [bannersLoading, setBannersLoading] = useState<boolean>(true);
   const lastBannersFetchedAtRef = useRef<number>(0);
@@ -324,7 +267,7 @@ export default function HomeScreen() {
   const [isPermissionPopupVisible, setIsPermissionPopupVisible] = useState<boolean>(false);
   const [isRequestingPermission, setIsRequestingPermission] = useState<boolean>(false);
 
-  // ─── ✅ NEW: Notification Permission Prompt States ───
+  // ─── ✅ Notification Permission Prompt States ───
   const [isNotificationPopupVisible, setIsNotificationPopupVisible] = useState<boolean>(false);
   const [isRequestingNotification, setIsRequestingNotification] = useState<boolean>(false);
   const hasPromptedNotificationRef = useRef<boolean>(false);
@@ -375,13 +318,13 @@ export default function HomeScreen() {
   const [couponApplied, setCouponApplied] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('1');
 
-  // ✅ NEW: "view all →" hint shown when the last (View All) category is off-screen
+  // ✅ "view all →" hint shown when the last (View All) category is off-screen
   const [showViewAllHint, setShowViewAllHint] = useState<boolean>(true);
 
   const bannerScrollRef = useRef<ScrollView>(null);
   const mainScrollRef = useRef<ScrollView>(null);
   const caterersSectionRef = useRef<View>(null);
-  // ✅ NEW: ref for the horizontal Quick-Category scroller
+  // ✅ ref for the horizontal Quick-Category scroller
   const categoryScrollRef = useRef<ScrollView>(null);
 
   // Helper: format display string from address object
@@ -394,9 +337,9 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ✅ NEW: Push the active address into the global delivery-location store so
-  //         downstream screens (Checkout, Orders, Admin) can read lat/lng
-  //         without prop-drilling through 8 screens.
+  // ✅ Push the active address into the global delivery-location store so
+  //    downstream screens (Checkout, Orders, Admin) can read lat/lng
+  //    without prop-drilling through 8 screens.
   // ─────────────────────────────────────────────────────────────────────────
   const syncActiveAddressToStore = async (addr: ActiveAddress | null | undefined) => {
     if (!addr || !addr.fullAddress) return;
@@ -444,9 +387,15 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ✅ NEW: fetchDynamicBanners
-  //    Fetches banners from the backend and maps them to the BannerSlide shape.
-  //    Falls back to FALLBACK_BANNER_SLIDES if the API returns nothing.
+  // ✅ fetchDynamicBanners
+  //    Fetches banners from the backend and maps them to BannerSlide.
+  //    Sorts by displayOrder ascending, then appends the ONE static
+  //    Coming Soon banner at the very LAST position.
+  //
+  //    ✅ NO FALLBACK STATIC BANNERS ANYMORE.
+  //    If the API returns zero banners, the Home carousel will render ONLY
+  //    the static Coming Soon banner at the last position (so the carousel
+  //    is never empty).
   // ─────────────────────────────────────────────────────────────────────────
   const fetchDynamicBanners = async (silent: boolean = false, force: boolean = false) => {
     const now = Date.now();
@@ -459,29 +408,44 @@ export default function HomeScreen() {
       }
       const res = await api.get('/api/banners');
       if (res.data && res.data.success && Array.isArray(res.data.banners) && res.data.banners.length > 0) {
-        const mapped: BannerSlide[] = res.data.banners.map((b: any) => ({
-          id: b._id,
-          titlePrimary: b.titlePrimary || '',
-          titleSecondary: b.titleSecondary || '',
-          tagline: b.tagline || '',
-          badge: b.badge || '',
-          price: b.price || '',
-          unit: b.unit || '',
-          image: b.imageUrl,
-          isComingSoon: !!b.isComingSoon,
-          isFullBanner: !!b.isFullBanner,
-          ctaAction: b.ctaAction || '',
-        }));
-        setDynamicBanners(mapped);
+        // 1) Map API records → BannerSlide
+        const mapped: BannerSlide[] = res.data.banners
+          .map((b: any) => ({
+            id: b._id,
+            titlePrimary: b.titlePrimary || '',
+            titleSecondary: b.titleSecondary || '',
+            tagline: b.tagline || '',
+            badge: b.badge || '',
+            price: b.price || '',
+            unit: b.unit || '',
+            image: b.imageUrl,
+            isComingSoon: !!b.isComingSoon,
+            isFullBanner: !!b.isFullBanner,
+            ctaAction: b.ctaAction || '',
+            // Keep raw order for sorting
+            __displayOrder: Number(b.displayOrder) || 0,
+          }))
+          // 2) Sort by displayOrder ascending (backend already does this, but
+          //    we sort again defensively in case order changes client-side)
+          .sort((a: any, b: any) => a.__displayOrder - b.__displayOrder);
+
+        // 3) Strip the sort-only field
+        const cleaned: BannerSlide[] = mapped.map(({ __displayOrder, ...rest }: any) => rest);
+
+        // 4) ✅ Append the ONE static Coming Soon banner at the LAST position
+        const withStaticLast = [...cleaned, STATIC_COMING_SOON_BANNER];
+
+        setDynamicBanners(withStaticLast);
         lastBannersFetchedAtRef.current = Date.now();
       } else {
-        // No banners in DB yet — show fallback so Home doesn't look empty
-        setDynamicBanners(FALLBACK_BANNER_SLIDES);
+        // No banners in DB yet → show ONLY the static Coming Soon banner
+        setDynamicBanners([STATIC_COMING_SOON_BANNER]);
       }
     } catch (err) {
       console.log('Home fetch dynamic banners error:', err);
       if (dynamicBanners.length === 0) {
-        setDynamicBanners(FALLBACK_BANNER_SLIDES);
+        // On error → still show ONLY the static Coming Soon banner
+        setDynamicBanners([STATIC_COMING_SOON_BANNER]);
       }
     } finally {
       setBannersLoading(false);
@@ -581,7 +545,7 @@ export default function HomeScreen() {
           if (cachedUser.activeAddress.id) {
             setSelectedAddressId(cachedUser.activeAddress.id);
           }
-          // ✅ NEW: push cached active address to the store immediately
+          // ✅ push cached active address to the store immediately
           syncActiveAddressToStore(cachedUser.activeAddress);
         } else if (cachedUser.address && cachedUser.address.trim().length > 0) {
           setLocationDisplay(cachedUser.address.trim());
@@ -617,7 +581,7 @@ export default function HomeScreen() {
             if (freshUser.activeAddress.id) {
               setSelectedAddressId(freshUser.activeAddress.id);
             }
-            // ✅ NEW: push freshly-fetched active address to the store
+            // ✅ push freshly-fetched active address to the store
             syncActiveAddressToStore(freshUser.activeAddress);
           } else if (freshUser.address && freshUser.address.trim().length > 0) {
             setLocationDisplay(freshUser.address.trim());
@@ -646,7 +610,7 @@ export default function HomeScreen() {
       await Promise.allSettled([
         loadUserDataAndAddresses(),
         fetchDynamicChefs(true, true), // silent + force
-        fetchDynamicBanners(true, true), // ✅ NEW: silent + force
+        fetchDynamicBanners(true, true), // silent + force
         fetchCartCount(),
         checkLocationStatusAndPrompt(),
       ]);
@@ -669,13 +633,13 @@ export default function HomeScreen() {
       // Fire all in parallel, without awaiting (non-blocking)
       loadUserDataAndAddresses();          // Instant from cache + bg refresh
       fetchDynamicChefs(!isFirstFocus);    // silent on subsequent focuses
-      fetchDynamicBanners(!isFirstFocus);  // ✅ NEW: silent on subsequent focuses
+      fetchDynamicBanners(!isFirstFocus);  // silent on subsequent focuses
       fetchCartCount();
     }, [])
   );
 
-  // ✅ NEW: Hydrate the persisted delivery location on mount so back-navigation
-  //         and app restarts still remember lat/lng of the same user.
+  // ✅ Hydrate the persisted delivery location on mount so back-navigation
+  //    and app restarts still remember lat/lng of the same user.
   useEffect(() => {
     hydrateDeliveryLocation();
   }, [hydrateDeliveryLocation]);
@@ -741,7 +705,7 @@ export default function HomeScreen() {
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ✅ NEW: Register (or refresh) the current user's Expo push token on the
+  // ✅ Register (or refresh) the current user's Expo push token on the
   //    backend. Idempotent — the server just overwrites the pushToken field.
   //    Silent no-op on Expo Go or simulators.
   // ─────────────────────────────────────────────────────────────────────────
@@ -780,7 +744,7 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ✅ NEW: Check notification permission and show the prompt modal if needed.
+  // ✅ Check notification permission and show the prompt modal if needed.
   //    If already granted, silently registers the token so a reinstall or
   //    token rotation is handled automatically.
   // ─────────────────────────────────────────────────────────────────────────
@@ -804,7 +768,7 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ✅ NEW: User tapped "Allow Notifications" in the prompt modal.
+  // ✅ User tapped "Allow Notifications" in the prompt modal.
   // ─────────────────────────────────────────────────────────────────────────
   const handleAllowNotificationPopup = async () => {
     setIsRequestingNotification(true);
@@ -832,7 +796,7 @@ export default function HomeScreen() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ✅ NEW: On first mount of Home (i.e. first authenticated screen), after a
+  // ✅ On first mount of Home (i.e. first authenticated screen), after a
   //    short delay so the screen paints first, check notification permission.
   //    The ref prevents this from firing on every remount within the session.
   // ─────────────────────────────────────────────────────────────────────────
@@ -886,10 +850,10 @@ export default function HomeScreen() {
     updateGreeting();
   }, []);
 
-  // Auto-scroll banner (dynamic length)
+  // Auto-scroll banner (dynamic length + static Coming Soon last)
   useEffect(() => {
     const bannersForScroll =
-      dynamicBanners.length > 0 ? dynamicBanners : FALLBACK_BANNER_SLIDES;
+      dynamicBanners.length > 0 ? dynamicBanners : [STATIC_COMING_SOON_BANNER];
     if (bannersForScroll.length <= 1) return;
 
     const interval = setInterval(() => {
@@ -963,7 +927,7 @@ export default function HomeScreen() {
         address: formatAddressDisplay(gpsActive),
       });
 
-      // ✅ NEW: GPS-detected location → push to store
+      // ✅ GPS-detected location → push to store
       await syncActiveAddressToStore(gpsActive);
 
       hasAppliedGpsOnceRef.current = true;
@@ -1012,7 +976,7 @@ export default function HomeScreen() {
       address: formatAddressDisplay(newActive),
     });
 
-    // ✅ NEW: user picked a saved address → push to store
+    // ✅ user picked a saved address → push to store
     await syncActiveAddressToStore(newActive);
 
     // ✅ Force a fresh fetch since the delivery location changed
@@ -1069,7 +1033,7 @@ export default function HomeScreen() {
 
             await persistSavedAddresses(updated, nextActive);
 
-            // ✅ NEW: if the active address was replaced, sync the new one
+            // ✅ if the active address was replaced, sync the new one
             if (nextActive) {
               await syncActiveAddressToStore(nextActive);
             }
@@ -1136,7 +1100,7 @@ export default function HomeScreen() {
 
       await persistSavedAddresses(updated, newActive);
       setSelectedAddressId(editingAddressId);
-      // ✅ NEW: edited address is now active → sync to store
+      // ✅ edited address is now active → sync to store
       await syncActiveAddressToStore(newActive);
     } else {
       const duplicate = isAddressDuplicate(
@@ -1163,7 +1127,7 @@ export default function HomeScreen() {
         };
         await persistSavedAddresses(updated, newActive);
         setSelectedAddressId(duplicate.id);
-        // ✅ NEW: dedup-matched address is now active → sync to store
+        // ✅ dedup-matched address is now active → sync to store
         await syncActiveAddressToStore(newActive);
       } else {
         const newAddressItem: SavedAddress = {
@@ -1191,7 +1155,7 @@ export default function HomeScreen() {
 
         await persistSavedAddresses(updatedList, newActive);
         setSelectedAddressId(newAddressItem.id);
-        // ✅ NEW: brand-new address is now active → sync to store
+        // ✅ brand-new address is now active → sync to store
         await syncActiveAddressToStore(newActive);
       }
     }
@@ -1213,14 +1177,14 @@ export default function HomeScreen() {
 
   const handleBannerScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const bannersForScroll =
-      dynamicBanners.length > 0 ? dynamicBanners : FALLBACK_BANNER_SLIDES;
+      dynamicBanners.length > 0 ? dynamicBanners : [STATIC_COMING_SOON_BANNER];
     const slide = Math.round(event.nativeEvent.contentOffset.x / (width - 32));
     if (slide !== activeBannerIndex && slide >= 0 && slide < bannersForScroll.length) {
       setActiveBannerIndex(slide);
     }
   };
 
-  // ✅ NEW: detect whether the last category ("View All") is currently visible
+  // ✅ detect whether the last category ("View All") is currently visible
   const handleCategoryScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const maxScrollX = contentSize.width - layoutMeasurement.width;
@@ -1228,8 +1192,8 @@ export default function HomeScreen() {
     setShowViewAllHint(!isAtEnd);
   };
 
-  // ✅ UPDATED: tapping "view all →" hint navigates to the SAME destination
-  //             as tapping the "View All" category (i.e. AllChefCards page).
+  // ✅ tapping "view all →" hint navigates to the SAME destination
+  //    as tapping the "View All" category (i.e. AllChefCards page).
   const handleViewAllHintPress = () => {
     setSelectedCategory('6');
     router.push('/screens/AllChefCards');
@@ -1277,25 +1241,25 @@ export default function HomeScreen() {
     }
   };
 
-  // ✅ NEW: dynamic banner CTA handler (uses ctaAction from admin form)
+  // ✅ dynamic banner CTA handler (uses ctaAction from admin form)
   const handleBannerCtaPress = (slide: BannerSlide) => {
     const action = (slide.ctaAction || '').trim().toLowerCase();
 
-    if (action === 'catering' || slide.id === '2' || slide.id === '3') {
+    if (action === 'catering') {
       router.push({
         pathname: '/screens/AllChefCards',
         params: { fromCategory: 'Catering', filterCatering: 'true' },
       });
       return;
     }
-    if (action === 'mealbox' || action === 'meal box' || slide.id === '4') {
+    if (action === 'mealbox' || action === 'meal box') {
       router.push({
         pathname: '/screens/AllChefCards',
         params: { fromCategory: 'Meal Box', filterMealBox: 'true' },
       });
       return;
     }
-    if (action === 'pickles' || action === 'homemade' || slide.id === '5') {
+    if (action === 'pickles' || action === 'homemade') {
       router.push({
         pathname: '/screens/AllChefCards',
         params: { fromCategory: 'Pickles & Podis', filterCategory: 'Pickles & Podis' },
@@ -1364,8 +1328,12 @@ export default function HomeScreen() {
     );
   };
 
-  // ✅ Choose which banner list to render (dynamic first, fallback second)
-  const bannersToRender = dynamicBanners.length > 0 ? dynamicBanners : FALLBACK_BANNER_SLIDES;
+  // ✅ Choose which banner list to render.
+  //    Dynamic banners (which already have the static Coming Soon appended at
+  //    the LAST position by fetchDynamicBanners) win. Otherwise show ONLY the
+  //    static Coming Soon banner (no fallback statics anymore).
+  const bannersToRender =
+    dynamicBanners.length > 0 ? dynamicBanners : [STATIC_COMING_SOON_BANNER];
 
   return (
     <View style={styles.rootContainer}>
@@ -1638,7 +1606,7 @@ export default function HomeScreen() {
               })}
             </ScrollView>
 
-            {/* ✅ UPDATED: "view all →" underlined hint now sits BELOW the
+            {/* ✅ "view all →" underlined hint now sits BELOW the
                 category bar. Shows only when the last (View All) category is
                 off-screen. Tapping navigates to the SAME destination as the
                 View All category. */}
@@ -2182,7 +2150,7 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* ─── ✅ NEW: NOTIFICATION PERMISSION MODAL ─── */}
+      {/* ─── NOTIFICATION PERMISSION MODAL ─── */}
       <Modal
         visible={isNotificationPopupVisible}
         transparent={true}
@@ -2430,8 +2398,7 @@ export default function HomeScreen() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Styles — UNCHANGED from original Home.tsx. The banner preview styles in
-// add-banner.tsx mirror these exact values so the admin sees a 1:1 preview.
+// Styles — UNCHANGED from original Home.tsx.
 // ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   rootContainer: {
