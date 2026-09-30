@@ -37,6 +37,11 @@ const ADMIN_TAB_CONFIG: Record<
         icon: 'receipt-outline',
         activeIcon: 'receipt',
     },  
+    'add-banners': {
+        label: 'Banners',
+        icon: 'images',
+        activeIcon: 'images',
+    },  
 }
 
 export default function AdminTabsLayout() {
@@ -161,6 +166,7 @@ export default function AdminTabsLayout() {
             <Tabs.Screen name="all-users" options={{ title: 'Users' }} />
             <Tabs.Screen name="all-chefs" options={{ title: 'Chefs' }} />
             <Tabs.Screen name="all-orders" options={{ title: 'Orders' }} />
+            <Tabs.Screen name="add-banners" options={{ title: 'Banners' }} />
         </Tabs>
     )
 }

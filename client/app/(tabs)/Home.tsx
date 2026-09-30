@@ -51,7 +51,7 @@ import { useDeliveryLocationStore } from '@/src/store/deliveryLocationStore';
 const { width, height } = Dimensions.get('window');
 const HOME_CARD_WIDTH = 220;
 
-// ─── Banner Images Imported From Assets Folder ───
+// ─── Banner Images Imported From Assets Folder (FALLBACK ONLY) ───
 const BANNER_IMG_1 = require('@/assets/images/banner1.png');
 const BANNER_IMG_2 = require('@/assets/images/banner2.png');
 const BANNER_IMG_3 = require('@/assets/images/banner3.png');
@@ -78,11 +78,11 @@ interface BannerSlide {
   image: any;
   isComingSoon?: boolean;
   isFullBanner?: boolean;
+  ctaAction?: string;
 }
 
-// ─── Static Data ───
-const BANNER_SLIDES: BannerSlide[] = [
-  // ─── 1st Banner : FULL IMAGE BANNER (Vinayaka Chaviti Special) ───
+// ─── FALLBACK Static Data (used only if API returns nothing) ───
+const FALLBACK_BANNER_SLIDES: BannerSlide[] = [
   {
     id: '1',
     titlePrimary: '',
@@ -93,7 +93,6 @@ const BANNER_SLIDES: BannerSlide[] = [
     isComingSoon: false,
     isFullBanner: true,
   },
-  // ─── 2nd Banner : CATERING SERVICE ───
   {
     id: '2',
     titlePrimary: 'Festive Feasts,',
@@ -105,7 +104,6 @@ const BANNER_SLIDES: BannerSlide[] = [
     image: BANNER_IMG_2,
     isComingSoon: false,
   },
-  // ─── 3rd Banner : CATERING MEAL PLANS ───
   {
     id: '3',
     titlePrimary: 'Traditional',
@@ -117,7 +115,6 @@ const BANNER_SLIDES: BannerSlide[] = [
     image: BANNER_IMG_3,
     isComingSoon: false,
   },
-  // ─── 4th Banner : MEAL BOX PLANS ───
   {
     id: '4',
     titlePrimary: 'Wholesome',
@@ -129,7 +126,6 @@ const BANNER_SLIDES: BannerSlide[] = [
     image: BANNER_IMG_4,
     isComingSoon: false,
   },
-  // ─── 5th Banner : HOMEMADE FOODS ───
   {
     id: '5',
     titlePrimary: 'Taste Tradition',
@@ -137,11 +133,10 @@ const BANNER_SLIDES: BannerSlide[] = [
     tagline: 'Authentic pickles, karam podis and sweets, crafted the homemade way.',
     badge: 'HOMEMADE FOODS',
     price: '99',
-    unit: 'onwardsx',
+    unit: 'onwards',
     image: BANNER_IMG_5,
     isComingSoon: false,
   },
-  // ─── 6th Banner : COMING SOON (Static URL) ───
   {
     id: '6',
     titlePrimary: 'Personal Master Chef',
@@ -310,6 +305,11 @@ export default function HomeScreen() {
   const [chefsLoading, setChefsLoading] = useState<boolean>(true);
   const [expandedCuisines, setExpandedCuisines] = useState<{ [key: string]: boolean }>({});
 
+  // ─── ✅ NEW: Dynamic Banner States ───
+  const [dynamicBanners, setDynamicBanners] = useState<BannerSlide[]>([]);
+  const [bannersLoading, setBannersLoading] = useState<boolean>(true);
+  const lastBannersFetchedAtRef = useRef<number>(0);
+
   // ─── Cart Count State ───
   const [cartItemCount, setCartItemCount] = useState<number>(0);
 
@@ -441,6 +441,51 @@ export default function HomeScreen() {
         Math.abs(item.longitude - lon) < 0.0002;
       return matchString || matchCoords;
     });
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ NEW: fetchDynamicBanners
+  //    Fetches banners from the backend and maps them to the BannerSlide shape.
+  //    Falls back to FALLBACK_BANNER_SLIDES if the API returns nothing.
+  // ─────────────────────────────────────────────────────────────────────────
+  const fetchDynamicBanners = async (silent: boolean = false, force: boolean = false) => {
+    const now = Date.now();
+    if (!force && now - lastBannersFetchedAtRef.current < 30000) {
+      return;
+    }
+    try {
+      if (!silent && dynamicBanners.length === 0) {
+        setBannersLoading(true);
+      }
+      const res = await api.get('/api/banners');
+      if (res.data && res.data.success && Array.isArray(res.data.banners) && res.data.banners.length > 0) {
+        const mapped: BannerSlide[] = res.data.banners.map((b: any) => ({
+          id: b._id,
+          titlePrimary: b.titlePrimary || '',
+          titleSecondary: b.titleSecondary || '',
+          tagline: b.tagline || '',
+          badge: b.badge || '',
+          price: b.price || '',
+          unit: b.unit || '',
+          image: b.imageUrl,
+          isComingSoon: !!b.isComingSoon,
+          isFullBanner: !!b.isFullBanner,
+          ctaAction: b.ctaAction || '',
+        }));
+        setDynamicBanners(mapped);
+        lastBannersFetchedAtRef.current = Date.now();
+      } else {
+        // No banners in DB yet — show fallback so Home doesn't look empty
+        setDynamicBanners(FALLBACK_BANNER_SLIDES);
+      }
+    } catch (err) {
+      console.log('Home fetch dynamic banners error:', err);
+      if (dynamicBanners.length === 0) {
+        setDynamicBanners(FALLBACK_BANNER_SLIDES);
+      }
+    } finally {
+      setBannersLoading(false);
+    }
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -596,10 +641,12 @@ export default function HomeScreen() {
     // Reset throttles so reload forces a real refresh
     lastChefsFetchedAtRef.current = 0;
     lastUserRefreshAtRef.current = 0;
+    lastBannersFetchedAtRef.current = 0;
     try {
       await Promise.allSettled([
         loadUserDataAndAddresses(),
         fetchDynamicChefs(true, true), // silent + force
+        fetchDynamicBanners(true, true), // ✅ NEW: silent + force
         fetchCartCount(),
         checkLocationStatusAndPrompt(),
       ]);
@@ -619,9 +666,10 @@ export default function HomeScreen() {
       const isFirstFocus = !hasFocusedOnceRef.current;
       hasFocusedOnceRef.current = true;
 
-      // Fire all three in parallel, without awaiting (non-blocking)
+      // Fire all in parallel, without awaiting (non-blocking)
       loadUserDataAndAddresses();          // Instant from cache + bg refresh
       fetchDynamicChefs(!isFirstFocus);    // silent on subsequent focuses
+      fetchDynamicBanners(!isFirstFocus);  // ✅ NEW: silent on subsequent focuses
       fetchCartCount();
     }, [])
   );
@@ -838,10 +886,14 @@ export default function HomeScreen() {
     updateGreeting();
   }, []);
 
-  // Auto-scroll banner
+  // Auto-scroll banner (dynamic length)
   useEffect(() => {
+    const bannersForScroll =
+      dynamicBanners.length > 0 ? dynamicBanners : FALLBACK_BANNER_SLIDES;
+    if (bannersForScroll.length <= 1) return;
+
     const interval = setInterval(() => {
-      const nextIndex = (activeBannerIndex + 1) % BANNER_SLIDES.length;
+      const nextIndex = (activeBannerIndex + 1) % bannersForScroll.length;
       bannerScrollRef.current?.scrollTo({
         x: nextIndex * (width - 32),
         animated: true,
@@ -850,7 +902,7 @@ export default function HomeScreen() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [activeBannerIndex]);
+  }, [activeBannerIndex, dynamicBanners.length]);
 
   const fetchCurrentLocationDynamically = async () => {
     if (hasAppliedGpsOnceRef.current) return;
@@ -1160,8 +1212,10 @@ export default function HomeScreen() {
   };
 
   const handleBannerScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const bannersForScroll =
+      dynamicBanners.length > 0 ? dynamicBanners : FALLBACK_BANNER_SLIDES;
     const slide = Math.round(event.nativeEvent.contentOffset.x / (width - 32));
-    if (slide !== activeBannerIndex && slide >= 0 && slide < BANNER_SLIDES.length) {
+    if (slide !== activeBannerIndex && slide >= 0 && slide < bannersForScroll.length) {
       setActiveBannerIndex(slide);
     }
   };
@@ -1223,6 +1277,42 @@ export default function HomeScreen() {
     }
   };
 
+  // ✅ NEW: dynamic banner CTA handler (uses ctaAction from admin form)
+  const handleBannerCtaPress = (slide: BannerSlide) => {
+    const action = (slide.ctaAction || '').trim().toLowerCase();
+
+    if (action === 'catering' || slide.id === '2' || slide.id === '3') {
+      router.push({
+        pathname: '/screens/AllChefCards',
+        params: { fromCategory: 'Catering', filterCatering: 'true' },
+      });
+      return;
+    }
+    if (action === 'mealbox' || action === 'meal box' || slide.id === '4') {
+      router.push({
+        pathname: '/screens/AllChefCards',
+        params: { fromCategory: 'Meal Box', filterMealBox: 'true' },
+      });
+      return;
+    }
+    if (action === 'pickles' || action === 'homemade' || slide.id === '5') {
+      router.push({
+        pathname: '/screens/AllChefCards',
+        params: { fromCategory: 'Pickles & Podis', filterCategory: 'Pickles & Podis' },
+      });
+      return;
+    }
+    if (action === 'quickbites' || action === 'quick bites') {
+      router.push({
+        pathname: '/screens/AllChefCards',
+        params: { fromCategory: 'Quick Bites', filterQuickBites: 'true' },
+      });
+      return;
+    }
+    // Default → all chefs
+    router.push('/screens/AllChefCards');
+  };
+
   const renderCategoryIcon = (item: CategoryItem, isSelected: boolean) => {
     const color = isSelected ? '#15803D' : '#2D6A4F';
     if (item.type === 'ionicons') {
@@ -1273,6 +1363,9 @@ export default function HomeScreen() {
       () => { }
     );
   };
+
+  // ✅ Choose which banner list to render (dynamic first, fallback second)
+  const bannersToRender = dynamicBanners.length > 0 ? dynamicBanners : FALLBACK_BANNER_SLIDES;
 
   return (
     <View style={styles.rootContainer}>
@@ -1388,15 +1481,15 @@ export default function HomeScreen() {
               scrollEventThrottle={16}
               style={styles.bannerScroll}
             >
-              {BANNER_SLIDES.map((slide) => {
-                // ─── 1st Banner : FULL IMAGE ONLY ───
+              {bannersToRender.map((slide) => {
+                // ─── Full Image Banner ───
                 if (slide.isFullBanner) {
                   return (
                     <TouchableOpacity
                       key={slide.id}
                       style={styles.bannerFullSlideCard}
                       activeOpacity={0.92}
-                      onPress={() => router.push('/screens/AllChefCards')}
+                      onPress={() => handleBannerCtaPress(slide)}
                     >
                       <Image
                         source={
@@ -1411,7 +1504,7 @@ export default function HomeScreen() {
                   );
                 }
 
-                // ─── 2nd Banner onwards : Half Info + Half Image Layout ───
+                // ─── Half Info + Half Image Layout ───
                 return (
                   <View key={slide.id} style={styles.bannerSlideCard}>
                     <View style={styles.bannerLeftSection}>
@@ -1441,31 +1534,7 @@ export default function HomeScreen() {
                         <TouchableOpacity
                           style={styles.bannerExploreBtn}
                           activeOpacity={0.85}
-                          onPress={() => {
-                            if (slide.id === '2') {
-                              router.push({
-                                pathname: '/screens/AllChefCards',
-                                params: { fromCategory: 'Catering', filterCatering: 'true' },
-                              });
-                            } else if (slide.id === '3') {
-                              router.push({
-                                pathname: '/screens/AllChefCards',
-                                params: { fromCategory: 'Catering', filterCatering: 'true' },
-                              });
-                            } else if (slide.id === '4') {
-                              router.push({
-                                pathname: '/screens/AllChefCards',
-                                params: { fromCategory: 'Meal Box', filterMealBox: 'true' },
-                              });
-                            } else if (slide.id === '5') {
-                              router.push({
-                                pathname: '/screens/AllChefCards',
-                                params: { fromCategory: 'Pickles & Podis', filterCategory: 'Pickles & Podis' },
-                              });
-                            } else {
-                              router.push('/screens/AllChefCards');
-                            }
-                          }}
+                          onPress={() => handleBannerCtaPress(slide)}
                         >
                           <Text style={styles.bannerExploreBtnText}>Explore Plans</Text>
                           <Feather name="arrow-right" size={13} color="#111813" style={{ marginLeft: 6 }} />
@@ -1492,7 +1561,7 @@ export default function HomeScreen() {
                       ) : (
                         <View style={styles.startsAtBadge}>
                           <Text style={styles.startsAtLabel}>STARTS AT</Text>
-                          <Text style={styles.startsAtPrice}>₹{slide.price}</Text>
+                          <Text style={styles.startsAtPrice}>₹{slide.price || '—'}</Text>
                           <Text style={styles.startsAtDuration}>{slide.unit || '/pack'}</Text>
                         </View>
                       )}
@@ -1503,7 +1572,7 @@ export default function HomeScreen() {
             </ScrollView>
 
             <View style={styles.bannerDotsRow}>
-              {BANNER_SLIDES.map((_, idx) => (
+              {bannersToRender.map((_, idx) => (
                 <View
                   key={idx}
                   style={[
@@ -2360,6 +2429,10 @@ export default function HomeScreen() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Styles — UNCHANGED from original Home.tsx. The banner preview styles in
+// add-banner.tsx mirror these exact values so the admin sees a 1:1 preview.
+// ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
@@ -2742,8 +2815,6 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     paddingTop: 2,
   },
-  // ✅ UPDATED: hint now sits BELOW the category bar (right-aligned).
-  //    Tapping navigates to the SAME destination as the "View All" category.
   viewAllHintContainer: {
     paddingHorizontal: 16,
     marginTop: 8,
@@ -2760,7 +2831,6 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
     letterSpacing: 0.25,
   },
-  // ✅ UPDATED: horizontal scroller for 6 categories
   categoryGridScrollContent: {
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -2798,9 +2868,6 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 5,
   },
-  // ✅ UPDATED: premium badge with white ring, shadow, and proper alignment.
-  //    Sized so short labels (HOT / SOON) and longer labels (75 MIN) both
-  //    render cleanly without overlapping adjacent categories.
   categoryHotBadge: {
     position: 'absolute',
     top: -6,
@@ -2825,7 +2892,6 @@ const styles = StyleSheet.create({
   categorySoonBadge: {
     backgroundColor: '#D97706',
   },
-  // ✅ NEW: distinct premium green for the "75 MIN" Quick Bites speed badge
   categoryQuickBadge: {
     backgroundColor: '#15803D',
   },

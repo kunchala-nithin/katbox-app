@@ -215,6 +215,7 @@ const generateFutureDateOptions = () => {
 // ✅ UPDATED: For homemade/QuickBites orders, the effective delivery time is now
 //    derived from the order's actual `deliveryDate` + `deliverySlot`/`deliveryTimeSlot`
 //    whenever that slot resolves to a real clock time (e.g. "By 4:30 PM").
+//    ✅ PROMPT 2: `quickDeliverySlot` (Prompt 1's exact name) is preferred first.
 const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
   if (!order) return undefined;
 
@@ -227,7 +228,7 @@ const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
   const isHomemadeType = sType === "homemade" || sType === "quickbites";
 
   if (isHomemadeType) {
-    const slotStr = order.deliverySlot || order.deliveryTimeSlot || "";
+    const slotStr = order.quickDeliverySlot || order.deliverySlot || order.deliveryTimeSlot || "";
 
     const clockTime = extractClockTimeFromSlot(slotStr);
     if (clockTime) {
@@ -288,9 +289,50 @@ const formatDeliveryType = (raw: any): string => {
     .join(" ");
 };
 
+// ✅ HELPER — Map a raw spice string (Prompt 1 shape) to a friendly
+//    label that the detail screen renders.
+const spiceRawToLabel = (rawSpice: any): string => {
+  const s = String(rawSpice || "").trim().toLowerCase();
+  if (!s) return "";
+  if (s === "less") return "Less spicy";
+  if (s === "medium") return "Medium spicy";
+  if (s === "very") return "Very spicy";
+  if (s === "noonion") return "No onion & garlic";
+  return String(rawSpice);
+};
+
 // ✅ NEW: Resolve special instruction from the order document.
+//    ✅ PROMPT 2: First priority is Prompt 1's authoritative sub-doc
+//    `order.specialInstructions` ({ spice, noOnionsGarlic, notes }).
+//    Fallback is the legacy `order.specialInstruction` sub-doc
+//    ({ tag, label, text }) + flat fields.
 const resolveSpecialInstruction = (order: any): { tag: string; label: string; text: string } => {
   if (!order) return { tag: "", label: "", text: "" };
+
+  // ✅ 1) Prompt 1's authoritative sub-doc (homemade / quickbites).
+  const quickSub = order.specialInstructions;
+  if (
+    quickSub &&
+    (quickSub.spice || quickSub.noOnionsGarlic || quickSub.notes)
+  ) {
+    const spiceRaw = String(quickSub.spice || "").trim();
+    const label = spiceRawToLabel(spiceRaw);
+    const notes = String(quickSub.notes || "").trim();
+    const noOnion = Boolean(quickSub.noOnionsGarlic);
+
+    let finalLabel = label;
+    if (noOnion && !String(finalLabel || "").toLowerCase().includes("no onion")) {
+      finalLabel = finalLabel ? `${finalLabel} • No onion & garlic` : "No onion & garlic";
+    }
+
+    return {
+      tag: spiceRaw,
+      label: finalLabel,
+      text: notes,
+    };
+  }
+
+  // ✅ 2) Legacy fallback — existing nested sub-doc + flat fields.
   const nested = order.specialInstruction || {};
   const tag = String(nested.tag || order.specialInstructionTag || "").trim();
   const label = String(nested.label || order.specialInstructionLabel || "").trim();
@@ -1763,9 +1805,11 @@ export default function MyOrdersScreen() {
       ? (selectedOrderDetails.deliveryDate || "Today")
       : activeDateTarget;
 
+    // ✅ PROMPT 2: Prefer the authoritative `quickDeliverySlot` (Prompt 1's
+    // exact field name), then fall back to the legacy slot fields.
     let detailTimeSlot = matchedSchedule?.timeSlot
       || (isCatering ? (selectedOrderDetails.eventTime || selectedOrderDetails.deliveryTimeSlot || "08:30 PM")
-      : isHomemade ? (selectedOrderDetails.deliverySlot || selectedOrderDetails.deliveryTimeSlot || (isQuickBites ? "By 4:30 PM" : "45-60 min"))
+      : isHomemade ? (selectedOrderDetails.quickDeliverySlot || selectedOrderDetails.deliverySlot || selectedOrderDetails.deliveryTimeSlot || (isQuickBites ? "By 4:30 PM" : "45-60 min"))
       : (selectedOrderDetails.deliveryTimeSlot || "7:00 PM - 9:00 PM"));
 
     if (isQuickBites && selectedOrderDetails.estimatedDeliveryAt) {
@@ -2600,7 +2644,11 @@ export default function MyOrdersScreen() {
               const isHomemadeStepperOpen = !!expandedSteppers[orderId];
 
               let homemadeDateDisplay = order?.deliveryDate || "Today";
+              // ✅ PROMPT 2: Prefer the authoritative `quickDeliverySlot`
+              // (Prompt 1's exact field name), then fall back to the legacy
+              // `deliverySlot` / `deliveryTimeSlot` for pre-existing orders.
               let homemadeSlotDisplay =
+                order?.quickDeliverySlot ||
                 order?.deliverySlot ||
                 order?.deliveryTimeSlot ||
                 (isQuickBites ? "By 4:30 PM" : "within 45-60 min");
@@ -2621,7 +2669,10 @@ export default function MyOrdersScreen() {
                     homemadeSlotDisplay = `By ${timeStr}`;
                   } else {
                     if (!order?.deliveryDate) homemadeDateDisplay = `Today, ${dayNum} ${monthShort}`;
-                    if (!order?.deliverySlot && !order?.deliveryTimeSlot) homemadeSlotDisplay = timeStr;
+                    // ✅ Only override when NO persisted Prompt 1 slot exists.
+                    if (!order?.quickDeliverySlot && !order?.deliverySlot && !order?.deliveryTimeSlot) {
+                      homemadeSlotDisplay = timeStr;
+                    }
                   }
                 }
               }
