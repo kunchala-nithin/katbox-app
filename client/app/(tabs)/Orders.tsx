@@ -33,6 +33,10 @@ import * as ImagePicker from "expo-image-picker";
 import api from "@/src/lib/api";
 import { socket } from "@/src/lib/socket";
 import { getUser } from "@/src/lib/authStorage";
+import { OrdersListSkeleton } from "@/src/components/skeletons/OrderScreenSkeleton";
+
+// ✅ Skeleton for the "Loading orders..." state
+
 
 const BOTTOM_TAB_BAR_HEIGHT = 60;
 
@@ -724,6 +728,9 @@ export default function MyOrdersScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [userOrders, setUserOrders] = useState<any[]>([]);
 
+  // ✅ NEW: Distinguishes "fetch failed" from "genuinely no orders".
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -871,8 +878,11 @@ export default function MyOrdersScreen() {
     }));
   };
 
+  // ✅ UPDATED: sets `fetchError` on failure so the UI can show a proper
+  //    error state instead of a misleading "No orders" empty state.
   const fetchMyOrders = async (isMounted = true) => {
     try {
+      setFetchError(null);
       const res = await api.get("/api/orders/my-orders");
       if (res.data && res.data.success && isMounted) {
         const fetchedOrders = res.data.orders || [];
@@ -910,8 +920,19 @@ export default function MyOrdersScreen() {
         setSelectedDatesPerOrder(initialSelectedMap);
         setPausedDates(initialPausedMap);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.log("Error fetching user order history:", err);
+      if (isMounted) {
+        const code = err?.code;
+        const hasResponse = !!err?.response;
+        if (code === "ERR_NETWORK" || !hasResponse) {
+          setFetchError("You're offline. Please check your internet connection and try again.");
+        } else if (code === "ECONNABORTED" || code === "ETIMEDOUT") {
+          setFetchError("The server is taking too long to respond. Please try again.");
+        } else {
+          setFetchError("Something went wrong while loading your orders.");
+        }
+      }
     } finally {
       if (isMounted) setLoading(false);
     }
@@ -920,6 +941,7 @@ export default function MyOrdersScreen() {
   const handleRefresh = useCallback(async () => {
     try {
       setRefreshing(true);
+      setFetchError(null);
       await fetchMyOrders(true);
     } catch (err) {
       console.log("Error during pull-to-refresh:", err);
@@ -2602,11 +2624,40 @@ export default function MyOrdersScreen() {
         ]}
       >
         {loading ? (
-          <View style={{ paddingVertical: 50, alignItems: "center" }}>
-            <ActivityIndicator size="large" color="#2D4A22" />
-            <Text style={{ marginTop: 10, fontSize: 13, color: "#64748B", fontWeight: "600" }}>
-              Loading orders...
-            </Text>
+          <OrdersListSkeleton count={2} />
+        ) : fetchError ? (
+          <View style={styles.emptyTabState}>
+            <Ionicons
+              name={
+                fetchError.toLowerCase().includes("offline")
+                  ? "cloud-offline-outline"
+                  : "alert-circle-outline"
+              }
+              size={44}
+              color="#94A3B8"
+              style={{ marginBottom: 10 }}
+            />
+            <Text style={styles.emptyTabTitle}>Couldn't load orders</Text>
+            <Text style={styles.emptyTabSubtitle}>{fetchError}</Text>
+            <TouchableOpacity
+              style={{
+                marginTop: 18,
+                backgroundColor: "#2D4A22",
+                paddingHorizontal: 24,
+                paddingVertical: 11,
+                borderRadius: 12,
+              }}
+              activeOpacity={0.85}
+              onPress={() => {
+                setLoading(true);
+                setFetchError(null);
+                fetchMyOrders(true);
+              }}
+            >
+              <Text style={{ color: "#FFFFFF", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 }}>
+                Retry
+              </Text>
+            </TouchableOpacity>
           </View>
         ) : filteredOrders.length > 0 ? (
           filteredOrders.map((order, orderIndex) => {
@@ -3938,7 +3989,7 @@ export default function MyOrdersScreen() {
                 onPress={closePreviewModal}
                 style={styles.modalAbsoluteFooterCTAButtonSolid}
               >
-                <Text style={styles.modalAbsoluteFooterCTAButtonSolidText}>
+                <Text style={styles.modalAbsoluteFooterButtonSolidText}>
                   Close Summary
                 </Text>
               </TouchableOpacity>
@@ -5100,6 +5151,8 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#64748B",
     marginTop: 4,
+    textAlign: "center",
+    paddingHorizontal: 20,
   },
   detailsHeaderRow: {
     flexDirection: "row",
@@ -6150,7 +6203,7 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 5,
   },
-  modalAbsoluteFooterCTAButtonSolidText: {
+  modalAbsoluteFooterButtonSolidText: {
     color: "#ffffff",
     fontSize: 15,
     fontWeight: "800",

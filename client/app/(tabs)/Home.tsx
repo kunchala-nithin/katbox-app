@@ -55,6 +55,10 @@ import AddressMapModal, {
 } from '@/src/components/AddressMapModal';
 // ✅ single-source-of-truth for delivery location (survives back navigation)
 import { useDeliveryLocationStore } from '@/src/store/deliveryLocationStore';
+import { BannerSkeleton, CaterersSectionSkeleton } from '@/src/components/skeletons/HomeSkeleton';
+
+// ✅ SKELETONS — all shimmer placeholders for dynamic data
+
 
 const { width, height } = Dimensions.get('window');
 const HOME_CARD_WIDTH = 220;
@@ -272,6 +276,9 @@ export default function HomeScreen() {
   const [expandedCuisines, setExpandedCuisines] = useState<{
     [key: string]: boolean;
   }>({});
+
+  // ✅ NEW: Distinguishes "fetch failed" from "genuinely no chefs".
+  const [chefsFetchError, setChefsFetchError] = useState<string | null>(null);
 
   // ─── Dynamic Banner States ───
   const [dynamicBanners, setDynamicBanners] = useState<BannerSlide[]>([]);
@@ -493,6 +500,8 @@ export default function HomeScreen() {
 
   // ─────────────────────────────────────────────────────────────────────────
   // ✅ PERF: fetchDynamicChefs — reduced throttle, no early-return when empty
+  // ✅ UPDATED: Sets `chefsFetchError` on failure so the UI can distinguish
+  //    "fetch failed" from "genuinely no chefs in this category".
   // ─────────────────────────────────────────────────────────────────────────
   const fetchDynamicChefs = useCallback(
     async (silent: boolean = false, force: boolean = false) => {
@@ -508,6 +517,9 @@ export default function HomeScreen() {
         if (!silent && chefsData.length === 0) {
           setChefsLoading(true);
         }
+        // Reset the error at the start of each attempt
+        setChefsFetchError(null);
+
         const res = await api.get('/api/chefs');
         if (res.data && res.data.chefs) {
           const formatted = res.data.chefs.map((chef: any, i: number) => {
@@ -545,8 +557,27 @@ export default function HomeScreen() {
           setChefsData(formatted);
           lastChefsFetchedAtRef.current = Date.now();
         }
-      } catch (err) {
+      } catch (err: any) {
         console.log('Home fetch dynamic chefs error:', err);
+        // Only surface the error state on non-silent fetches OR
+        // when there's absolutely no cached data to show.
+        if (!silent || chefsData.length === 0) {
+          const code = err?.code;
+          const hasResponse = !!err?.response;
+          if (code === 'ERR_NETWORK' || !hasResponse) {
+            setChefsFetchError(
+              "You're offline. Please check your internet connection and try again."
+            );
+          } else if (code === 'ECONNABORTED' || code === 'ETIMEDOUT') {
+            setChefsFetchError(
+              'The server is taking too long to respond. Please try again.'
+            );
+          } else {
+            setChefsFetchError(
+              'Something went wrong while loading chefs.'
+            );
+          }
+        }
       } finally {
         setChefsLoading(false);
       }
@@ -1463,11 +1494,25 @@ export default function HomeScreen() {
     );
   };
 
-  // Choose which banner list to render.
+  // ✅ PERF: Decide which banner list to render.
+  //    - While loading (no data yet) → show the BannerSkeleton
+  //    - Otherwise → real banners (or static fallback)
   const bannersToRender = useMemo(
     () => (dynamicBanners.length > 0 ? dynamicBanners : [STATIC_COMING_SOON_BANNER]),
     [dynamicBanners]
   );
+
+  const showBannerSkeleton =
+    bannersLoading && dynamicBanners.length === 0;
+
+  // ✅ PERF: Whether to show the chefs skeleton (initial load, no data yet)
+  const showChefsSkeleton =
+    chefsLoading && chefsData.length === 0;
+
+  // ✅ NEW: Whether to show the chefs error state
+  //    (only when there's an error AND we have no data to display)
+  const showChefsError =
+    !chefsLoading && !!chefsFetchError && chefsData.length === 0;
 
   return (
     <View style={styles.rootContainer}>
@@ -1592,163 +1637,173 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.bannerCarouselContainer}>
-            <ScrollView
-              ref={bannerScrollRef}
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              onScroll={handleBannerScroll}
-              scrollEventThrottle={16}
-              style={styles.bannerScroll}
-            >
-              {bannersToRender.map((slide) => {
-                // ─── Full Image Banner ───
-                if (slide.isFullBanner) {
-                  return (
-                    <TouchableOpacity
-                      key={slide.id}
-                      style={styles.bannerFullSlideCard}
-                      activeOpacity={0.92}
-                      onPress={() => handleBannerCtaPress(slide)}
-                    >
-                      <Image
-                        source={
-                          typeof slide.image === 'string'
-                            ? { uri: slide.image }
-                            : slide.image
-                        }
-                        style={styles.bannerFullImage}
-                        resizeMode="cover"
-                      />
-                    </TouchableOpacity>
-                  );
-                }
-
-                // ─── Half Info + Half Image Layout ───
-                return (
-                  <View key={slide.id} style={styles.bannerSlideCard}>
-                    <View style={styles.bannerLeftSection}>
-                      <View
-                        style={[
-                          styles.mealBadgePill,
-                          slide.isComingSoon && styles.comingSoonBadgePill,
-                        ]}
+            {/* ✅ SKELETON: shown while the first banner fetch is in-flight */}
+            {showBannerSkeleton ? (
+              <View style={styles.bannerScroll}>
+                <BannerSkeleton />
+              </View>
+            ) : (
+              <ScrollView
+                ref={bannerScrollRef}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onScroll={handleBannerScroll}
+                scrollEventThrottle={16}
+                style={styles.bannerScroll}
+              >
+                {bannersToRender.map((slide) => {
+                  // ─── Full Image Banner ───
+                  if (slide.isFullBanner) {
+                    return (
+                      <TouchableOpacity
+                        key={slide.id}
+                        style={styles.bannerFullSlideCard}
+                        activeOpacity={0.92}
+                        onPress={() => handleBannerCtaPress(slide)}
                       >
+                        <Image
+                          source={
+                            typeof slide.image === 'string'
+                              ? { uri: slide.image }
+                              : slide.image
+                          }
+                          style={styles.bannerFullImage}
+                          resizeMode="cover"
+                        />
+                      </TouchableOpacity>
+                    );
+                  }
+
+                  // ─── Half Info + Half Image Layout ───
+                  return (
+                    <View key={slide.id} style={styles.bannerSlideCard}>
+                      <View style={styles.bannerLeftSection}>
                         <View
                           style={[
-                            styles.badgeGreenDot,
-                            slide.isComingSoon && styles.comingSoonBadgeDot,
+                            styles.mealBadgePill,
+                            slide.isComingSoon && styles.comingSoonBadgePill,
                           ]}
-                        />
+                        >
+                          <View
+                            style={[
+                              styles.badgeGreenDot,
+                              slide.isComingSoon && styles.comingSoonBadgeDot,
+                            ]}
+                          />
+                          <Text
+                            style={[
+                              styles.mealBadgeText,
+                              slide.isComingSoon && styles.comingSoonBadgeText,
+                            ]}
+                          >
+                            {slide.badge}
+                          </Text>
+                        </View>
+
+                        <Text style={styles.bannerTitlePrimary}>
+                          {slide.titlePrimary}
+                        </Text>
                         <Text
                           style={[
-                            styles.mealBadgeText,
-                            slide.isComingSoon && styles.comingSoonBadgeText,
+                            styles.bannerTitleSecondary,
+                            slide.isComingSoon && styles.comingSoonTitleSecondary,
                           ]}
                         >
-                          {slide.badge}
+                          {slide.titleSecondary}
                         </Text>
+                        <Text style={styles.bannerSubtitle}>{slide.tagline}</Text>
+
+                        {slide.isComingSoon ? (
+                          <TouchableOpacity
+                            style={styles.bannerNotifyBtn}
+                            activeOpacity={0.85}
+                            onPress={() => setIsComingSoonModalVisible(true)}
+                          >
+                            <MaterialCommunityIcons
+                              name="clock-fast"
+                              size={14}
+                              color="#FBBF24"
+                              style={{ marginRight: 5 }}
+                            />
+                            <Text style={styles.bannerNotifyBtnText}>
+                              Coming Soon
+                            </Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <TouchableOpacity
+                            style={styles.bannerExploreBtn}
+                            activeOpacity={0.85}
+                            onPress={() => handleBannerCtaPress(slide)}
+                          >
+                            <Text style={styles.bannerExploreBtnText}>
+                              Explore Plans
+                            </Text>
+                            <Feather
+                              name="arrow-right"
+                              size={13}
+                              color="#111813"
+                              style={{ marginLeft: 6 }}
+                            />
+                          </TouchableOpacity>
+                        )}
                       </View>
 
-                      <Text style={styles.bannerTitlePrimary}>
-                        {slide.titlePrimary}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.bannerTitleSecondary,
-                          slide.isComingSoon && styles.comingSoonTitleSecondary,
-                        ]}
-                      >
-                        {slide.titleSecondary}
-                      </Text>
-                      <Text style={styles.bannerSubtitle}>{slide.tagline}</Text>
+                      <View style={styles.bannerRightSection}>
+                        <Image
+                          source={
+                            typeof slide.image === 'string'
+                              ? { uri: slide.image }
+                              : slide.image
+                          }
+                          style={styles.bannerFoodImage}
+                          resizeMode="cover"
+                        />
 
-                      {slide.isComingSoon ? (
-                        <TouchableOpacity
-                          style={styles.bannerNotifyBtn}
-                          activeOpacity={0.85}
-                          onPress={() => setIsComingSoonModalVisible(true)}
-                        >
-                          <MaterialCommunityIcons
-                            name="clock-fast"
-                            size={14}
-                            color="#FBBF24"
-                            style={{ marginRight: 5 }}
-                          />
-                          <Text style={styles.bannerNotifyBtnText}>
-                            Coming Soon
-                          </Text>
-                        </TouchableOpacity>
-                      ) : (
-                        <TouchableOpacity
-                          style={styles.bannerExploreBtn}
-                          activeOpacity={0.85}
-                          onPress={() => handleBannerCtaPress(slide)}
-                        >
-                          <Text style={styles.bannerExploreBtnText}>
-                            Explore Plans
-                          </Text>
-                          <Feather
-                            name="arrow-right"
-                            size={13}
-                            color="#111813"
-                            style={{ marginLeft: 6 }}
-                          />
-                        </TouchableOpacity>
-                      )}
+                        {slide.isComingSoon ? (
+                          <View style={styles.comingSoonTagBanner}>
+                            <Ionicons
+                              name="sparkles"
+                              size={11}
+                              color="#FBBF24"
+                              style={{ marginRight: 4 }}
+                            />
+                            <Text style={styles.comingSoonTagText}>
+                              LAUNCHING SOON
+                            </Text>
+                          </View>
+                        ) : (
+                          <View style={styles.startsAtBadge}>
+                            <Text style={styles.startsAtLabel}>STARTS AT</Text>
+                            <Text style={styles.startsAtPrice}>
+                              ₹{slide.price || '—'}
+                            </Text>
+                            <Text style={styles.startsAtDuration}>
+                              {slide.unit || '/pack'}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
                     </View>
+                  );
+                })}
+              </ScrollView>
+            )}
 
-                    <View style={styles.bannerRightSection}>
-                      <Image
-                        source={
-                          typeof slide.image === 'string'
-                            ? { uri: slide.image }
-                            : slide.image
-                        }
-                        style={styles.bannerFoodImage}
-                        resizeMode="cover"
-                      />
-
-                      {slide.isComingSoon ? (
-                        <View style={styles.comingSoonTagBanner}>
-                          <Ionicons
-                            name="sparkles"
-                            size={11}
-                            color="#FBBF24"
-                            style={{ marginRight: 4 }}
-                          />
-                          <Text style={styles.comingSoonTagText}>
-                            LAUNCHING SOON
-                          </Text>
-                        </View>
-                      ) : (
-                        <View style={styles.startsAtBadge}>
-                          <Text style={styles.startsAtLabel}>STARTS AT</Text>
-                          <Text style={styles.startsAtPrice}>
-                            ₹{slide.price || '—'}
-                          </Text>
-                          <Text style={styles.startsAtDuration}>
-                            {slide.unit || '/pack'}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                );
-              })}
-            </ScrollView>
-
-            <View style={styles.bannerDotsRow}>
-              {bannersToRender.map((_, idx) => (
-                <View
-                  key={idx}
-                  style={[
-                    styles.bannerDot,
-                    activeBannerIndex === idx ? styles.bannerDotActive : null,
-                  ]}
-                />
-              ))}
-            </View>
+            {/* Hide dots while the skeleton is visible */}
+            {!showBannerSkeleton && (
+              <View style={styles.bannerDotsRow}>
+                {bannersToRender.map((_, idx) => (
+                  <View
+                    key={idx}
+                    style={[
+                      styles.bannerDot,
+                      activeBannerIndex === idx ? styles.bannerDotActive : null,
+                    ]}
+                  />
+                ))}
+              </View>
+            )}
           </View>
         </View>
 
@@ -1845,283 +1900,304 @@ export default function HomeScreen() {
           </View>
 
           {/* ─── Top Home Made Caterers Section ─── */}
-          <View ref={caterersSectionRef} style={styles.caterersSection}>
-            <View style={styles.sectionHeaderRow}>
-              <View>
-                <Text style={styles.sectionTitle}>Top Home Made Caterers</Text>
-                <View style={styles.sectionSubRow}>
-                  <Text style={styles.sectionSubtitle}>
-                    Verified chefs delivering pure hygiene
-                  </Text>
-                  <MaterialCommunityIcons
-                    name="shield-check"
-                    size={14}
-                    color="#2D6A4F"
-                    style={{ marginLeft: 4 }}
-                  />
-                </View>
-              </View>
-
-              <TouchableOpacity
-                style={styles.seeAllBtn}
-                activeOpacity={0.7}
-                onPress={() => router.push('/screens/AllChefCards')}
-              >
-                <Text style={styles.seeAllBtnText}>See all</Text>
-                <Feather
-                  name="arrow-right"
-                  size={13}
-                  color="#2D6A4F"
-                  style={{ marginLeft: 3 }}
+          {/* ✅ SKELETON: full section skeleton while chefs load */}
+          {showChefsSkeleton ? (
+            <CaterersSectionSkeleton />
+          ) : showChefsError ? (
+            /* ✅ NEW: Chefs fetch error state with Retry button */
+            <View style={styles.chefsErrorContainer}>
+              <View style={styles.chefsErrorIconBox}>
+                <Ionicons
+                  name={
+                    (chefsFetchError || '').toLowerCase().includes('offline')
+                      ? 'cloud-offline-outline'
+                      : 'alert-circle-outline'
+                  }
+                  size={38}
+                  color="#94A3B8"
                 />
+              </View>
+              <Text style={styles.chefsErrorTitle}>Couldn't load chefs</Text>
+              <Text style={styles.chefsErrorMessage}>{chefsFetchError}</Text>
+              <TouchableOpacity
+                style={styles.chefsErrorRetryBtn}
+                activeOpacity={0.85}
+                onPress={() => {
+                  setChefsLoading(true);
+                  setChefsFetchError(null);
+                  fetchDynamicChefs(false, true);
+                }}
+              >
+                <Feather
+                  name="refresh-cw"
+                  size={15}
+                  color="#FFFFFF"
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={styles.chefsErrorRetryBtnText}>Retry</Text>
               </TouchableOpacity>
             </View>
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.filterPillsScroll}
-            >
-              {FILTER_TAGS.map((tag) => {
-                const isSelected = selectedTag === tag.name;
-                return (
-                  <TouchableOpacity
-                    key={tag.name}
-                    onPress={() => setSelectedTag(tag.name)}
-                    style={[styles.filterPill, isSelected && styles.filterPillActive]}
-                    activeOpacity={0.8}
-                  >
-                    {tag.icon === 'leaf' && (
-                      <Ionicons
-                        name="leaf-outline"
-                        size={12}
-                        color={isSelected ? '#FFFFFF' : '#2D6A4F'}
-                        style={{ marginRight: 5 }}
-                      />
-                    )}
-                    {tag.icon === 'drumstick' && (
-                      <MaterialCommunityIcons
-                        name="food-drumstick-outline"
-                        size={12}
-                        color={isSelected ? '#FFFFFF' : '#6B7280'}
-                        style={{ marginRight: 5 }}
-                      />
-                    )}
-                    {tag.icon === 'pot-steam' && (
-                      <MaterialCommunityIcons
-                        name="pot-steam-outline"
-                        size={12}
-                        color={isSelected ? '#FFFFFF' : '#6B7280'}
-                        style={{ marginRight: 5 }}
-                      />
-                    )}
-                    {tag.icon === 'food-croissant' && (
-                      <MaterialCommunityIcons
-                        name="silverware-fork-knife"
-                        size={11}
-                        color={isSelected ? '#FFFFFF' : '#6B7280'}
-                        style={{ marginRight: 5 }}
-                      />
-                    )}
-                    <Text
-                      style={[
-                        styles.filterPillText,
-                        isSelected && styles.filterPillTextActive,
-                      ]}
-                    >
-                      {tag.name}
+          ) : (
+            <View ref={caterersSectionRef} style={styles.caterersSection}>
+              <View style={styles.sectionHeaderRow}>
+                <View>
+                  <Text style={styles.sectionTitle}>Top Home Made Caterers</Text>
+                  <View style={styles.sectionSubRow}>
+                    <Text style={styles.sectionSubtitle}>
+                      Verified chefs delivering pure hygiene
                     </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+                    <MaterialCommunityIcons
+                      name="shield-check"
+                      size={14}
+                      color="#2D6A4F"
+                      style={{ marginLeft: 4 }}
+                    />
+                  </View>
+                </View>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.caterersDeckScroll}
-            >
-              {chefsLoading && chefsData.length === 0 ? (
-                // ✅ PERF: Skeleton cards instead of a spinner (perceived speed)
-                <>
-                  {[0, 1, 2].map((i) => (
-                    <View
-                      key={`sk_${i}`}
-                      style={[styles.catererDeckCard, styles.skeletonCard]}
-                    >
-                      <View style={styles.skeletonImage} />
-                      <View style={styles.skeletonBody}>
-                        <View style={styles.skeletonLineWide} />
-                        <View style={styles.skeletonLineNarrow} />
-                        <View style={styles.skeletonLineWide} />
-                        <View style={styles.skeletonLineNarrow} />
-                      </View>
-                    </View>
-                  ))}
-                </>
-              ) : filteredChefs.length > 0 ? (
-                filteredChefs.map((caterer) => {
-                  const isFav = favorites[caterer.id];
-                  const isOffline = !caterer.isAvailable;
-                  const isExpanded = !!expandedCuisines[caterer.id];
+                <TouchableOpacity
+                  style={styles.seeAllBtn}
+                  activeOpacity={0.7}
+                  onPress={() => router.push('/screens/AllChefCards')}
+                >
+                  <Text style={styles.seeAllBtnText}>See all</Text>
+                  <Feather
+                    name="arrow-right"
+                    size={13}
+                    color="#2D6A4F"
+                    style={{ marginLeft: 3 }}
+                  />
+                </TouchableOpacity>
+              </View>
 
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterPillsScroll}
+              >
+                {FILTER_TAGS.map((tag) => {
+                  const isSelected = selectedTag === tag.name;
                   return (
                     <TouchableOpacity
-                      key={caterer.id}
-                      style={[
-                        styles.catererDeckCard,
-                        isOffline && styles.cardOffline,
-                      ]}
-                      activeOpacity={0.9}
-                      onPress={() => {
-                        if (isOffline) return;
-                        router.push('/screens/AllChefCards');
-                      }}
+                      key={tag.name}
+                      onPress={() => setSelectedTag(tag.name)}
+                      style={[styles.filterPill, isSelected && styles.filterPillActive]}
+                      activeOpacity={0.8}
                     >
-                      <View style={styles.foodImageContainer}>
-                        <HomeChefBannerCarousel
-                          banners={caterer.banners}
-                          fallbackImage={
-                            caterer.coverImage || DEFAULT_COVER_IMAGES[0]
-                          }
-                          isOffline={isOffline}
+                      {tag.icon === 'leaf' && (
+                        <Ionicons
+                          name="leaf-outline"
+                          size={12}
+                          color={isSelected ? '#FFFFFF' : '#2D6A4F'}
+                          style={{ marginRight: 5 }}
                         />
+                      )}
+                      {tag.icon === 'drumstick' && (
+                        <MaterialCommunityIcons
+                          name="food-drumstick-outline"
+                          size={12}
+                          color={isSelected ? '#FFFFFF' : '#6B7280'}
+                          style={{ marginRight: 5 }}
+                        />
+                      )}
+                      {tag.icon === 'pot-steam' && (
+                        <MaterialCommunityIcons
+                          name="pot-steam-outline"
+                          size={12}
+                          color={isSelected ? '#FFFFFF' : '#6B7280'}
+                          style={{ marginRight: 5 }}
+                        />
+                      )}
+                      {tag.icon === 'food-croissant' && (
+                        <MaterialCommunityIcons
+                          name="silverware-fork-knife"
+                          size={11}
+                          color={isSelected ? '#FFFFFF' : '#6B7280'}
+                          style={{ marginRight: 5 }}
+                        />
+                      )}
+                      <Text
+                        style={[
+                          styles.filterPillText,
+                          isSelected && styles.filterPillTextActive,
+                        ]}
+                      >
+                        {tag.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
 
-                        <View style={styles.cardBestsellerTag}>
-                          <MaterialIcons
-                            name="verified"
-                            size={9}
-                            color="#FFFFFF"
-                            style={{ marginRight: 3 }}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.caterersDeckScroll}
+              >
+                {filteredChefs.length > 0 ? (
+                  filteredChefs.map((caterer) => {
+                    const isFav = favorites[caterer.id];
+                    const isOffline = !caterer.isAvailable;
+                    const isExpanded = !!expandedCuisines[caterer.id];
+
+                    return (
+                      <TouchableOpacity
+                        key={caterer.id}
+                        style={[
+                          styles.catererDeckCard,
+                          isOffline && styles.cardOffline,
+                        ]}
+                        activeOpacity={0.9}
+                        onPress={() => {
+                          if (isOffline) return;
+                          router.push('/screens/AllChefCards');
+                        }}
+                      >
+                        <View style={styles.foodImageContainer}>
+                          <HomeChefBannerCarousel
+                            banners={caterer.banners}
+                            fallbackImage={
+                              caterer.coverImage || DEFAULT_COVER_IMAGES[0]
+                            }
+                            isOffline={isOffline}
                           />
-                          <Text style={styles.cardBestsellerText}>Verified</Text>
-                        </View>
 
-                        <TouchableOpacity
-                          style={styles.cardFavButton}
-                          onPress={() => toggleFavorite(caterer.id)}
-                          activeOpacity={0.8}
-                        >
-                          <Ionicons
-                            name={isFav ? 'heart' : 'heart-outline'}
-                            size={17}
-                            color={isFav ? '#E11D48' : '#FFFFFF'}
-                          />
-                        </TouchableOpacity>
+                          <View style={styles.cardBestsellerTag}>
+                            <MaterialIcons
+                              name="verified"
+                              size={9}
+                              color="#FFFFFF"
+                              style={{ marginRight: 3 }}
+                            />
+                            <Text style={styles.cardBestsellerText}>Verified</Text>
+                          </View>
 
-                        <View style={styles.chefAvatarPill}>
-                          <Image
-                            source={{ uri: caterer.avatar }}
-                            style={styles.chefImage}
-                          />
-                        </View>
-                      </View>
-
-                      <View style={styles.cardBody}>
-                        <Text style={styles.catererTitle} numberOfLines={1}>
-                          {caterer.name}
-                        </Text>
-
-                        <View style={styles.ratingDistanceRow}>
-                          <Ionicons name="star" size={12} color="#D97706" />
-                          <Text style={styles.ratingNumber}>{caterer.rating}</Text>
-                          <Text style={styles.reviewsCount}>
-                            ({caterer.ratingCount || '120+'})
-                          </Text>
-                          <Text style={styles.dotSeparator}>•</Text>
-                          <Text
-                            style={styles.distanceValue}
-                            numberOfLines={1}
+                          <TouchableOpacity
+                            style={styles.cardFavButton}
+                            onPress={() => toggleFavorite(caterer.id)}
+                            activeOpacity={0.8}
                           >
-                            {caterer.locationText}
-                          </Text>
+                            <Ionicons
+                              name={isFav ? 'heart' : 'heart-outline'}
+                              size={17}
+                              color={isFav ? '#E11D48' : '#FFFFFF'}
+                            />
+                          </TouchableOpacity>
+
+                          <View style={styles.chefAvatarPill}>
+                            <Image
+                              source={{ uri: caterer.avatar }}
+                              style={styles.chefImage}
+                            />
+                          </View>
                         </View>
 
-                        <View style={styles.cuisineTimeRow}>
-                          <Text style={styles.timeValue}>{caterer.expText}</Text>
-                        </View>
-
-                        <View style={styles.cuisineContainer}>
-                          <Text
-                            style={styles.cuisineValue}
-                            numberOfLines={isExpanded ? undefined : 1}
-                          >
-                            {caterer.specialty}
+                        <View style={styles.cardBody}>
+                          <Text style={styles.catererTitle} numberOfLines={1}>
+                            {caterer.name}
                           </Text>
-                          {caterer.specialty && caterer.specialty.length > 22 && (
-                            <TouchableOpacity
-                              onPress={() =>
-                                setExpandedCuisines((prev) => ({
-                                  ...prev,
-                                  [caterer.id]: !prev[caterer.id],
-                                }))
-                              }
-                              activeOpacity={0.7}
-                              style={styles.moreLessBtn}
+
+                          <View style={styles.ratingDistanceRow}>
+                            <Ionicons name="star" size={12} color="#D97706" />
+                            <Text style={styles.ratingNumber}>{caterer.rating}</Text>
+                            <Text style={styles.reviewsCount}>
+                              ({caterer.ratingCount || '120+'})
+                            </Text>
+                            <Text style={styles.dotSeparator}>•</Text>
+                            <Text
+                              style={styles.distanceValue}
+                              numberOfLines={1}
                             >
-                              <Text style={styles.moreLessText}>
-                                {isExpanded ? ' less' : ' ...more'}
-                              </Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
-
-                        <View style={styles.cardBottomRow}>
-                          <View style={styles.pricingRow}>
-                            <Text style={styles.perPlateLabel}>Starts @ </Text>
-                            <Text style={styles.priceGreen}>
-                              ₹{caterer.priceValue}
+                              {caterer.locationText}
                             </Text>
                           </View>
 
-                          <View style={styles.vegNonVegBadgeContainer}>
-                            {caterer.foodType === 'VEG' && (
-                              <View style={styles.vegBadgeCircle}>
-                                <View style={styles.vegInnerDot} />
-                              </View>
+                          <View style={styles.cuisineTimeRow}>
+                            <Text style={styles.timeValue}>{caterer.expText}</Text>
+                          </View>
+
+                          <View style={styles.cuisineContainer}>
+                            <Text
+                              style={styles.cuisineValue}
+                              numberOfLines={isExpanded ? undefined : 1}
+                            >
+                              {caterer.specialty}
+                            </Text>
+                            {caterer.specialty && caterer.specialty.length > 22 && (
+                              <TouchableOpacity
+                                onPress={() =>
+                                  setExpandedCuisines((prev) => ({
+                                    ...prev,
+                                    [caterer.id]: !prev[caterer.id],
+                                  }))
+                                }
+                                activeOpacity={0.7}
+                                style={styles.moreLessBtn}
+                              >
+                                <Text style={styles.moreLessText}>
+                                  {isExpanded ? ' less' : ' ...more'}
+                                </Text>
+                              </TouchableOpacity>
                             )}
-                            {caterer.foodType === 'NONVEG' && (
-                              <View style={styles.nonVegBadgeCircle}>
-                                <View style={styles.nonVegInnerTriangle} />
-                              </View>
-                            )}
-                            {caterer.foodType !== 'VEG' &&
-                              caterer.foodType !== 'NONVEG' && (
-                                <View style={styles.bothBadgeRow}>
-                                  <View style={styles.vegBadgeCircle}>
-                                    <View style={styles.vegInnerDot} />
-                                  </View>
-                                  <View
-                                    style={[
-                                      styles.nonVegBadgeCircle,
-                                      { marginLeft: 3 },
-                                    ]}
-                                  >
-                                    <View style={styles.nonVegInnerTriangle} />
-                                  </View>
+                          </View>
+
+                          <View style={styles.cardBottomRow}>
+                            <View style={styles.pricingRow}>
+                              <Text style={styles.perPlateLabel}>Starts @ </Text>
+                              <Text style={styles.priceGreen}>
+                                ₹{caterer.priceValue}
+                              </Text>
+                            </View>
+
+                            <View style={styles.vegNonVegBadgeContainer}>
+                              {caterer.foodType === 'VEG' && (
+                                <View style={styles.vegBadgeCircle}>
+                                  <View style={styles.vegInnerDot} />
                                 </View>
                               )}
+                              {caterer.foodType === 'NONVEG' && (
+                                <View style={styles.nonVegBadgeCircle}>
+                                  <View style={styles.nonVegInnerTriangle} />
+                                </View>
+                              )}
+                              {caterer.foodType !== 'VEG' &&
+                                caterer.foodType !== 'NONVEG' && (
+                                  <View style={styles.bothBadgeRow}>
+                                    <View style={styles.vegBadgeCircle}>
+                                      <View style={styles.vegInnerDot} />
+                                    </View>
+                                    <View
+                                      style={[
+                                        styles.nonVegBadgeCircle,
+                                        { marginLeft: 3 },
+                                      ]}
+                                    >
+                                      <View style={styles.nonVegInnerTriangle} />
+                                    </View>
+                                  </View>
+                                )}
+                            </View>
                           </View>
                         </View>
-                      </View>
 
-                      {isOffline && (
-                        <View style={styles.offlineBadgeHome}>
-                          <Text style={styles.offlineTextHome}>🔴 Offline</Text>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })
-              ) : (
-                <View style={styles.caterersLoadingContainer}>
-                  <Text style={styles.caterersLoadingText}>
-                    No chefs found for this category
-                  </Text>
-                </View>
-              )}
-            </ScrollView>
-          </View>
+                        {isOffline && (
+                          <View style={styles.offlineBadgeHome}>
+                            <Text style={styles.offlineTextHome}>🔴 Offline</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })
+                ) : (
+                  <View style={styles.caterersLoadingContainer}>
+                    <Text style={styles.caterersLoadingText}>
+                      No chefs found for this category
+                    </Text>
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          )}
 
           <View style={styles.trustBannerContainer}>
             <View style={styles.trustCard}>
@@ -2887,10 +2963,6 @@ export default function HomeScreen() {
     </View>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Styles — mostly unchanged; added skeleton styles at the end.
-// ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
@@ -4380,34 +4452,63 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginTop: 1,
   },
-
-  // ✅ NEW: Skeleton loader styles
-  skeletonCard: {
-    backgroundColor: '#FFFFFF',
-    borderColor: '#F1F5F9',
+    chefsErrorContainer: {
+    paddingVertical: 40,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    marginHorizontal: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderStyle: 'dashed',
   },
-  skeletonImage: {
-    width: '100%',
-    height: 120,
-    backgroundColor: '#E2E8F0',
+  chefsErrorIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
   },
-  skeletonBody: {
-    paddingTop: 18,
-    paddingHorizontal: 12,
-    paddingBottom: 12,
+  chefsErrorTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1E293B',
+    textAlign: 'center',
+    marginBottom: 6,
+    letterSpacing: -0.2,
   },
-  skeletonLineWide: {
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#E2E8F0',
-    marginBottom: 8,
-    width: '85%',
+  chefsErrorMessage: {
+    fontSize: 12.5,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+    fontWeight: '500',
+    marginBottom: 18,
+    paddingHorizontal: 10,
   },
-  skeletonLineNarrow: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#EEF2F7',
-    marginBottom: 8,
-    width: '55%',
+  chefsErrorRetryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#15803D',
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 14,
+    shadowColor: '#15803D',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  chefsErrorRetryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 });

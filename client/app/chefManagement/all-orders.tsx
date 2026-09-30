@@ -1402,40 +1402,19 @@ export default function AllOrdersScreen() {
     return formatDeliveryType(activeOrder?.deliveryType);
   }, [activeOrder?.deliveryType]);
 
-  // ✅ NEW: Human-friendly service type label — used in the meta strip
-  //    cell for homemade/quickbites (instead of delivery type) and in
-  //    the merged corner badge on catering/mealbox orders.
-  const resolvedServiceTypeLabel = useMemo(() => {
+  // ✅ NEW: Human-friendly service type label for the merged corner badge.
+  //    Rendered on ALL order types (homemade / quickbites / catering / mealbox).
+  const cornerServiceBadgeText = useMemo(() => {
     const s = String(activeOrder?.serviceType || '').toLowerCase();
+    if (s === 'homemade') return isQuickBitesFlow ? 'QUICKBITES' : 'HOMEMADE';
+    if (s === 'quickbites' || s === 'quick_bites' || s === 'quick-bites') return 'QUICKBITES';
+    if (s === 'catering') return 'CATERING';
+    if (s === 'mealbox') return 'MEALBOX';
     if (!s) return '';
-    if (s === 'homemade') return isQuickBitesFlow ? '⚡ QuickBites' : 'Homemade';
-    if (s === 'quickbites' || s === 'quick_bites' || s === 'quick-bites') return '⚡ QuickBites';
-    if (s === 'catering') return 'Catering';
-    if (s === 'mealbox') return 'MealBox';
-    return s.charAt(0).toUpperCase() + s.slice(1);
+    return s.toUpperCase();
   }, [activeOrder?.serviceType, isQuickBitesFlow]);
 
-  // ✅ NEW: Whether the DELIVERY TYPE cell should be shown in the strip.
-  //    For homemade/quickbites we REPLACE it with a SERVICE TYPE cell,
-  //    so we always render exactly one third cell for non-homemade flows,
-  //    and a SERVICE TYPE third cell for homemade flows.
-  const thirdStripCellIsServiceType = isHomemadeFlow;
-  const thirdStripCellLabel = thirdStripCellIsServiceType
-    ? 'SERVICE TYPE'
-    : 'DELIVERY TYPE';
-  const thirdStripCellValue = thirdStripCellIsServiceType
-    ? (resolvedServiceTypeLabel || 'Homemade')
-    : resolvedDeliveryTypeLabel;
-  const shouldShowThirdStripCell = !!thirdStripCellValue;
-
-  // ✅ NEW: Whether to show the merged corner service-type badge.
-  //    Only for catering and mealbox (NOT homemade/quickbites).
-  const shouldShowCornerServiceBadge = isCateringFlow || isMealBoxFlow;
-  const cornerServiceBadgeText = isCateringFlow
-    ? 'CATERING'
-    : isMealBoxFlow
-    ? 'MEALBOX'
-    : '';
+  const shouldShowCornerServiceBadge = !!cornerServiceBadgeText;
 
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
@@ -2091,7 +2070,7 @@ export default function AllOrdersScreen() {
 
               {/* 1. ORDER IDENTIFIER CARD */}
               <View style={styles.card}>
-                {/* ✅ MERGED CORNER SERVICE-TYPE BADGE (only for catering & mealbox) */}
+                {/* ✅ MERGED CORNER SERVICE-TYPE BADGE (for ALL order types) */}
                 {shouldShowCornerServiceBadge ? (
                   <View style={styles.cornerServiceBadge}>
                     <Text style={styles.cornerServiceBadgeText}>{cornerServiceBadgeText}</Text>
@@ -2233,12 +2212,11 @@ export default function AllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
-                {/* ✅ Dynamic Delivery Date / Slot / Third Cell Strip (Chef Green Theme)
-                    — The THIRD cell is dynamic:
-                        • For HOMEMADE / QUICKBITES: shows SERVICE TYPE
-                        • For all other flows: shows DELIVERY TYPE
-                    Values come from orderData.deliveryDate / orderData.deliveryTimeSlot
-                    and the pre-computed thirdStripCellLabel / thirdStripCellValue. */}
+                {/* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Chef Green Theme)
+                    — Restored to the original three-cell layout: DELIVERY DATE |
+                    DELIVERY SLOT | DELIVERY TYPE. The third cell shows DELIVERY TYPE
+                    for every flow (values come from orderData.deliveryDate /
+                    orderData.deliveryTimeSlot and resolvedDeliveryTypeLabel). */}
                 <View style={styles.deliveryInfoStripContainer}>
                   <View style={styles.deliveryInfoCell}>
                     <View style={{ flex: 1 }}>
@@ -2260,14 +2238,14 @@ export default function AllOrdersScreen() {
                     </View>
                   </View>
 
-                  {shouldShowThirdStripCell ? (
+                  {resolvedDeliveryTypeLabel ? (
                     <>
                       <View style={styles.deliveryInfoDivider} />
                       <View style={styles.deliveryInfoCell}>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.deliveryInfoLabel}>{thirdStripCellLabel}</Text>
+                          <Text style={styles.deliveryInfoLabel}>DELIVERY TYPE</Text>
                           <Text style={styles.deliveryInfoValue} numberOfLines={1}>
-                            {thirdStripCellValue}
+                            {resolvedDeliveryTypeLabel}
                           </Text>
                         </View>
                       </View>
@@ -3667,7 +3645,8 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
   },
-  // ✅ NEW: Merged corner service-type badge (light grey, merged with card)
+  // ✅ Merged corner service-type badge (light grey, merged with card)
+  //    Rendered for ALL order types (homemade / quickbites / catering / mealbox).
   cornerServiceBadge: {
     position: 'absolute',
     top: 0,
@@ -3922,7 +3901,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  /* ✅ Dynamic Delivery Date / Slot / Third Cell Strip (Chef Green Theme) */
+  /* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Chef Green Theme) */
   deliveryInfoStripContainer: {
     flexDirection: 'row',
     alignItems: 'center',
