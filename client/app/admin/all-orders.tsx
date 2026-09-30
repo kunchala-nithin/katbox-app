@@ -917,6 +917,11 @@ export default function AdminAllOrdersScreen() {
     currentStatus.toLowerCase() !== 'placed' && currentStatus.toLowerCase() !== 'cancelled';
   const isCurrentOrderDelivered = currentStatus.toLowerCase() === 'delivered';
 
+  // ✅ NEW: Whether the advance payment has been verified by the admin.
+  //    The "Awaiting chef acceptance" banner is now gated on this flag,
+  //    so it only appears AFTER the admin taps "Payment Received".
+  const isAdvanceVerified = activeOrder?.isAdvanceVerified === true;
+
   const isCashCollected =
     (activeOrder?.paymentStatus || '').toLowerCase() === 'collected' ||
     (activeOrder?.paymentStatus || '').toLowerCase() === 'paid' ||
@@ -1156,7 +1161,7 @@ export default function AdminAllOrdersScreen() {
            'Mon, 17 Jun 2024'),
     deliveryTimeSlot:
       isHomemadeFlow
-        ? (homemadeDeliverySlotResolved || '30–45 min')
+        ? (homemadeDeliverySlotResolved || 'Within 75 min')
         : (activeOrder?.deliveryTimeSlot ||
            activeOrder?.eventTime ||
            '7:00 PM - 9:00 PM'),
@@ -1193,7 +1198,7 @@ export default function AdminAllOrdersScreen() {
         ? 'Today'
         : activeOrder?.deliveryDate || activeOrder?.eventDate || 'Mon to Fri',
       timingDetails: isHomemadeFlow
-        ? 'Fast Prep & Delivery • 30–45 min'
+        ? 'Cooking & Delivery to be done within 75 min'
         : activeOrder?.deliveryTimeSlot || activeOrder?.eventTime || 'Lunch Only  •  1 Meal / Day',
       totalAmount: `₹${totalAmountNum}`,
       image: defaultDishImage,
@@ -1716,6 +1721,27 @@ export default function AdminAllOrdersScreen() {
                         )}
                       </TouchableOpacity>
                     )}
+                  </View>
+                </View>
+              )}
+
+              {/* ✅ UPDATED: AWAITING CHEF ACCEPTANCE BANNER
+                  — Now gated on `isAdvanceVerified`. This section will ONLY
+                  appear after the admin taps the "Payment Received" button
+                  on the Advance Payment Verification card above, and only
+                  when the order is still in the "Placed" state (not yet
+                  accepted by the chef). */}
+              {isAdvanceVerified && !isCurrentOrderAccepted && currentStatus.toLowerCase() === 'placed' && (
+                <View style={styles.timerBannerCard}>
+                  <View style={styles.timerBannerIcon}>
+                    <Feather name="clock" size={16} color="#D97706" />
+                  </View>
+                  <View style={styles.timerTextContainer}>
+                    <Text style={styles.timerMainHeading}>
+                      Awaiting chef acceptance from{' '}
+                      <Text style={styles.timerHighlightBold}>{orderData.chef.name}</Text>
+                    </Text>
+                    <Text style={styles.timerSubHeading}>Admin can override status using the dropdown above.</Text>
                   </View>
                 </View>
               )}
@@ -2434,21 +2460,6 @@ export default function AdminAllOrdersScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
-
-              {!isCurrentOrderAccepted && currentStatus.toLowerCase() === 'placed' && (
-                <View style={styles.timerBannerCard}>
-                  <View style={styles.timerBannerIcon}>
-                    <Feather name="clock" size={16} color="#D97706" />
-                  </View>
-                  <View style={styles.timerTextContainer}>
-                    <Text style={styles.timerMainHeading}>
-                      Awaiting chef acceptance from{' '}
-                      <Text style={styles.timerHighlightBold}>{orderData.chef.name}</Text>
-                    </Text>
-                    <Text style={styles.timerSubHeading}>Admin can override status using the dropdown above.</Text>
-                  </View>
-                </View>
-              )}
             </>
           )}
         </ScrollView>

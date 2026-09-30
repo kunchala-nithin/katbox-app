@@ -1402,6 +1402,41 @@ export default function AllOrdersScreen() {
     return formatDeliveryType(activeOrder?.deliveryType);
   }, [activeOrder?.deliveryType]);
 
+  // ✅ NEW: Human-friendly service type label — used in the meta strip
+  //    cell for homemade/quickbites (instead of delivery type) and in
+  //    the merged corner badge on catering/mealbox orders.
+  const resolvedServiceTypeLabel = useMemo(() => {
+    const s = String(activeOrder?.serviceType || '').toLowerCase();
+    if (!s) return '';
+    if (s === 'homemade') return isQuickBitesFlow ? '⚡ QuickBites' : 'Homemade';
+    if (s === 'quickbites' || s === 'quick_bites' || s === 'quick-bites') return '⚡ QuickBites';
+    if (s === 'catering') return 'Catering';
+    if (s === 'mealbox') return 'MealBox';
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }, [activeOrder?.serviceType, isQuickBitesFlow]);
+
+  // ✅ NEW: Whether the DELIVERY TYPE cell should be shown in the strip.
+  //    For homemade/quickbites we REPLACE it with a SERVICE TYPE cell,
+  //    so we always render exactly one third cell for non-homemade flows,
+  //    and a SERVICE TYPE third cell for homemade flows.
+  const thirdStripCellIsServiceType = isHomemadeFlow;
+  const thirdStripCellLabel = thirdStripCellIsServiceType
+    ? 'SERVICE TYPE'
+    : 'DELIVERY TYPE';
+  const thirdStripCellValue = thirdStripCellIsServiceType
+    ? (resolvedServiceTypeLabel || 'Homemade')
+    : resolvedDeliveryTypeLabel;
+  const shouldShowThirdStripCell = !!thirdStripCellValue;
+
+  // ✅ NEW: Whether to show the merged corner service-type badge.
+  //    Only for catering and mealbox (NOT homemade/quickbites).
+  const shouldShowCornerServiceBadge = isCateringFlow || isMealBoxFlow;
+  const cornerServiceBadgeText = isCateringFlow
+    ? 'CATERING'
+    : isMealBoxFlow
+    ? 'MEALBOX'
+    : '';
+
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
     orderTime: activeOrder?.createdAt
@@ -1414,7 +1449,7 @@ export default function AllOrdersScreen() {
       ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
       : (activeOrder?.deliveryDate || (isCateringFlow ? (activeOrder?.eventDate || '18 March') : 'Mon, 17 Jun 2024')),
     deliveryTimeSlot: isHomemadeFlow
-      ? (homemadeDeliverySlotResolved || '30–45 min')
+      ? (homemadeDeliverySlotResolved || 'Within 75 min')
       : (activeOrder?.deliveryTimeSlot || (isCateringFlow ? (activeOrder?.eventTime || '08:30 PM') : '7:00 PM - 9:00 PM')),
     customer: {
       name: activeOrder?.userName || 'Customer',
@@ -1446,7 +1481,7 @@ export default function AllOrdersScreen() {
         isHomemadeFlow
           ? (isQuickBitesFlow
               ? `Prepared & Delivered within ${quickBitesWindowMinutes} min`
-              : 'Fast Prep & Delivery • 30–45 min')
+              : 'Cooking & Delivery to be done within 75 min')
           : activeOrder?.deliveryTimeSlot || activeOrder?.eventTime || 'Lunch Only  •  1 Meal / Day',
       addonText:
         parsedAddons.length > 0
@@ -2056,6 +2091,13 @@ export default function AllOrdersScreen() {
 
               {/* 1. ORDER IDENTIFIER CARD */}
               <View style={styles.card}>
+                {/* ✅ MERGED CORNER SERVICE-TYPE BADGE (only for catering & mealbox) */}
+                {shouldShowCornerServiceBadge ? (
+                  <View style={styles.cornerServiceBadge}>
+                    <Text style={styles.cornerServiceBadgeText}>{cornerServiceBadgeText}</Text>
+                  </View>
+                ) : null}
+
                 <View style={styles.orderIdTopRow}>
                   <View style={{ flex: 1, paddingRight: 8 }}>
                     <Text style={styles.smallSectionLabel}>ORDER IDENTIFIER</Text>
@@ -2118,6 +2160,21 @@ export default function AllOrdersScreen() {
                 </View>
               </View>
 
+              {/* 5. RESPONSE TIMER BANNER (moved to top, below Order Identifier) */}
+              {!isCurrentOrderAccepted && (
+                <View style={styles.timerBannerCard}>
+                  <View style={styles.timerIconCircle}>
+                    <Feather name="clock" size={16} color="#D97706" />
+                  </View>
+                  <View style={styles.timerTextContainer}>
+                    <Text style={styles.timerMainHeading}>
+                      Respond within <Text style={styles.timerHighlightBold}>{orderData.responseTime}</Text>
+                    </Text>
+                    <Text style={styles.timerSubHeading}>Confirm this order to notify customer.</Text>
+                  </View>
+                </View>
+              )}
+
               {/* 2. CUSTOMER PROFILE CARD */}
               <View style={styles.card}>
                 <Text style={styles.cardSectionHeading}>Customer Profile</Text>
@@ -2176,11 +2233,12 @@ export default function AllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
-                {/* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Chef Green Theme)
-                    — Delivery Type has been added as a THIRD cell inside the same
-                    strip, right next to Delivery Slot. Values come from the same
-                    orderData.deliveryDate / orderData.deliveryTimeSlot and
-                    resolvedDeliveryTypeLabel already computed dynamically. */}
+                {/* ✅ Dynamic Delivery Date / Slot / Third Cell Strip (Chef Green Theme)
+                    — The THIRD cell is dynamic:
+                        • For HOMEMADE / QUICKBITES: shows SERVICE TYPE
+                        • For all other flows: shows DELIVERY TYPE
+                    Values come from orderData.deliveryDate / orderData.deliveryTimeSlot
+                    and the pre-computed thirdStripCellLabel / thirdStripCellValue. */}
                 <View style={styles.deliveryInfoStripContainer}>
                   <View style={styles.deliveryInfoCell}>
                     <View style={{ flex: 1 }}>
@@ -2202,14 +2260,14 @@ export default function AllOrdersScreen() {
                     </View>
                   </View>
 
-                  {resolvedDeliveryTypeLabel ? (
+                  {shouldShowThirdStripCell ? (
                     <>
                       <View style={styles.deliveryInfoDivider} />
                       <View style={styles.deliveryInfoCell}>
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.deliveryInfoLabel}>DELIVERY TYPE</Text>
+                          <Text style={styles.deliveryInfoLabel}>{thirdStripCellLabel}</Text>
                           <Text style={styles.deliveryInfoValue} numberOfLines={1}>
-                            {resolvedDeliveryTypeLabel}
+                            {thirdStripCellValue}
                           </Text>
                         </View>
                       </View>
@@ -2525,21 +2583,6 @@ export default function AllOrdersScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
-
-              {/* 5. RESPONSE TIMER BANNER */}
-              {!isCurrentOrderAccepted && (
-                <View style={styles.timerBannerCard}>
-                  <View style={styles.timerIconCircle}>
-                    <Feather name="clock" size={16} color="#D97706" />
-                  </View>
-                  <View style={styles.timerTextContainer}>
-                    <Text style={styles.timerMainHeading}>
-                      Respond within <Text style={styles.timerHighlightBold}>{orderData.responseTime}</Text>
-                    </Text>
-                    <Text style={styles.timerSubHeading}>Confirm this order to notify customer.</Text>
-                  </View>
-                </View>
-              )}
 
               {/* 6. BOTTOM ACTIONS */}
               {!isCurrentOrderAccepted && (
@@ -3624,6 +3667,28 @@ const styles = StyleSheet.create({
     position: 'relative',
     overflow: 'hidden',
   },
+  // ✅ NEW: Merged corner service-type badge (light grey, merged with card)
+  cornerServiceBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderBottomLeftRadius: 12,
+    borderTopRightRadius: 21,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderTopWidth: 0,
+    borderRightWidth: 0,
+    zIndex: 5,
+  },
+  cornerServiceBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '900',
+    color: '#64748B',
+    letterSpacing: 0.8,
+  },
   orderIdTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3857,7 +3922,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  /* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Chef Green Theme) */
+  /* ✅ Dynamic Delivery Date / Slot / Third Cell Strip (Chef Green Theme) */
   deliveryInfoStripContainer: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -11,6 +11,7 @@ interface ICategoryItem {
   price: number;
   quantity: string;
   isVeg: boolean;
+  isAvailable: boolean;
   variants: Array<{
     quantity: string;
     price: number;
@@ -39,6 +40,7 @@ const CategoryItemSchema = new Schema({
   price: { type: Number, required: true },
   quantity: { type: String, required: true },
   isVeg: { type: Boolean, default: true },
+  isAvailable: { type: Boolean, default: true },
   variants: [{
     quantity: String,
     price: Number
@@ -70,6 +72,7 @@ interface IDaawathItem {
   imageUrl: string;
   cloudinaryId: string;
   price?: number;
+  isAvailable: boolean;
 }
 
 const MenuPlateItemSchema = new Schema<IDaawathItem>(
@@ -78,6 +81,7 @@ const MenuPlateItemSchema = new Schema<IDaawathItem>(
     imageUrl: { type: String, required: true },
     cloudinaryId: { type: String, required: true },
     price: { type: Number },
+    isAvailable: { type: Boolean, default: true },
   },
   { _id: false }
 );
@@ -158,6 +162,7 @@ interface IMealBoxItem {
   image: string;
   cloudinaryId?: string;
   active: boolean;
+  isAvailable: boolean;
 }
 
 const MealBoxItemSchema = new Schema({
@@ -166,7 +171,8 @@ const MealBoxItemSchema = new Schema({
   price: { type: Number },
   image: { type: String, required: true },
   cloudinaryId: { type: String, default: "" },
-  active: { type: Boolean, default: true }
+  active: { type: Boolean, default: true },
+  isAvailable: { type: Boolean, default: true }
 }, { _id: false });
 
 const MealBoxSectionWrapperSchema = new Schema({

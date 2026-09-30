@@ -160,6 +160,11 @@ const AddBannerScreen = () => {
 
   // ─────────────────────────────────────────────────────────────────────────
   // Image picker
+  //  • allowsEditing removed → any image (portrait / landscape / square) is
+  //    accepted as-is; the admin is not forced to crop it.
+  //  • Display containers use resizeMode="contain" where the whole image
+  //    must remain visible (small strip cards) and resizeMode="cover" only
+  //    where a full-bleed look is required (big live preview).
   // ─────────────────────────────────────────────────────────────────────────
   const pickImage = async () => {
     try {
@@ -174,8 +179,8 @@ const AddBannerScreen = () => {
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [16, 10],
+        // ✅ No forced crop — any image dimensions are accepted.
+        allowsEditing: false,
         quality: 0.85,
       });
 
@@ -534,7 +539,7 @@ const AddBannerScreen = () => {
                   activeOpacity={0.92}
                   onPress={() => handleEditBanner(banner)}
                 >
-                  {/* ✅ Delete icon only (top-right) */}
+                  {/* Delete icon (top-right) */}
                   <View style={styles.stripCardActionsRow} pointerEvents="box-none">
                     <TouchableOpacity
                       style={[styles.stripCardIconBtn, styles.stripCardDeleteBtn]}
@@ -545,13 +550,14 @@ const AddBannerScreen = () => {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Mini banner preview */}
+                  {/* Mini banner preview — uses contain so the ENTIRE image is
+                      always visible regardless of its aspect ratio. */}
                   <View style={styles.stripCardPreview}>
                     {banner.isFullBanner ? (
                       <Image
                         source={{ uri: banner.imageUrl }}
                         style={styles.stripCardFullImage}
-                        resizeMode="cover"
+                        resizeMode="contain"
                       />
                     ) : (
                       <View style={styles.stripCardSplitRow}>
@@ -597,7 +603,7 @@ const AddBannerScreen = () => {
                           <Image
                             source={{ uri: banner.imageUrl }}
                             style={styles.stripCardFoodImage}
-                            resizeMode="cover"
+                            resizeMode="contain"
                           />
                           {!banner.isComingSoon && !!banner.price && (
                             <View style={styles.stripPricePill}>
@@ -661,14 +667,14 @@ const AddBannerScreen = () => {
             <Image
               source={previewImageSource}
               style={styles.imagePickerPreview}
-              resizeMode="cover"
+              resizeMode="contain"
             />
           ) : (
             <View style={styles.imagePickerEmpty}>
               <Ionicons name="cloud-upload-outline" size={30} color="#15803D" />
               <Text style={styles.imagePickerEmptyText}>Tap to upload image</Text>
               <Text style={styles.imagePickerEmptySub}>
-                Recommended 1200×800 · auto-compressed
+                Any size accepted · auto-compressed
               </Text>
             </View>
           )}
@@ -1088,7 +1094,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     justifyContent: 'center',
   },
-  stripCardRightCol: { flex: 1, position: 'relative' },
+  stripCardRightCol: { flex: 1, position: 'relative', backgroundColor: '#0F1A13' },
   stripCardFoodImage: { width: '100%', height: '100%' },
   stripBadgePill: {
     flexDirection: 'row',

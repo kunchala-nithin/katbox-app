@@ -195,6 +195,10 @@ const HomeMadeItemScreen = () => {
                   const availableQuantities = Object.keys(pricesMap);
                   const defaultQty = item.quantity || availableQuantities[0] || "";
                   const resolvedIsVeg = item.isVeg !== undefined ? item.isVeg : true;
+                  // ✅ Availability comes from the chef's dashboard toggle.
+                  // Defaults to true only when the field is genuinely absent
+                  // (legacy docs) so old data continues to render as available.
+                  const resolvedIsAvailable = item.isAvailable !== false;
                   return {
                     id: item._id || Math.random().toString(),
                     name: item.name,
@@ -207,6 +211,7 @@ const HomeMadeItemScreen = () => {
                     description: item.description || "A meticulously prepared dish crafted with authentic spices and premium ingredients.",
                     isBestSeller: false,
                     isVeg: resolvedIsVeg,
+                    isAvailable: resolvedIsAvailable,
                   };
                 }),
               };
@@ -311,6 +316,8 @@ const HomeMadeItemScreen = () => {
 
   // Actions
   const openQuantitySelector = (item: any) => {
+    // ✅ Guard: prevent opening the qty picker for unavailable dishes.
+    if (item.isAvailable === false) return;
     setSelectedItemId(item.id);
     setSelectedItemName(item.name);
     setSelectedItemImage(item.image || "https://via.placeholder.com/150");
@@ -388,21 +395,37 @@ const HomeMadeItemScreen = () => {
     const currentPrice = item.prices[currentQty] || 0;
     const isExpanded = expandedDescriptions[item.id] || false;
     const cartCount = itemQuantities[item.id] || 0;
+    const itemUnavailable = item.isAvailable === false;
 
     return (
-      <View style={styles.menuItemCard}>
+      <View style={[styles.menuItemCard, itemUnavailable && styles.menuItemCardDisabled]}>
+        {/* ✅ BLACK SHADE OVERLAY: appears only when the chef has marked
+            the dish as unavailable. Uses pointerEvents="none" so it does
+            not swallow taps on the ADD button (which is hidden anyway),
+            and lets the "Unavailable" badge remain fully readable. */}
+        {itemUnavailable && (
+          <View style={styles.unavailableShade} pointerEvents="none">
+            <View style={styles.unavailableBadge}>
+              <Ionicons name="close-circle" size={14} color="#FFFFFF" />
+              <Text style={styles.unavailableBadgeText}>Unavailable</Text>
+            </View>
+          </View>
+        )}
+
         {/* LEFT: Text Content */}
         <View style={styles.itemDetails}>
           <View style={styles.itemNameRow}>
             <View style={[styles.vegIconWrapper, !item.veg && styles.nonVegIconWrapper]}>
               <View style={[styles.vegIconDot, !item.veg && styles.nonVegIconDot]} />
             </View>
-            <Text style={styles.itemName}>{item.name}</Text>
+            <Text style={[styles.itemName, itemUnavailable && styles.textMuted]}>
+              {item.name}
+            </Text>
           </View>
 
           {item.description && (
             <Text
-              style={styles.itemDescription}
+              style={[styles.itemDescription, itemUnavailable && styles.textMuted]}
               numberOfLines={isExpanded ? undefined : 2}
             >
               {item.description}
@@ -418,12 +441,13 @@ const HomeMadeItemScreen = () => {
           )}
 
           <View style={styles.priceRow}>
-            <Text style={styles.itemPrice}>₹{currentPrice}</Text>
+            <Text style={[styles.itemPrice, itemUnavailable && styles.textMuted]}>₹{currentPrice}</Text>
 
             {item.availableQuantities && item.availableQuantities.length > 1 ? (
               <TouchableOpacity
-                style={styles.qtyButton}
+                style={[styles.qtyButton, itemUnavailable && styles.qtyButtonDisabled]}
                 onPress={() => openQuantitySelector(item)}
+                disabled={itemUnavailable}
               >
                 <Text style={styles.qtyText}>{currentQty}</Text>
                 <Ionicons name="chevron-down" size={14} color={KATBOX.textPrimary} />
@@ -440,16 +464,24 @@ const HomeMadeItemScreen = () => {
         <TouchableOpacity 
           style={styles.itemImageWrapper}
           onPress={() => openQuantitySelector(item)}
-          activeOpacity={0.85}
+          activeOpacity={itemUnavailable ? 1 : 0.85}
+          disabled={itemUnavailable}
         >
           <View style={styles.itemImageContainer}>
             <Image
               source={{ uri: item.image || "https://via.placeholder.com/150" }}
-              style={styles.menuItemImage}
+              style={[styles.menuItemImage, itemUnavailable && styles.menuItemImageDim]}
             />
           </View>
 
-          {cartCount === 0 ? (
+          {itemUnavailable ? (
+            // ✅ When unavailable, we replace the counter/ADD with a
+            // muted "Not Available" pill so the customer clearly sees
+            // that the dish cannot be ordered right now.
+            <View style={styles.notAvailablePill}>
+              <Text style={styles.notAvailablePillText}>Not Available</Text>
+            </View>
+          ) : cartCount === 0 ? (
             <TouchableOpacity
               style={styles.addButtonOnImage}
               onPress={(e) => {
@@ -1170,6 +1202,40 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04, 
     shadowRadius: 8,
     elevation: 2,
+    position: "relative",   // ✅ needed for absolute shade overlay
+    overflow: "hidden",     // ✅ clips the shade to the rounded card
+  },
+  // Subtle desaturation of the whole card when the dish is unavailable
+  menuItemCardDisabled: {
+    borderColor: "#D1D5DB",
+    backgroundColor: "#F3F4F6",
+  },
+  // ✅ BLACK SHADE OVERLAY — covers the entire card with a
+  // semi-transparent black veil when the chef toggles the item OFF.
+  unavailableShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.55)",
+    zIndex: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  unavailableBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(0, 0, 0, 0.85)",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.35)",
+  },
+  unavailableBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 12.5,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   itemDetails: {
     flex: 1,
@@ -1248,6 +1314,9 @@ const styles = StyleSheet.create({
     borderColor: KATBOX.border,
     gap: 4,
   },
+  qtyButtonDisabled: {
+    opacity: 0.6,
+  },
   qtyText: {
     fontSize: 12,
     fontWeight: "700",
@@ -1271,6 +1340,9 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
     resizeMode: "cover",
+  },
+  menuItemImageDim: {
+    opacity: 0.5,
   },
   addButtonOnImage: {
     position: "absolute",
@@ -1297,6 +1369,25 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginRight: 2,
     letterSpacing: 0.2,
+  },
+
+  // ✅ "Not Available" pill replaces the ADD / counter for unavailable dishes
+  notAvailablePill: {
+    position: "absolute",
+    bottom: -12,
+    alignSelf: "center",
+    backgroundColor: "#1F2937",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+  },
+  notAvailablePillText: {
+    color: "#FFFFFF",
+    fontSize: 11.5,
+    fontWeight: "800",
+    letterSpacing: 0.4,
   },
 
   quantityCounter: {

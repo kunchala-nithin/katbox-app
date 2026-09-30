@@ -301,6 +301,7 @@ export const saveCategoryItems = async (req: any, res: Response) => {
           price: Number(item.price),
           quantity: item.quantity,
           isVeg: item.isVeg !== undefined ? item.isVeg : true,
+          isAvailable: item.isAvailable !== undefined ? item.isAvailable : true,
           variants: item.variants || [],
         });
       }
@@ -321,6 +322,123 @@ export const saveCategoryItems = async (req: any, res: Response) => {
   } catch (err: any) {
     console.error("Save category items error:", err);
     res.status(500).json({ message: "Failed to save sub categories and items" });
+  }
+};
+
+// ==========================================
+// ✅ NEW: TOGGLE ITEM AVAILABILITY (QUICK BITES + HOMEMADE)
+// Flips `isAvailable` on a single category item identified by
+// (categoryId, itemId). Used by the chef dashboard availability toggle.
+// ==========================================
+export const toggleCategoryItemAvailability = async (req: any, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { categoryId, itemId } = req.params;
+
+    if (!userId) return res.status(401).json({ message: "Authentication required" });
+
+    const category = await ChefCategory.findById(categoryId);
+    if (!category) return res.status(404).json({ message: "Category not found" });
+
+    if (category.user.toString() !== userId) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    // Locate the item across all sub-categories
+    let foundItem: any = null;
+    if (category.subCategories) {
+      for (const sub of category.subCategories) {
+        if (sub.items) {
+          const item = sub.items.find((i: any) => i._id.toString() === itemId);
+          if (item) {
+            foundItem = item;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!foundItem) return res.status(404).json({ message: "Item not found" });
+
+    // Flip availability (or honor an explicit value sent from the client)
+    const explicit = req.body?.isAvailable;
+    const nextValue =
+      explicit !== undefined && explicit !== null
+        ? Boolean(explicit)
+        : !(foundItem.isAvailable !== false); // default true -> false, false -> true
+
+    await ChefCategory.updateOne(
+      { _id: categoryId, "subCategories.items._id": itemId },
+      { $set: { "subCategories.$[sub].items.$[itm].isAvailable": nextValue } },
+      {
+        arrayFilters: [
+          { "sub.items._id": itemId },
+          { "itm._id": itemId },
+        ],
+      }
+    );
+
+    const fresh = await ChefCategory.findById(categoryId);
+    let refreshedItem: any = null;
+    if (fresh?.subCategories) {
+      for (const sub of fresh.subCategories as any) {
+        const item = sub.items?.find((i: any) => i._id.toString() === itemId);
+        if (item) { refreshedItem = item; break; }
+      }
+    }
+
+    res.json({
+      success: true,
+      isAvailable: refreshedItem ? refreshedItem.isAvailable !== false : nextValue,
+      item: refreshedItem,
+    });
+  } catch (err) {
+    console.error("Toggle category item availability error:", err);
+    res.status(500).json({ message: "Error toggling item availability" });
+  }
+};
+
+// ==========================================
+// ✅ NEW: TOGGLE MENU PLATE-ITEM AVAILABILITY (CATERING)
+// Flips `isAvailable` on a single `plateItems[]` entry of a ChefMenu.
+// ==========================================
+export const toggleMenuPlateItemAvailability = async (req: any, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const { menuId, itemId } = req.params;
+
+    if (!userId) return res.status(401).json({ message: "Authentication required" });
+
+    const menu = await ChefMenu.findById(menuId);
+    if (!menu) return res.status(404).json({ message: "Menu not found" });
+
+    if (menu.user.toString() !== userId) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    const plateItem: any = (menu.plateItems as any).id
+      ? (menu.plateItems as any).id(itemId)
+      : (menu.plateItems as any[]).find((p: any) => String(p._id) === String(itemId));
+
+    if (!plateItem) return res.status(404).json({ message: "Plate item not found" });
+
+    const explicit = req.body?.isAvailable;
+    const nextValue =
+      explicit !== undefined && explicit !== null
+        ? Boolean(explicit)
+        : !(plateItem.isAvailable !== false);
+
+    (plateItem as any).isAvailable = nextValue;
+    await menu.save();
+
+    res.json({
+      success: true,
+      isAvailable: nextValue,
+      item: plateItem,
+    });
+  } catch (err) {
+    console.error("Toggle menu plate item availability error:", err);
+    res.status(500).json({ message: "Error toggling plate item availability" });
   }
 };
 
@@ -498,6 +616,7 @@ export const addChefMenu = async (req: any, res: Response) => {
         name: item.name || "",
         imageUrl,
         cloudinaryId,
+        isAvailable: item.isAvailable !== undefined ? item.isAvailable : true,
       });
     }
 
@@ -635,6 +754,7 @@ export const updateChefMenu = async (req: any, res: Response) => {
         name: item.name || "",
         imageUrl,
         cloudinaryId,
+        isAvailable: item.isAvailable !== undefined ? item.isAvailable : true,
       });
     }
 
@@ -882,6 +1002,7 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
           imageUrl: itemImageUrl,
           cloudinaryId: itemCloudinaryId,
           price: item.price !== undefined && item.price !== "" && item.price !== null ? Number(item.price) : undefined,
+          isAvailable: item.isAvailable !== undefined ? item.isAvailable : true,
         });
       }
 
@@ -911,7 +1032,8 @@ export const saveDaawathCategories = async (req: any, res: Response) => {
         name: addon.name,
         imageUrl: addonImageUrl,
         cloudinaryId: addonCloudinaryId,
-        price: addon.price !== undefined && addon.price !== null && addon.price !== "" ? Number(addon.price) : undefined
+        price: addon.price !== undefined && addon.price !== null && addon.price !== "" ? Number(addon.price) : undefined,
+        isAvailable: addon.isAvailable !== undefined ? addon.isAvailable : true,
       });
     }
 
@@ -1252,7 +1374,8 @@ export const savePlanMealBoxItems = async (req: any, res: Response) => {
                 price: item.price ? Number(item.price) : undefined,
                 image,
                 cloudinaryId,
-                active: item.active !== undefined ? item.active : true
+                active: item.active !== undefined ? item.active : true,
+                isAvailable: item.isAvailable !== undefined ? item.isAvailable : true,
               });
             }
           }

@@ -103,7 +103,7 @@ export default function AddChefCategory() {
   const [mealType, setMealType] = useState("Breakfast");
   const [showDropdown, setShowDropdown] = useState(false);
   const [plateItems, setPlateItems] = useState([
-    { id: Date.now().toString() + "-" + Math.random().toString(36).slice(2), name: "", imageUrl: "", cloudinaryId: "" },
+    { id: Date.now().toString() + "-" + Math.random().toString(36).slice(2), name: "", imageUrl: "", cloudinaryId: "", isAvailable: true },
   ]);
   const [menuButtonLoading, setMenuButtonLoading] = useState(false);
 
@@ -283,6 +283,74 @@ export default function AddChefCategory() {
       });
     } catch (err) {
       console.log("Failed to delete image from Cloudinary:", err);
+    }
+  };
+
+  // ===
+  // ✅ AVAILABILITY TOGGLE HANDLERS
+  // ======
+  // Flips a single category item's isAvailable flag on the server
+  // and optimistically updates local state so the toggle feels instant.
+  const toggleCategoryItemAvailability = async (subIndex: number, itemIndex: number) => {
+    const sub = modalSubCategories[subIndex];
+    const item = sub?.items?.[itemIndex];
+    if (!item) return;
+
+    const itemId = item._id;
+    const nextValue = !(item.isAvailable !== false);
+
+    // Optimistic local update
+    const optimistic = [...modalSubCategories];
+    optimistic[subIndex].items[itemIndex].isAvailable = nextValue;
+    setModalSubCategories(optimistic);
+
+    if (!itemId || !selectedCategoryForItems?._id) return;
+
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await api.patch(
+        `/api/chef-categories/${selectedCategoryForItems._id}/item/${itemId}/toggle-availability`,
+        { isAvailable: nextValue },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch (err: any) {
+      // Roll back on failure
+      const rolled = [...modalSubCategories];
+      rolled[subIndex].items[itemIndex].isAvailable = !nextValue;
+      setModalSubCategories(rolled);
+      Alert.alert("Error", err.response?.data?.message || "Failed to update availability");
+    }
+  };
+
+  // Flips a single menu plate-item's isAvailable flag (catering menus).
+  const toggleMenuPlateItemAvailability = async (plateItemId: string) => {
+    const idx = plateItems.findIndex((p) => p.id === plateItemId);
+    if (idx === -1) return;
+    const current = plateItems[idx];
+    const nextValue = !(current.isAvailable !== false);
+
+    const optimistic = [...plateItems];
+    optimistic[idx] = { ...optimistic[idx], isAvailable: nextValue };
+    setPlateItems(optimistic);
+
+    // If we're editing an existing menu and the item has an _id, persist.
+    const dbId = (current as any)._id;
+    if (!dbId || !editingMenuId) return;
+
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await api.patch(
+        `/api/chef-categories/menu/${editingMenuId}/plate-item/${dbId}/toggle-availability`,
+        { isAvailable: nextValue },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch (err: any) {
+      const rolled = [...plateItems];
+      rolled[idx] = { ...rolled[idx], isAvailable: !nextValue };
+      setPlateItems(rolled);
+      Alert.alert("Error", err.response?.data?.message || "Failed to update availability");
     }
   };
 
@@ -631,6 +699,7 @@ export default function AddChefCategory() {
           price: item.price !== undefined ? String(item.price) : "",
           quantity: item.quantity || "",
           isVeg: item.isVeg !== undefined ? item.isVeg : true,
+          isAvailable: item.isAvailable !== undefined ? item.isAvailable : true,
           variants: (item.variants || []).map((v: any, idx: number) => ({
             id: v._id || Date.now().toString() + idx,
             quantity: v.quantity || "",
@@ -652,6 +721,7 @@ export default function AddChefCategory() {
               price: "",
               quantity: "",
               isVeg: true,
+              isAvailable: true,
               variants: [],
             },
           ],
@@ -684,6 +754,7 @@ export default function AddChefCategory() {
             price: "",
             quantity: "",
             isVeg: true,
+            isAvailable: true,
             variants: [],
           },
         ],
@@ -702,6 +773,7 @@ export default function AddChefCategory() {
       price: "",
       quantity: "",
       isVeg: true,
+      isAvailable: true,
       variants: [],
     });
     setModalSubCategories(newSubCats);
@@ -774,6 +846,7 @@ export default function AddChefCategory() {
             price: item.price !== undefined ? String(item.price) : "",
             quantity: item.quantity || "",
             isVeg: item.isVeg !== undefined ? item.isVeg : true,
+            isAvailable: item.isAvailable !== undefined ? item.isAvailable : true,
             variants: (item.variants || []).map((v: any, idx: number) => ({
               id: v._id || Date.now().toString() + idx,
               quantity: v.quantity || "",
@@ -795,7 +868,7 @@ export default function AddChefCategory() {
   const addPlateItem = () => {
     setPlateItems((prev) => [
       ...prev,
-      { id: Date.now().toString() + "-" + Math.random().toString(36).slice(2), name: "", imageUrl: "", cloudinaryId: "" }
+      { id: Date.now().toString() + "-" + Math.random().toString(36).slice(2), name: "", imageUrl: "", cloudinaryId: "", isAvailable: true }
     ]);
   };
 
@@ -938,7 +1011,10 @@ export default function AddChefCategory() {
       name: addonName.trim(),
       price: addonPrice !== "" ? Number(addonPrice) : undefined,
       imageUrl: addonImage,
-      cloudinaryId: addonCloudinaryId
+      cloudinaryId: addonCloudinaryId,
+      isAvailable: editingAddonIndex !== null
+        ? addonsList[editingAddonIndex].isAvailable !== false
+        : true,
     };
     const updated = [...addonsList];
     if (editingAddonIndex !== null) {
@@ -977,6 +1053,7 @@ export default function AddChefCategory() {
         name: item.name,
         imageUrl: item.imageUrl || "",
         cloudinaryId: item.cloudinaryId || "",
+        isAvailable: item.isAvailable !== false,
       }));
       formData.append("plateItems", JSON.stringify(plateItemsPayload));
 
@@ -1034,7 +1111,7 @@ export default function AddChefCategory() {
       setMealType("Breakfast");
       setMenuHeroImage("");
       setMenuIsNonVeg(false);
-      setPlateItems([{ id: Date.now().toString() + "-" + Math.random().toString(36).slice(2), name: "", imageUrl: "", cloudinaryId: "" }]);
+      setPlateItems([{ id: Date.now().toString() + "-" + Math.random().toString(36).slice(2), name: "", imageUrl: "", cloudinaryId: "", isAvailable: true }]);
       setEditingMenuId(null);
       fetchAllData();
     } catch (err: any) {
@@ -1051,10 +1128,16 @@ export default function AddChefCategory() {
       imageUrl: cat.imageUrl || "",
       cloudinaryId: cat.cloudinaryId || "",
       maxItems: cat.maxItems !== undefined ? cat.maxItems : 1,
-      items: cat.items || [],
+      items: (cat.items || []).map((it: any) => ({
+        ...it,
+        isAvailable: it.isAvailable !== undefined ? it.isAvailable : true,
+      })),
     }));
     setCategoriesList(normalizedCategories);
-    setAddonsList(menu.daawathAddons || []);
+    setAddonsList((menu.daawathAddons || []).map((a: any) => ({
+      ...a,
+      isAvailable: a.isAvailable !== undefined ? a.isAvailable : true,
+    })));
     setSelectedCategoryIndex(normalizedCategories.length > 0 ? 0 : null);
     setHasSubmittedDaawath(normalizedCategories.length > 0);
     setIsMenuEditMode(false);
@@ -1381,6 +1464,35 @@ export default function AddChefCategory() {
     });
   };
 
+  // ✅ NEW: Toggle availability for a single meal-box item (Homemade plan items)
+  const toggleMealItemAvailability = (mealType: string, section: string, itemId: string) => {
+    setMealBoxData((prev: any) => {
+      const currentDayData = prev[selectedDay] || {};
+      const sectionWrapper = currentDayData[mealType]?.[section];
+      
+      const currentItems = (sectionWrapper && Array.isArray(sectionWrapper.items)) 
+        ? sectionWrapper.items 
+        : (Array.isArray(sectionWrapper) ? sectionWrapper : []);
+
+      const updatedItems = currentItems.map((item: any) =>
+        item.id === itemId ? { ...item, isAvailable: !(item.isAvailable !== false) } : item
+      );
+
+      return {
+        ...prev,
+        [selectedDay]: {
+          ...currentDayData,
+          [mealType]: {
+            ...currentDayData[mealType],
+            [section]: typeof sectionWrapper?.maxItems === "number" 
+              ? { items: updatedItems, maxItems: sectionWrapper.maxItems }
+              : updatedItems,
+          },
+        },
+      };
+    });
+  };
+
   const deleteMealItem = (mealType: string, section: string, itemId: string) => {
     Alert.alert("Delete Item", "Are you sure?", [
       { text: "Cancel", style: "cancel" },
@@ -1482,6 +1594,7 @@ export default function AddChefCategory() {
           price: mealItemFormPrice ? Number(mealItemFormPrice) : undefined,
           image: finalImage,
           active: true,
+          isAvailable: true,
         };
         return {
           ...prev,
@@ -1750,7 +1863,7 @@ export default function AddChefCategory() {
                 setMealType("Breakfast");
                 setMenuHeroImage("");
                 setMenuIsNonVeg(false);
-                setPlateItems([{ id: Date.now().toString() + "-" + Math.random().toString(36).slice(2), name: "", imageUrl: "", cloudinaryId: "" }]);
+                setPlateItems([{ id: Date.now().toString() + "-" + Math.random().toString(36).slice(2), name: "", imageUrl: "", cloudinaryId: "", isAvailable: true }]);
                 setShowMenuForm(true);
               }}>
                 <Ionicons name="add" size={17} color="#FFFFFF" />
@@ -1885,9 +1998,11 @@ export default function AddChefCategory() {
                             setPlateItems(
                               menuData.plateItems.map((item: any) => ({
                                 id: Date.now().toString() + "-" + Math.random().toString(36).slice(2),
+                                _id: item._id,
                                 name: item.name,
                                 imageUrl: item.imageUrl,
                                 cloudinaryId: item.cloudinaryId || "",
+                                isAvailable: item.isAvailable !== undefined ? item.isAvailable : true,
                               }))
                             );
                             setShowMenuForm(true);
@@ -2036,6 +2151,21 @@ export default function AddChefCategory() {
                           <Ionicons name="trash-outline" size={16} color="#F87171" />
                         </TouchableOpacity>
                       )}
+
+                      {/* ✅ AVAILABILITY TOGGLE — top-right of every item card */}
+                      <View style={styles.itemAvailabilityRow}>
+                        <Text style={[styles.itemAvailabilityLabel, item.isAvailable === false && styles.itemAvailabilityLabelOff]}>
+                          {item.isAvailable === false ? "Unavailable" : "Available"}
+                        </Text>
+                        <Switch
+                          trackColor={{ false: "#4B5563", true: "#15803D" }}
+                          thumbColor="#FFFFFF"
+                          ios_backgroundColor="#3e3e3e"
+                          onValueChange={() => toggleCategoryItemAvailability(subIndex, itemIndex)}
+                          value={item.isAvailable !== false}
+                        />
+                      </View>
+
                       <Text style={[styles.label, { marginTop: 4, fontWeight: "700", color: "#52B788" }]}>Item {itemIndex + 1}</Text>
                       <Text style={styles.label}>Item Name</Text>
                       <TextInput
@@ -2304,6 +2434,20 @@ export default function AddChefCategory() {
 
               {plateItems.map((item) => (
                 <View key={item.id} style={{ marginBottom: 14 }}>
+                  {/* ✅ AVAILABILITY TOGGLE for each plate item */}
+                  <View style={styles.itemAvailabilityRow}>
+                    <Text style={[styles.itemAvailabilityLabel, item.isAvailable === false && styles.itemAvailabilityLabelOff]}>
+                      {item.isAvailable === false ? "Unavailable" : "Available"}
+                    </Text>
+                    <Switch
+                      trackColor={{ false: "#4B5563", true: "#15803D" }}
+                      thumbColor="#FFFFFF"
+                      ios_backgroundColor="#3e3e3e"
+                      onValueChange={() => toggleMenuPlateItemAvailability(item.id)}
+                      value={item.isAvailable !== false}
+                    />
+                  </View>
+
                   <TextInput placeholder="Item name" placeholderTextColor="#64748B" value={item.name} onChangeText={(text) => updatePlateItem(item.id, "name", text)} style={styles.input} />
                   <TouchableOpacity style={styles.imagePicker} onPress={() => pickMenuPlateItemImage(item.id)}>
                     <Text style={{ color: "#94A3B8", fontWeight: "600", fontSize: 13 }}>Pick Item Image</Text>
@@ -2552,16 +2696,43 @@ export default function AddChefCategory() {
                         dishes.map((dish: any, dishIdx: number) => {
                           return (
                             <View key={dishIdx} style={styles.dishRowSelectorItem}>
+                              {/* ✅ AVAILABILITY TOGGLE — top-right of every dish row */}
+                              <View style={styles.dishAvailabilityWrap}>
+                                <Switch
+                                  trackColor={{ false: "#4B5563", true: "#15803D" }}
+                                  thumbColor="#FFFFFF"
+                                  ios_backgroundColor="#3e3e3e"
+                                  onValueChange={() => {
+                                    const updated = [...categoriesList];
+                                    const current = updated[idx].items[dishIdx];
+                                    updated[idx].items[dishIdx] = {
+                                      ...current,
+                                      isAvailable: !(current.isAvailable !== false),
+                                    };
+                                    setCategoriesList(updated);
+                                  }}
+                                  value={dish.isAvailable !== false}
+                                />
+                              </View>
+
                               <View style={styles.dishRowLeft}>
                                 <Image 
                                   source={{ uri: dish.imageUrl || "https://via.placeholder.com/80" }} 
-                                  style={styles.dishRowImage} 
+                                  style={[styles.dishRowImage, dish.isAvailable === false && styles.dishRowImageDim]}
                                 />
                                 <View style={styles.dishRowInfo}>
-                                  <Text style={styles.dishRowName}>{dish.name || "Dish Item"}</Text>
+                                  <Text style={[styles.dishRowName, dish.isAvailable === false && { color: "#94A3B8" }]}>
+                                    {dish.name || "Dish Item"}
+                                  </Text>
                                   {dish.price !== undefined && dish.price !== null && dish.price !== "" ? (
                                     <Text style={styles.dishRowPrice}>₹{dish.price} / Plate</Text>
                                   ) : null}
+                                  <Text style={[
+                                    styles.dishAvailBadge,
+                                    dish.isAvailable === false ? styles.dishAvailBadgeOff : styles.dishAvailBadgeOn
+                                  ]}>
+                                    {dish.isAvailable === false ? "Unavailable" : "Available"}
+                                  </Text>
                                 </View>
                               </View>
                               
@@ -2629,9 +2800,28 @@ export default function AddChefCategory() {
                 ) : (
                   addonsList.map((addon, aIdx) => (
                     <View key={aIdx} style={styles.dishRowSelectorItem}>
-                      <Image source={{ uri: addon.imageUrl || "https://via.placeholder.com/80" }} style={[styles.dishRowImage, { width: 50, height: 50, borderRadius: 12 }]} />
+                      {/* ✅ AVAILABILITY TOGGLE for addons */}
+                      <View style={styles.dishAvailabilityWrap}>
+                        <Switch
+                          trackColor={{ false: "#4B5563", true: "#15803D" }}
+                          thumbColor="#FFFFFF"
+                          ios_backgroundColor="#3e3e3e"
+                          onValueChange={() => {
+                            const updated = [...addonsList];
+                            const current = updated[aIdx];
+                            updated[aIdx] = {
+                              ...current,
+                              isAvailable: !(current.isAvailable !== false),
+                            };
+                            setAddonsList(updated);
+                          }}
+                          value={addon.isAvailable !== false}
+                        />
+                      </View>
+
+                      <Image source={{ uri: addon.imageUrl || "https://via.placeholder.com/80" }} style={[styles.dishRowImage, { width: 50, height: 50, borderRadius: 12 }, addon.isAvailable === false && styles.dishRowImageDim]} />
                       <View style={styles.dishRowInfo}>
-                        <Text style={styles.dishRowName}>{addon.name}</Text>
+                        <Text style={[styles.dishRowName, addon.isAvailable === false && { color: "#94A3B8" }]}>{addon.name}</Text>
                         {addon.price !== undefined && addon.price !== null && addon.price !== "" ? (
                           <Text style={styles.dishRowPrice}>₹{addon.price} / Plate</Text>
                         ) : null}
@@ -2811,10 +3001,27 @@ export default function AddChefCategory() {
                               <View>
                                 {itemsList.map((item: any) => (
                                   <View key={item.id} style={styles.mealItemRow}>
-                                    <Image source={{ uri: item.image }} style={styles.mealItemImage} />
+                                    {/* ✅ AVAILABILITY TOGGLE for homemade meal-box items */}
+                                    <View style={styles.mealItemAvailToggle}>
+                                      <Switch
+                                        trackColor={{ false: "#4B5563", true: "#15803D" }}
+                                        thumbColor="#FFFFFF"
+                                        ios_backgroundColor="#3e3e3e"
+                                        onValueChange={() => toggleMealItemAvailability(mealTime, section, item.id)}
+                                        value={item.isAvailable !== false}
+                                      />
+                                    </View>
+
+                                    <Image source={{ uri: item.image }} style={[styles.mealItemImage, item.isAvailable === false && styles.dishRowImageDim]} />
                                     <View style={styles.mealItemInfo}>
-                                      <Text style={styles.mealItemName}>{item.name}</Text>
+                                      <Text style={[styles.mealItemName, item.isAvailable === false && { color: "#94A3B8" }]}>{item.name}</Text>
                                       {item.price ? <Text style={styles.mealItemPrice}>+ ₹{item.price}</Text> : null}
+                                      <Text style={[
+                                        styles.dishAvailBadge,
+                                        item.isAvailable === false ? styles.dishAvailBadgeOff : styles.dishAvailBadgeOn
+                                      ]}>
+                                        {item.isAvailable === false ? "Unavailable" : "Available"}
+                                      </Text>
                                     </View>
                                     <View style={styles.mealItemActions}>
                                       <TouchableOpacity 
@@ -3043,7 +3250,10 @@ export default function AddChefCategory() {
                   name: itemName.trim(), 
                   imageUrl: itemImage, 
                   cloudinaryId: itemCloudinaryId, 
-                  price: itemPrice !== "" && itemPrice !== null && itemPrice !== undefined ? Number(itemPrice) : undefined 
+                  price: itemPrice !== "" && itemPrice !== null && itemPrice !== undefined ? Number(itemPrice) : undefined,
+                  isAvailable: editingItemIndex !== null
+                    ? (currentCat.items[editingItemIndex]?.isAvailable !== false)
+                    : true,
                 };
 
                 if (editingItemIndex !== null) {
@@ -3260,6 +3470,30 @@ const styles = StyleSheet.create({
   
   subCategoryBlock: { borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.15)", borderRadius: 16, padding: 14, marginTop: 12, backgroundColor: "#131E16" },
   itemBlock: { borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.12)", borderRadius: 12, padding: 12, marginTop: 12, backgroundColor: "#0C130E" },
+
+  // ✅ NEW: availability toggle row style (used on every item card)
+  itemAvailabilityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: "rgba(82, 183, 136, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(82, 183, 136, 0.22)",
+    marginBottom: 8,
+  },
+  itemAvailabilityLabel: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#52B788",
+    letterSpacing: 0.3,
+  },
+  itemAvailabilityLabelOff: {
+    color: "#F87171",
+  },
+
   addSmallButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 8, borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.2)", borderRadius: 8, marginTop: 3, marginBottom: 5, backgroundColor: "#18261C" },
   addSmallText: { color: "#52B788", fontWeight: "700", marginLeft: 5, fontSize: 12 },
   addMediumButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 10, borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.2)", borderRadius: 10, marginTop: 10, backgroundColor: "#18261C" },
@@ -3442,14 +3676,48 @@ const styles = StyleSheet.create({
   selectionActions: { flexDirection: "row", alignItems: "center", gap: 5 },
   selectionActionBtn: { padding: 6, backgroundColor: '#18261C', borderRadius: 9, borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.2)" },
   
-  dishRowSelectorItem: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1, borderColor: 'rgba(82, 183, 136, 0.1)' },
+  dishRowSelectorItem: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1, borderColor: 'rgba(82, 183, 136, 0.1)', position: "relative" },
   dishRowLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   dishRowImage: { width: 48, height: 48, borderRadius: 10, backgroundColor: '#0C130E', borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.15)" },
+  dishRowImageDim: { opacity: 0.45 },
   dishRowInfo: { marginLeft: 10, flex: 1 },
   dishRowName: { fontSize: 14, color: '#FFFFFF', fontWeight: '700' },
   dishRowPrice: { color: '#52B788', fontWeight: '700', fontSize: 12.5, marginTop: 2 },
   dishRowActions: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   dishActionBtn: { padding: 6, backgroundColor: '#18261C', borderRadius: 8, borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.2)" },
+
+  // ✅ NEW: absolute-positioned availability toggle on daawath dish rows
+  dishAvailabilityWrap: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    zIndex: 5,
+    transform: [{ scaleX: 0.72 }, { scaleY: 0.72 }],
+  },
+  dishAvailBadge: {
+    marginTop: 4,
+    alignSelf: "flex-start",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+    fontSize: 9.5,
+    fontWeight: "800",
+    overflow: "hidden",
+    letterSpacing: 0.3,
+  },
+  dishAvailBadgeOn: {
+    backgroundColor: "rgba(82, 183, 136, 0.15)",
+    color: "#52B788",
+  },
+  dishAvailBadgeOff: {
+    backgroundColor: "rgba(220, 38, 38, 0.15)",
+    color: "#F87171",
+  },
+
+  mealItemAvailToggle: {
+    marginRight: 4,
+    transform: [{ scaleX: 0.72 }, { scaleY: 0.72 }],
+  },
   
   noDishesText: { paddingVertical: 18, color: '#94A3B8', textAlign: 'center', fontSize: 12, fontStyle: 'italic' },
   
