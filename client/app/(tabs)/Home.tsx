@@ -56,6 +56,8 @@ import AddressMapModal, {
 // ✅ single-source-of-truth for delivery location (survives back navigation)
 import { useDeliveryLocationStore } from '@/src/store/deliveryLocationStore';
 import { BannerSkeleton, CaterersSectionSkeleton } from '@/src/components/skeletons/HomeSkeleton';
+// ✅ NEW: Network status banner (slow / offline) — mounted at root
+import NetworkStatusBanner from '@/src/components/NetworkStatusBanner';
 
 // ✅ SKELETONS — all shimmer placeholders for dynamic data
 
@@ -1517,6 +1519,10 @@ export default function HomeScreen() {
   return (
     <View style={styles.rootContainer}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+
+      {/* ✅ Network status banner — absolute at top, shows above everything.
+          Hidden (slides off-screen) when online. */}
+      <NetworkStatusBanner />
 
       <ScrollView
         ref={mainScrollRef}

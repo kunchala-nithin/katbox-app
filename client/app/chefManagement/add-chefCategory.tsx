@@ -21,6 +21,11 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { getToken } from "@/src/lib/authStorage";
 import MenuCard from "@/src/components/MenuCard";
 import { SafeAreaView } from "react-native-safe-area-context";
+import NetworkStatusBanner from "@/src/components/NetworkStatusBanner";
+import AddChefCategorySkeleton from "@/src/components/skeletons/AddChefCategorySkeleton";
+
+// ✅ NEW: skeleton + network banner
+
 
 const cateringCategories = ["Breakfast", "Lunch", "Dinner", "Snacks"];
 const mealboxCategories = ["Breakfast", "Lunch", "Dinner", "Snacks"];
@@ -28,9 +33,6 @@ const mealTypes = ["Breakfast", "Lunch", "Dinner", "Snacks"];
 
 // ============================================================
 //  🚀 FAST-IMAGE COMPRESSION HELPER
-//  Resizes picked photo to max `maxWidth` px and re-encodes
-//  as JPEG at given `quality`. Reduces 4–6MB phone photos to
-//  ~150–300KB before they ever leave the device.
 // ============================================================
 const compressImageForUpload = async (
   uri: string,
@@ -39,7 +41,6 @@ const compressImageForUpload = async (
 ): Promise<string> => {
   try {
     if (!uri) return uri;
-    // Skip already-compressed data URIs / non-file paths
     if (!uri.startsWith("file") && !uri.startsWith("content") && !uri.startsWith("ph://")) {
       return uri;
     }
@@ -59,6 +60,11 @@ const compressImageForUpload = async (
 };
 
 export default function AddChefCategory() {
+  // =====
+  // ✅ NEW: loading state for skeleton
+  // =====
+  const [isLoading, setIsLoading] = useState(true);
+
   // =====
   // SHARED STATES
   // =====
@@ -215,6 +221,7 @@ export default function AddChefCategory() {
   // ====
   const fetchAllData = async () => {
     try {
+      setIsLoading(true); // ✅ show skeleton while loading
       const token = await getToken();
       if (!token) return;
 
@@ -234,6 +241,8 @@ export default function AddChefCategory() {
       }
     } catch (err) {
       console.log("Error fetching data updates:", err);
+    } finally {
+      setIsLoading(false); // ✅ hide skeleton
     }
   };
 
@@ -289,8 +298,6 @@ export default function AddChefCategory() {
   // ===
   // ✅ AVAILABILITY TOGGLE HANDLERS
   // ======
-  // Flips a single category item's isAvailable flag on the server
-  // and optimistically updates local state so the toggle feels instant.
   const toggleCategoryItemAvailability = async (subIndex: number, itemIndex: number) => {
     const sub = modalSubCategories[subIndex];
     const item = sub?.items?.[itemIndex];
@@ -299,7 +306,6 @@ export default function AddChefCategory() {
     const itemId = item._id;
     const nextValue = !(item.isAvailable !== false);
 
-    // Optimistic local update
     const optimistic = [...modalSubCategories];
     optimistic[subIndex].items[itemIndex].isAvailable = nextValue;
     setModalSubCategories(optimistic);
@@ -315,7 +321,6 @@ export default function AddChefCategory() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
     } catch (err: any) {
-      // Roll back on failure
       const rolled = [...modalSubCategories];
       rolled[subIndex].items[itemIndex].isAvailable = !nextValue;
       setModalSubCategories(rolled);
@@ -323,7 +328,6 @@ export default function AddChefCategory() {
     }
   };
 
-  // Flips a single menu plate-item's isAvailable flag (catering menus).
   const toggleMenuPlateItemAvailability = async (plateItemId: string) => {
     const idx = plateItems.findIndex((p) => p.id === plateItemId);
     if (idx === -1) return;
@@ -334,7 +338,6 @@ export default function AddChefCategory() {
     optimistic[idx] = { ...optimistic[idx], isAvailable: nextValue };
     setPlateItems(optimistic);
 
-    // If we're editing an existing menu and the item has an _id, persist.
     const dbId = (current as any)._id;
     if (!dbId || !editingMenuId) return;
 
@@ -1464,7 +1467,6 @@ export default function AddChefCategory() {
     });
   };
 
-  // ✅ NEW: Toggle availability for a single meal-box item (Homemade plan items)
   const toggleMealItemAvailability = (mealType: string, section: string, itemId: string) => {
     setMealBoxData((prev: any) => {
       const currentDayData = prev[selectedDay] || {};
@@ -1752,8 +1754,21 @@ export default function AddChefCategory() {
     return `₹${totalPrice}`;
   }
 
+  // ✅ EARLY RETURN: skeleton while loading
+  if (isLoading) {
+    return (
+      <View style={styles.safe}>
+        <NetworkStatusBanner />
+        <AddChefCategorySkeleton />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.safe}>
+      {/* ✅ Global network status banner — auto-hides when online */}
+      <NetworkStatusBanner />
+
       {/* IMMERSIVE FIXED HEADER BEHIND CAMERA / NOTCH WITH SINGLE-LINE ALIGNMENT & CALL ICON */}
       <View style={styles.globalHeader}>
         <View style={styles.globalHeaderContent}>
@@ -2152,7 +2167,6 @@ export default function AddChefCategory() {
                         </TouchableOpacity>
                       )}
 
-                      {/* ✅ AVAILABILITY TOGGLE — top-right of every item card */}
                       <View style={styles.itemAvailabilityRow}>
                         <Text style={[styles.itemAvailabilityLabel, item.isAvailable === false && styles.itemAvailabilityLabelOff]}>
                           {item.isAvailable === false ? "Unavailable" : "Available"}
@@ -2211,7 +2225,6 @@ export default function AddChefCategory() {
                         </View>
                       </View>
 
-                      {/* VEG / NON-VEG TOGGLE FOR ITEM */}
                       <Text style={styles.label}>Food Type</Text>
                       <View style={styles.toggleRow}>
                         <Text style={[styles.toggleLabel, item.isVeg !== false && styles.toggleLabelActive]}>Veg</Text>
@@ -2434,7 +2447,6 @@ export default function AddChefCategory() {
 
               {plateItems.map((item) => (
                 <View key={item.id} style={{ marginBottom: 14 }}>
-                  {/* ✅ AVAILABILITY TOGGLE for each plate item */}
                   <View style={styles.itemAvailabilityRow}>
                     <Text style={[styles.itemAvailabilityLabel, item.isAvailable === false && styles.itemAvailabilityLabelOff]}>
                       {item.isAvailable === false ? "Unavailable" : "Available"}
@@ -2551,7 +2563,6 @@ export default function AddChefCategory() {
         <View style={[styles.screenshotOverlay, { backgroundColor: '#0C130E' }]}>
           <SafeAreaView style={styles.screenshotSafe}>
             
-            {/* Header section */}
             <View style={styles.screenshotHeader}>
               <TouchableOpacity onPress={() => setShowAddItemModal(false)} style={styles.screenshotBackBtn}>
                 <Ionicons name="chevron-back" size={20} color="#E2E8F0" />
@@ -2562,7 +2573,6 @@ export default function AddChefCategory() {
               <View style={{ width: 38 }} />
             </View>
 
-            {/* Token Category Browser */}
             <View style={styles.plateContainerSection}>
               <Text style={styles.plateHeading}>BROWSE MENU SECTIONS</Text>
               <ScrollView 
@@ -2620,7 +2630,6 @@ export default function AddChefCategory() {
               <Text style={styles.customSubtitle}>Tailor dishes, selection logic controls, and extra event add-ons dynamically.</Text>
             </View>
 
-            {/* Main Vertical ScrollView with onScroll tracking */}
             <ScrollView 
               ref={mainVerticalScrollRef}
               style={{ flex: 1, paddingHorizontal: 14 }}
@@ -2668,7 +2677,6 @@ export default function AddChefCategory() {
                         categorySectionLayouts.current[idx] = layout.y;
                       }}
                     >
-                      {/* Sub-Header Actions */}
                       <View style={styles.screenshotSelectionHeader}>
                         <View style={styles.selectionTitleRow}>
                           <View style={styles.selectionNumberBadge}>
@@ -2689,14 +2697,12 @@ export default function AddChefCategory() {
                         </View>
                       </View>
 
-                      {/* Items Listing */}
                       {dishes.length === 0 ? (
                         <Text style={styles.noDishesText}>No specific items found under this group yet. Tap variant builder to insert.</Text>
                       ) : (
                         dishes.map((dish: any, dishIdx: number) => {
                           return (
                             <View key={dishIdx} style={styles.dishRowSelectorItem}>
-                              {/* ✅ AVAILABILITY TOGGLE — top-right of every dish row */}
                               <View style={styles.dishAvailabilityWrap}>
                                 <Switch
                                   trackColor={{ false: "#4B5563", true: "#15803D" }}
@@ -2749,7 +2755,6 @@ export default function AddChefCategory() {
                         })
                       )}
 
-                      {/* Section Quick Actions */}
                       <View style={styles.chefQuickActionsContainer}>
                         <TouchableOpacity 
                           style={styles.chefQuickActionBtn}
@@ -2769,7 +2774,6 @@ export default function AddChefCategory() {
                 })
               )}
 
-              {/* Addons Block */}
               <View style={styles.screenshotSelectionBox}>
                 <View style={styles.addonSectionTitleRow}>
                   <View style={styles.addonGreenCircle}>
@@ -2800,7 +2804,6 @@ export default function AddChefCategory() {
                 ) : (
                   addonsList.map((addon, aIdx) => (
                     <View key={aIdx} style={styles.dishRowSelectorItem}>
-                      {/* ✅ AVAILABILITY TOGGLE for addons */}
                       <View style={styles.dishAvailabilityWrap}>
                         <Switch
                           trackColor={{ false: "#4B5563", true: "#15803D" }}
@@ -2848,7 +2851,6 @@ export default function AddChefCategory() {
                 )}
               </View>
 
-              {/* Commit button */}
               <View style={{ marginTop: 15, marginBottom: 30 }}>
                 <TouchableOpacity 
                   style={[styles.screenshotPrimarySubmitBtn, menuButtonLoading && { opacity: 0.7 }]} 
@@ -2860,7 +2862,6 @@ export default function AddChefCategory() {
               </View>
             </ScrollView>
 
-            {/* Sticky pricing matrix footer */}
             <View style={styles.screenshotStickyFooterBar}>
               <View>
                 <Text style={styles.footerPriceAmountText}>{getCurrentMenuPrice()}</Text>
@@ -2968,7 +2969,7 @@ export default function AddChefCategory() {
                       </View>
                     ) : (
                       Object.keys(mealBoxData[selectedDay]?.[mealTime] || {}).map((section) => {
-                        const sectionWrapper = mealBoxData[selectedDay]?.[mealTime]?.[section];
+                        const sectionWrapper = mealBoxData[selectedDay]?.[mealType]?.[section];
                         const maxSelectable = (sectionWrapper && typeof sectionWrapper.maxItems === "number") ? sectionWrapper.maxItems : 1;
                         const itemsList = (sectionWrapper && Array.isArray(sectionWrapper.items)) ? sectionWrapper.items : (Array.isArray(sectionWrapper) ? sectionWrapper : []);
                         
@@ -3001,7 +3002,6 @@ export default function AddChefCategory() {
                               <View>
                                 {itemsList.map((item: any) => (
                                   <View key={item.id} style={styles.mealItemRow}>
-                                    {/* ✅ AVAILABILITY TOGGLE for homemade meal-box items */}
                                     <View style={styles.mealItemAvailToggle}>
                                       <Switch
                                         trackColor={{ false: "#4B5563", true: "#15803D" }}
@@ -3471,7 +3471,6 @@ const styles = StyleSheet.create({
   subCategoryBlock: { borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.15)", borderRadius: 16, padding: 14, marginTop: 12, backgroundColor: "#131E16" },
   itemBlock: { borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.12)", borderRadius: 12, padding: 12, marginTop: 12, backgroundColor: "#0C130E" },
 
-  // ✅ NEW: availability toggle row style (used on every item card)
   itemAvailabilityRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -3686,7 +3685,6 @@ const styles = StyleSheet.create({
   dishRowActions: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   dishActionBtn: { padding: 6, backgroundColor: '#18261C', borderRadius: 8, borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.2)" },
 
-  // ✅ NEW: absolute-positioned availability toggle on daawath dish rows
   dishAvailabilityWrap: {
     position: "absolute",
     top: 4,

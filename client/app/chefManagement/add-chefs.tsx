@@ -22,6 +22,12 @@ import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import api from "@/src/lib/api";
 import { getToken } from "@/src/lib/authStorage";
+import NetworkStatusBanner from "@/src/components/NetworkStatusBanner";
+import AddChefsSkeleton from "@/src/components/skeletons/AddChefsSkeleton";
+
+// ✅ NEW: skeleton + network banner
+
+
 
 const { width } = Dimensions.get("window");
 
@@ -101,6 +107,9 @@ const normalizeServiceType = (raw: any): CouponServiceType => {
 const AddChefs = () => {
   const router = useRouter();
 
+  // ✅ NEW: loading state for skeleton
+  const [isLoading, setIsLoading] = useState(true);
+
   const [name, setName] = useState("");
   const [exp, setExp] = useState("");
   const [phone, setPhone] = useState("");
@@ -131,9 +140,7 @@ const AddChefs = () => {
   const [couponType, setCouponType] = useState<"percent" | "flat">("percent");
   const [couponValue, setCouponValue] = useState("");
   const [couponDescription, setCouponDescription] = useState("");
-  // ✅ NEW: service type for the coupon being created
   const [couponServiceType, setCouponServiceType] = useState<CouponServiceType>("catering");
-  // ✅ NEW: dropdown visibility
   const [showServiceDropdown, setShowServiceDropdown] = useState(false);
 
   const safeGoBack = () => {
@@ -146,6 +153,7 @@ const AddChefs = () => {
     useCallback(() => {
       const loadMyChef = async () => {
         try {
+          setIsLoading(true); // ✅ show skeleton while loading
           const res = await api.get("/api/chefs/my-chef");
           if (res.data.success && res.data.chef) {
             const c = res.data.chef;
@@ -200,6 +208,8 @@ const AddChefs = () => {
         } catch (err) {
           console.log("Load my chef error", err);
           resetForm();
+        } finally {
+          setIsLoading(false); // ✅ hide skeleton
         }
       };
       loadMyChef();
@@ -299,19 +309,10 @@ const AddChefs = () => {
   };
 
   // ─────────────────────────────────────────────────────────────────
-  // ✅ NEW: Auto-sync coupons to backend after add / delete
-  //    Mirrors the existing `handleToggleAvailability` pattern.
-  //    Only runs when the chef already has a saved profile
-  //    (isEditing === true) — brand-new drafts wait for "Publish".
-  //
-  //    Effect: when the chef adds or removes a coupon here, the
-  //    MongoDB `Chef.coupons` array is updated immediately. The
-  //    admin screen (admin/all-chefs.tsx) reads from that same
-  //    array, so the next time it focuses / refreshes, the admin
-  //    sees the change automatically — no extra admin work required.
+  // ✅ Auto-sync coupons to backend after add / delete
   // ─────────────────────────────────────────────────────────────────
   const autoSaveCouponsToBackend = async (updatedCoupons: CouponItem[]) => {
-    if (!isEditing) return; // draft profile — wait for "Publish chef profile"
+    if (!isEditing) return;
 
     try {
       const token = await getToken();
@@ -330,7 +331,6 @@ const AddChefs = () => {
       formData.append("isAvailable", String(isAvailable));
       formData.append("coupons", JSON.stringify(updatedCoupons));
 
-      // Preserve existing banners and any pending deletions
       const existingBannersPayload = banners
         .filter((b) => !b.isNew && b.cloudinaryId)
         .map((b) => ({
@@ -354,7 +354,6 @@ const AddChefs = () => {
         "⚠️ Auto-save coupons failed:",
         err?.response?.data || err?.message || err
       );
-      // Silent failure — the chef can still tap "Update profile" to retry
     }
   };
 
@@ -394,9 +393,6 @@ const AddChefs = () => {
     setCoupons(updatedCoupons);
     resetCouponForm();
 
-    // ✅ NEW: push the updated list to MongoDB immediately so the
-    //    admin screen reflects the change without the chef having
-    //    to tap "Update profile" for coupons alone.
     autoSaveCouponsToBackend(updatedCoupons);
   };
 
@@ -410,11 +406,6 @@ const AddChefs = () => {
         onPress: () => {
           const updatedCoupons = coupons.filter((c) => c.id !== id);
           setCoupons(updatedCoupons);
-
-          // ✅ NEW: push the updated list to MongoDB immediately so
-          //    the admin screen reflects the deletion on its next
-          //    focus / refresh — without the chef having to tap
-          //    "Update profile" for coupons alone.
           autoSaveCouponsToBackend(updatedCoupons);
         },
       },
@@ -682,8 +673,21 @@ const AddChefs = () => {
   const currentServiceMeta =
     SERVICE_TYPES.find((s) => s.value === couponServiceType) || SERVICE_TYPES[0];
 
+  // ✅ Early return: skeleton while loading
+  if (isLoading) {
+    return (
+      <View style={styles.root}>
+        <NetworkStatusBanner />
+        <AddChefsSkeleton />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.root}>
+      {/* ✅ Global network status banner (auto-hides when online) */}
+      <NetworkStatusBanner />
+
       <StatusBar barStyle="light-content" backgroundColor="#0B140F" />
 
       {/* ─── PREMIUM HEADER ─── */}
@@ -1072,7 +1076,7 @@ const AddChefs = () => {
                   autoCapitalize="characters"
                 />
 
-                {/* ✅ NEW: SERVICE TYPE DROPDOWN */}
+                {/* SERVICE TYPE DROPDOWN */}
                 <Text style={styles.fieldLabel}>Applicable service type</Text>
                 <TouchableOpacity
                   style={styles.dropdownTrigger}
@@ -1266,7 +1270,7 @@ const AddChefs = () => {
         </ScrollView>
       </View>
 
-      {/* ✅ SERVICE TYPE DROPDOWN MODAL */}
+      {/* SERVICE TYPE DROPDOWN MODAL */}
       <Modal
         visible={showServiceDropdown}
         transparent
@@ -1682,7 +1686,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  // ✅ NEW: dropdown trigger (the button that opens the modal)
   dropdownTrigger: {
     flexDirection: "row",
     alignItems: "center",
@@ -1721,7 +1724,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
-  // ✅ NEW: dropdown modal styles
   dropdownBackdrop: {
     flex: 1,
     backgroundColor: "rgba(11, 20, 15, 0.55)",
