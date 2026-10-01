@@ -50,10 +50,14 @@ app.use('/api/banners', bannerRoutes);
 connectDB();
 
 // Health check
-app.get("/health", (_req, res) => {
-  res.json({ status: "OK" });
-});
-
+// Health check — supports GET (browsers/apps) and HEAD (UptimeRobot)
+app.route("/health")
+  .get((_req, res) => {
+    res.status(200).json({ status: "OK" });
+  })
+  .head((_req, res) => {
+    res.status(200).end();
+  });
 // ⭐ Socket connection
 io.on("connection", (socket) => {
   console.log("⚡ Client connected:", socket.id);
