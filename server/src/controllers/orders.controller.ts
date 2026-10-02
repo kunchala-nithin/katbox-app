@@ -85,6 +85,88 @@ const calculateSlotTargetTime = (dateStr: string, slotStr: string): Date => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
+   ✅ NEW — COMMISSION ENGINE (chef earnings)
+   ─────────────────────────────────────────────────────────────────
+   Business rule (1-based chef order index within that chef's own
+   chronological sequence of orders):
+
+     • Orders 1, 2, 3            → Commission FREE (0%)
+     • Orders 4, 5, 6, 7         → 18% commission
+     • Order  8                  → Commission FREE
+     • Orders 9, 10, 11, 12      → 18% commission
+     • Order  13                 → Commission FREE
+     • Orders 14, 15, 16, 17     → 18% commission
+     • Order  18                 → Commission FREE
+     • … and so on, repeating forever.
+
+   Condensed rule:
+     isCommissionFree = (orderIndex <= 3) || (orderIndex % 5 === 3)
+
+   Verify the pattern:
+     1 → free (1<=3)          ✓
+     2 → free (2<=3)          ✓
+     3 → free (3<=3)          ✓
+     4 → paid (4%5=4)         ✓
+     5 → paid (5%5=0)         ✓
+     6 → paid (6%5=1)         ✓
+     7 → paid (7%5=2)         ✓
+     8 → free (8%5=3)         ✓
+     9 → paid (9%5=4)         ✓
+    10 → paid                 ✓
+    11 → paid                 ✓
+    12 → paid                 ✓
+    13 → free (13%5=3)        ✓
+    ...
+   ───────────────────────────────────────────────────────────────── */
+const COMMISSION_RATE = 0.18;
+
+const getCommissionInfo = (orderIndex: number) => {
+  const idx = Number(orderIndex) || 1;
+  const isFree = idx <= 3 || idx % 5 === 3;
+
+  if (isFree) {
+    return {
+      isFree: true,
+      rate: 0,
+      label: "Commission Free",
+      note: `Order #${idx}: Commission Free (0%)`,
+    };
+  }
+
+  return {
+    isFree: false,
+    rate: COMMISSION_RATE,
+    label: "18% Commission",
+    note: `Order #${idx}: 18% Commission Applied`,
+  };
+};
+
+/* ✅ NEW — Enrich a Mongoose order document with commission fields.
+   Always returns a plain object (never a Mongoose doc) so the
+   response serialization is identical to before. */
+const enrichOrderWithCommission = (orderDoc: any, orderIndex: number) => {
+  const obj = orderDoc && typeof orderDoc.toObject === "function"
+    ? orderDoc.toObject()
+    : { ...orderDoc };
+
+  const comm = getCommissionInfo(orderIndex);
+  const total = Number(obj.totalAmount || 0);
+  const commissionAmount = comm.isFree
+    ? 0
+    : Math.round(total * comm.rate * 100) / 100;
+
+  return {
+    ...obj,
+    chefOrderIndex: orderIndex,
+    commissionRate: comm.rate,
+    isCommissionFree: comm.isFree,
+    commissionAmount,
+    commissionNote: comm.note,
+    commissionLabel: comm.label,
+  };
+};
+
+/* ─────────────────────────────────────────────────────────────────
    ✅ NEW HELPER — Safely parse a value that may arrive as a JSON
    string (from multipart/form-data) or already as an array/object
    (from application/json). Never throws.
@@ -1285,6 +1367,14 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
 
 /**
  * GET /api/orders/chef-orders
+ *
+ * ✅ UPDATED — Each returned order is enriched with commission fields:
+ *    chefOrderIndex, commissionRate, isCommissionFree,
+ *    commissionAmount, commissionNote, commissionLabel.
+ *
+ * The chef's orders are indexed by their OWN chronological sequence
+ * (oldest = order 1). The frontend does not need to do any math —
+ * it just renders the fields.
  */
 export const getChefOrders = async (req: AuthRequest, res: Response) => {
   try {
@@ -1308,17 +1398,38 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
       queryChefIds.push(new mongoose.Types.ObjectId(String(rawUserId)));
     }
 
-    const orders = await Order.find({
+    // ✅ Fetch ASCENDING so we can assign the 1-based chronological index
+    //    (order 1 = oldest) for commission calculation.
+    const ordersAsc = await Order.find({
       $or: [
         { chefId: { $in: queryChefIds } },
         { chefName: chefProfile?.name || "" },
         { _id: { $in: chefProfile?.orderHistory || [] } },
       ],
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: 1 });
+
+    // ✅ Build orderId → 1-based index map
+    const indexMap: Record<string, number> = {};
+    ordersAsc.forEach((o: any, idx: number) => {
+      indexMap[o.orderId] = idx + 1;
+    });
+
+    // ✅ Enrich each order with its commission info (additive fields only)
+    const enrichedAsc = ordersAsc.map((o: any) => {
+      const idx = indexMap[o.orderId] || 1;
+      return enrichOrderWithCommission(o, idx);
+    });
+
+    // ✅ Return in DESCENDING order (newest first) to preserve the
+    //    existing UI behaviour of the chef /all-orders screen.
+    const enrichedDesc = enrichedAsc.slice().sort(
+      (a: any, b: any) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
 
     return res.status(200).json({
       success: true,
-      orders,
+      orders: enrichedDesc,
       chef: chefProfile || null,
     });
   } catch (error: any) {
@@ -1915,14 +2026,60 @@ export const getOrderById = async (req: Request, res: Response) => {
 
 /**
  * GET /api/admin/orders
+ *
+ * ✅ UPDATED — Each returned order is enriched with commission fields
+ *    (chefOrderIndex, commissionRate, isCommissionFree,
+ *    commissionAmount, commissionNote, commissionLabel).
+ *
+ * Indexing is per-chef: each chef's orders are sorted chronologically
+ * (oldest = order 1) and the same commission rule is applied. This
+ * lets the admin screen show the 18% commission amount (₹) that
+ * applies to that specific order from that chef's perspective.
  */
 export const getAllOrders = async (req: AuthRequest, res: Response) => {
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
     if (!rawUserId) return res.status(401).json({ success: false, message: "Unauthorized" });
 
-    const orders = await Order.find({}).sort({ createdAt: -1 });
-    return res.status(200).json({ success: true, count: orders.length, orders });
+    // ✅ Fetch ASCENDING so we can group by chef and assign the 1-based
+    //    chronological index (order 1 = oldest) within each chef's own
+    //    sequence of orders.
+    const allOrdersAsc = await Order.find({}).sort({ createdAt: 1 });
+
+    // ✅ Group by chef (prefer chefId; fall back to chefName; else "unassigned")
+    const chefGroups: Record<string, any[]> = {};
+    allOrdersAsc.forEach((o: any) => {
+      const key = String(o.chefId || o.chefName || "unassigned");
+      if (!chefGroups[key]) chefGroups[key] = [];
+      chefGroups[key].push(o);
+    });
+
+    // ✅ Build orderId → 1-based index map (per chef)
+    const indexMap: Record<string, number> = {};
+    Object.values(chefGroups).forEach((group) => {
+      group.forEach((o: any, idx: number) => {
+        indexMap[o.orderId] = idx + 1;
+      });
+    });
+
+    // ✅ Enrich each order with its commission info
+    const enrichedAsc = allOrdersAsc.map((o: any) => {
+      const idx = indexMap[o.orderId] || 1;
+      return enrichOrderWithCommission(o, idx);
+    });
+
+    // ✅ Return in DESCENDING order (newest first) to preserve the
+    //    existing UI behaviour of the admin /all-orders screen.
+    const enrichedDesc = enrichedAsc.slice().sort(
+      (a: any, b: any) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: enrichedDesc.length,
+      orders: enrichedDesc,
+    });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }

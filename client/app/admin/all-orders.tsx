@@ -912,6 +912,17 @@ export default function AdminAllOrdersScreen() {
   const advancePaidAmountNum = Number(activeOrder?.advancePaidAmount || 0);
   const balanceToCollectNum = Number(activeOrder?.balanceAmountToCollect || 0);
 
+  // ✅ NEW — Admin-side commission values (read directly from the backend).
+  const commissionRateNum = Number(activeOrder?.commissionRate || 0);
+  const commissionAmountNum = Number(activeOrder?.commissionAmount || 0);
+  const isCommissionFree = activeOrder?.isCommissionFree === true;
+  const commissionLabelText = activeOrder?.commissionLabel || (isCommissionFree ? 'Commission Free' : '18% Commission');
+  const commissionNoteText = activeOrder?.commissionNote || '';
+  const chefOrderIndexNum = Number(activeOrder?.chefOrderIndex || 1);
+
+  // ✅ NEW: Net settlement to chef after commission (for transparency)
+  const netSettlementToChefNum = Math.max(0, totalAmountNum - commissionAmountNum);
+
   const currentStatus = activeOrder?.orderStatus || 'Placed';
   const isCurrentOrderAccepted =
     currentStatus.toLowerCase() !== 'placed' && currentStatus.toLowerCase() !== 'cancelled';
@@ -1041,19 +1052,12 @@ export default function AdminAllOrdersScreen() {
   }, [isQuickBitesFlow, activeOrder?.estimatedDeliveryAt]);
 
   // ✅ HOMEMADE ONLY: resolve delivery date & slot from the persisted order document.
-  //    • For QuickBites: PREFER the persisted `deliverySlot` from MongoDB.
-  //      Fall back to computed `estimatedDeliveryAt` ONLY if the persisted
-  //      slot is empty.
-  //    • For non-QuickBites: prefers the new top-level `deliverySlot` field,
-  //      falls back to legacy `deliveryTimeSlot`.
   const homemadeDeliveryDateResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    // ✅ PREFER the persisted date from MongoDB
     const persistedDate = String(activeOrder?.deliveryDate || '').trim();
     if (persistedDate) {
       return persistedDate;
     }
-    // Fall back to QuickBites computed value
     if (isQuickBitesFlow && quickBitesDateTime) {
       return quickBitesDateTime.timerDate;
     }
@@ -1067,14 +1071,6 @@ export default function AdminAllOrdersScreen() {
 
   const homemadeDeliverySlotResolved = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    // ✅ CRITICAL FIX: PREFER the persisted `deliverySlot` from MongoDB FIRST.
-    //    This ensures the QuickBites slot saved at checkout (e.g. "4:30 PM")
-    //    is displayed correctly. Only fall back to computed `estimatedDeliveryAt`
-    //    if the persisted slot is empty.
-    //    ✅ PROMPT 2: Also check the authoritative `quickDeliverySlot` first
-    //    (Prompt 1's exact field name), falling back to the legacy
-    //    `deliverySlot` / `deliveryTimeSlot` for pre-existing orders.
-    //    Single authoritative value — no competing versions.
     const persistedSlot = String(
       activeOrder?.quickDeliverySlot ||
       activeOrder?.deliverySlot ||
@@ -1084,7 +1080,6 @@ export default function AdminAllOrdersScreen() {
     if (persistedSlot) {
       return persistedSlot;
     }
-    // Fall back to QuickBites computed value
     if (isQuickBitesFlow && quickBitesDateTime) {
       return quickBitesDateTime.timeStr;
     }
@@ -1101,12 +1096,10 @@ export default function AdminAllOrdersScreen() {
   // ✅ NEW: Human-friendly display date specifically for headers/cards.
   const homemadeDeliveryDateDisplay = useMemo(() => {
     if (!isHomemadeFlow) return '';
-    // ✅ PREFER persisted date first
     const persistedDate = String(activeOrder?.deliveryDate || '').trim();
     if (persistedDate) {
       return persistedDate;
     }
-    // Fall back to QuickBites computed value
     if (isQuickBitesFlow && quickBitesDateTime) {
       return quickBitesDateTime.displayDate;
     }
@@ -1119,9 +1112,6 @@ export default function AdminAllOrdersScreen() {
   ]);
 
   // ✅ NEW: Resolved special instruction (works for every flow).
-  //    ✅ PROMPT 2: `resolveSpecialInstruction` now prefers Prompt 1's
-  //    authoritative `specialInstructions` sub-doc and falls back to the
-  //    legacy shape so all existing orders still render.
   const resolvedSpecialInstruction = useMemo(() => {
     return resolveSpecialInstruction(activeOrder);
   }, [activeOrder]);
@@ -1151,8 +1141,6 @@ export default function AdminAllOrdersScreen() {
     orderTime: activeOrder?.createdAt
       ? `${new Date(activeOrder.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${orderTimeFormatted}`
       : 'Today',
-    // ✅ For homemade QuickBites: use the live-computed display date.
-    //    For non-QuickBites homemade: use the persisted value.
     deliveryDate:
       isHomemadeFlow
         ? (homemadeDeliveryDateDisplay || homemadeDeliveryDateResolved || 'Today')
@@ -2063,15 +2051,6 @@ export default function AdminAllOrdersScreen() {
                   <Text style={styles.simplePlanDetailsText}>{orderData.meal.timingDetails}</Text>
                 </View>
 
-                {/* ✅ Dynamic Delivery Date / Slot / Delivery Type Strip (Admin Blue Theme)
-                    — Delivery Type has been added as a THIRD cell inside the same
-                    strip, right next to Delivery Slot. Values come from the same
-                    orderData.deliveryDate / orderData.deliveryTimeSlot and
-                    resolvedDeliveryTypeLabel already computed dynamically.
-
-                    ✅ UPDATED: The DELIVERY TYPE cell is now hidden for
-                    HOMEMADE and QUICK BITES orders (controlled via
-                    `shouldShowDeliveryType`). */}
                 <View style={styles.deliveryInfoStripContainer}>
                   <View style={styles.deliveryInfoCell}>
                     <View style={{ flex: 1 }}>
@@ -2108,13 +2087,6 @@ export default function AdminAllOrdersScreen() {
                   ) : null}
                 </View>
 
-                {/* ✅ NEW: Special Instructions — trigger row now shows a fixed
-                    "Special Instructions" label with an information icon and
-                    chevron. Tapping expands to reveal the spice level (with
-                    the SAME emojis as CateringOrderReview) and the full
-                    description text.
-                    ✅ PROMPT 2: `resolvedSpecialInstruction` now prefers Prompt 1's
-                    authoritative `specialInstructions` sub-doc. */}
                 {hasSpecialInstruction ? (
                   <View style={styles.specialInstructionBottomLeftWrapper}>
                     <SpecialInstructionPanel
@@ -2167,8 +2139,8 @@ export default function AdminAllOrdersScreen() {
                 {/* ──────────────────────────────────────────────────────────
                     ✅ VIEW DETAILS — now shows subtotal, delivery charge
                     (with delivery type), coupon discount, advance paid,
-                    balance to collect, and payment mode for EVERY service
-                    type. Existing rows preserved.
+                    balance to collect, commission, and payment mode for
+                    EVERY service type. Existing rows preserved.
                     ────────────────────────────────────────────────────────── */}
                 {isPriceExpanded && (
                   <View style={styles.priceBreakdownFrame}>
@@ -2233,6 +2205,28 @@ export default function AdminAllOrdersScreen() {
                         </Text>
                       </View>
                     )}
+
+                    {/* ✅ COMMISSION ROW — visible in the bill breakdown for every order */}
+                    <View style={styles.priceDescriptionRow}>
+                      <Text style={styles.priceDescriptionLabel}>
+                        {isCommissionFree
+                          ? 'Commission (Free)'
+                          : `Commission (${Math.round(commissionRateNum * 100)}%)`}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.priceDescriptionValue,
+                          isCommissionFree
+                            ? styles.commissionFreeValueText
+                            : styles.commissionPaidValueText,
+                        ]}
+                      >
+                        {isCommissionFree
+                          ? '₹0.00'
+                          : `-₹${commissionAmountNum.toFixed(2)}`}
+                      </Text>
+                    </View>
+
                     {resolvedDeliveryTypeLabel ? (
                       <View style={styles.priceDescriptionRow}>
                         <Text style={styles.priceDescriptionLabel}>Delivery Type</Text>
@@ -2265,6 +2259,87 @@ export default function AdminAllOrdersScreen() {
                     </View>
                   </View>
                 )}
+              </View>
+
+              {/* ✅ COMMISSION CARD (admin view) — always visible at order level */}
+              <View style={styles.card}>
+                <View style={styles.commissionHeaderRow}>
+                  <Ionicons
+                    name={isCommissionFree ? 'shield-checkmark' : 'trending-down'}
+                    size={18}
+                    color={isCommissionFree ? '#16A34A' : '#DC2626'}
+                  />
+                  <Text style={styles.commissionHeadingText}>
+                    {isCommissionFree
+                      ? 'Commission Free Order (0%)'
+                      : 'Commission 18% Applied'}
+                  </Text>
+                  <View style={styles.commissionIndexBadge}>
+                    <Text style={styles.commissionIndexBadgeText}>
+                      Chef Order #{chefOrderIndexNum}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.commissionBreakdownRow}>
+                  <Text style={styles.commissionBreakdownLabel}>Total Amount</Text>
+                  <Text style={styles.commissionBreakdownValue}>
+                    ₹{totalAmountNum.toFixed(2)}
+                  </Text>
+                </View>
+
+                <View style={styles.commissionBreakdownRow}>
+                  <Text style={styles.commissionBreakdownLabel}>Commission Rate</Text>
+                  <Text
+                    style={[
+                      styles.commissionBreakdownValue,
+                      isCommissionFree && { color: '#16A34A' },
+                    ]}
+                  >
+                    {isCommissionFree
+                      ? '0% (Commission Free)'
+                      : `${Math.round(commissionRateNum * 100)}%`}
+                  </Text>
+                </View>
+
+                <View
+                  style={[
+                    styles.commissionAmountHighlightRow,
+                    isCommissionFree
+                      ? styles.commissionAmountHighlightFree
+                      : styles.commissionAmountHighlightPaid,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.commissionAmountHighlightLabel,
+                      isCommissionFree && { color: '#166534' },
+                    ]}
+                  >
+                    {isCommissionFree ? 'Commission Deducted' : 'Commission Amount (18%)'}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.commissionAmountHighlightValue,
+                      isCommissionFree && { color: '#166534' },
+                    ]}
+                  >
+                    ₹{commissionAmountNum.toFixed(2)}
+                  </Text>
+                </View>
+
+                {/* ✅ Net settlement to chef after commission (transparency) */}
+                <View style={styles.commissionBreakdownRow}>
+                  <Text style={styles.commissionBreakdownLabel}>Net Settlement to Chef</Text>
+                  <Text style={[styles.commissionBreakdownValue, { color: '#2563EB', fontWeight: '900' }]}>
+                    ₹{netSettlementToChefNum.toFixed(2)}
+                  </Text>
+                </View>
+
+                <Text style={styles.commissionNoteSubtext}>
+                  {commissionNoteText ||
+                    `Order #${chefOrderIndexNum} for this chef`}
+                </Text>
               </View>
 
               {/* ─── MEALBOX SCHEDULES ─── */}
@@ -2459,6 +2534,47 @@ export default function AdminAllOrdersScreen() {
                     </Text>
                   </TouchableOpacity>
                 </View>
+              </View>
+
+              {/* ✅ COMMISSION NOTE — always shown at the bottom of every order (admin) */}
+              <View style={styles.card}>
+                <View style={styles.commissionNoteRow}>
+                  <Ionicons
+                    name={isCommissionFree ? 'shield-checkmark' : 'trending-down'}
+                    size={18}
+                    color={isCommissionFree ? '#16A34A' : '#DC2626'}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text
+                    style={[
+                      styles.commissionNoteLabel,
+                      isCommissionFree && styles.commissionNoteLabelFree,
+                    ]}
+                  >
+                    {isCommissionFree
+                      ? 'Commission Free Order (0%)'
+                      : `Commission 18% Applied`}
+                  </Text>
+                  <View style={styles.commissionIndexPill}>
+                    <Text style={styles.commissionIndexPillText}>
+                      #{chefOrderIndexNum}
+                    </Text>
+                  </View>
+                </View>
+
+                {!isCommissionFree && (
+                  <View style={styles.commissionAmountRow}>
+                    <Text style={styles.commissionAmountLabel}>Commission Amount</Text>
+                    <Text style={styles.commissionAmountValue}>
+                      -₹{commissionAmountNum.toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+
+                <Text style={styles.commissionNoteSubtext}>
+                  {commissionNoteText ||
+                    `Order #${chefOrderIndexNum} for this chef`}
+                </Text>
               </View>
             </>
           )}
@@ -3114,6 +3230,15 @@ const styles = StyleSheet.create({
   priceDescriptionValue: { fontSize: 12.5, color: '#0F172A', fontWeight: '700' },
   freeTextHighlight: { color: '#2563EB', fontWeight: '800' },
   discountValueText: { fontSize: 12.5, color: '#2563EB', fontWeight: '800' },
+  // ✅ NEW — commission value color overrides (admin)
+  commissionFreeValueText: {
+    color: '#16A34A',
+    fontWeight: '800',
+  },
+  commissionPaidValueText: {
+    color: '#DC2626',
+    fontWeight: '900',
+  },
   paymentModeStrip: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFFFFF', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 10, marginTop: 8, borderWidth: 1, borderColor: '#E2E8F0' },
   paymentModeLabel: { fontSize: 11.5, fontWeight: '600', color: '#334155' },
   paymentMethodPill: { paddingHorizontal: 8, paddingVertical: 2.5, borderRadius: 6 },
@@ -3236,4 +3361,139 @@ const styles = StyleSheet.create({
   modalAbsoluteFooterCTAButtonSolid: { backgroundColor: '#2563EB', paddingVertical: 18, borderRadius: 18, alignItems: 'center', justifyContent: 'center', shadowColor: '#2563EB', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 6 },
   modalAbsoluteFooterButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
   modalAbsoluteFooterCTAButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+
+  /* ✅ NEW — Commission card styles (admin screen) */
+  commissionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  commissionHeadingText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#0F172A',
+    letterSpacing: -0.2,
+    marginLeft: 8,
+  },
+  commissionIndexBadge: {
+    backgroundColor: '#DBEAFE',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  commissionIndexBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#2563EB',
+    letterSpacing: 0.3,
+  },
+  commissionBreakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  commissionBreakdownLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  commissionBreakdownValue: {
+    fontSize: 12.5,
+    color: '#0F172A',
+    fontWeight: '800',
+  },
+  commissionAmountHighlightRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    marginTop: 8,
+    borderWidth: 1,
+  },
+  commissionAmountHighlightFree: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#BBF7D0',
+  },
+  commissionAmountHighlightPaid: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  commissionAmountHighlightLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#991B1B',
+    letterSpacing: 0.1,
+  },
+  commissionAmountHighlightValue: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#B91C1C',
+    letterSpacing: -0.2,
+  },
+  commissionNoteSubtext: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
+    marginTop: 8,
+    lineHeight: 15,
+  },
+
+  /* ✅ NEW — Commission note card (admin, bottom of every order) */
+  commissionNoteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  commissionNoteLabel: {
+    flex: 1,
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#DC2626',
+    letterSpacing: -0.2,
+  },
+  commissionNoteLabelFree: {
+    color: '#16A34A',
+  },
+  commissionIndexPill: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  commissionIndexPillText: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    color: '#2563EB',
+    letterSpacing: 0.3,
+  },
+  commissionAmountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  commissionAmountLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  commissionAmountValue: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#B91C1C',
+  },
 });

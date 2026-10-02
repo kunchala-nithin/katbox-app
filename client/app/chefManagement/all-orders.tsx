@@ -1138,6 +1138,14 @@ export default function AllOrdersScreen() {
   const paymentMethodType = activeOrder?.paymentMethod || 'cod';
   const isPaymentCod = String(paymentMethodType).toLowerCase() === 'cod';
 
+  // ✅ NEW — Chef-side commission values (read directly from the backend).
+  const commissionRateNum = Number(activeOrder?.commissionRate || 0);
+  const commissionAmountNum = Number(activeOrder?.commissionAmount || 0);
+  const isCommissionFree = activeOrder?.isCommissionFree === true;
+  const commissionLabelText = activeOrder?.commissionLabel || (isCommissionFree ? 'Commission Free' : '18% Commission');
+  const commissionNoteText = activeOrder?.commissionNote || '';
+  const chefOrderIndexNum = Number(activeOrder?.chefOrderIndex || 1);
+
   const currentStatus = activeOrder?.orderStatus || 'Placed';
   const isCurrentOrderAccepted =
     currentStatus.toLowerCase() !== 'placed' &&
@@ -2348,6 +2356,27 @@ export default function AllOrdersScreen() {
                       </View>
                     )}
 
+                    {/* ✅ COMMISSION ROW — visible in the bill breakdown for every order */}
+                    <View style={styles.priceDescriptionRow}>
+                      <Text style={styles.priceDescriptionLabel}>
+                        {isCommissionFree
+                          ? 'Commission (Free)'
+                          : `Commission (${Math.round(commissionRateNum * 100)}%)`}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.priceDescriptionValue,
+                          isCommissionFree
+                            ? styles.commissionFreeValueText
+                            : styles.commissionPaidValueText,
+                        ]}
+                      >
+                        {isCommissionFree
+                          ? '₹0.00'
+                          : `-₹${commissionAmountNum.toFixed(2)}`}
+                      </Text>
+                    </View>
+
                     <View style={styles.paymentModeStrip}>
                       <Text style={styles.paymentModeLabel}>Payment</Text>
                       <View style={[styles.paymentMethodPill, (isPaymentCod && !isCashCollected) ? styles.paymentCodPill : styles.paymentOnlinePill]}>
@@ -2560,6 +2589,47 @@ export default function AllOrdersScreen() {
                     </Text>
                   </TouchableOpacity>
                 </View>
+              </View>
+
+              {/* ✅ COMMISSION NOTE — always shown at the bottom of every order */}
+              <View style={styles.commissionNoteCard}>
+                <View style={styles.commissionNoteRow}>
+                  <Ionicons
+                    name={isCommissionFree ? 'shield-checkmark' : 'trending-down'}
+                    size={18}
+                    color={isCommissionFree ? '#16A34A' : '#D97706'}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text
+                    style={[
+                      styles.commissionNoteLabel,
+                      isCommissionFree && styles.commissionNoteLabelFree,
+                    ]}
+                  >
+                    {isCommissionFree
+                      ? 'Commission Free Order (0%)'
+                      : `Commission 18% Applied`}
+                  </Text>
+                  <View style={styles.commissionIndexPill}>
+                    <Text style={styles.commissionIndexPillText}>
+                      #{chefOrderIndexNum}
+                    </Text>
+                  </View>
+                </View>
+
+                {!isCommissionFree && (
+                  <View style={styles.commissionAmountRow}>
+                    <Text style={styles.commissionAmountLabel}>Commission Amount</Text>
+                    <Text style={styles.commissionAmountValue}>
+                      -₹{commissionAmountNum.toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+
+                <Text style={styles.commissionNoteSubtext}>
+                  {commissionNoteText ||
+                    `Order #${chefOrderIndexNum} in your sequence`}
+                </Text>
               </View>
 
               {/* 6. BOTTOM ACTIONS */}
@@ -4119,6 +4189,15 @@ const styles = StyleSheet.create({
     color: '#166348',
     fontWeight: '800',
   },
+  // ✅ NEW — commission value color overrides
+  commissionFreeValueText: {
+    color: '#16A34A',
+    fontWeight: '800',
+  },
+  commissionPaidValueText: {
+    color: '#DC2626',
+    fontWeight: '900',
+  },
   paymentModeStrip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4578,5 +4657,77 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+  // ✅ NEW — Commission note card (chef screen, bottom of every order)
+  commissionNoteCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E8EEE9',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  commissionNoteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  commissionNoteLabel: {
+    flex: 1,
+    fontSize: 13.5,
+    fontWeight: '800',
+    color: '#D97706',
+    letterSpacing: -0.2,
+  },
+  commissionNoteLabelFree: {
+    color: '#16A34A',
+  },
+  commissionIndexPill: {
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  commissionIndexPillText: {
+    fontSize: 10.5,
+    fontWeight: '900',
+    color: '#166348',
+    letterSpacing: 0.3,
+  },
+  commissionAmountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 4,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  commissionAmountLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  commissionAmountValue: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#B45309',
+  },
+  commissionNoteSubtext: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
+    marginTop: 6,
+    lineHeight: 15,
   },
 });
