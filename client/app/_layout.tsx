@@ -36,8 +36,8 @@ Notifications.setNotificationHandler({
    `useOrderNotifier` when the admin/chef tab group is first
    mounted. However, if a brand-new admin device receives its
    very first order BEFORE opening the admin tab group, the
-   channel would not exist yet — and Android would fall back to
-   a silent default channel.
+   channel would not exist yet — and Android would fall back
+   to a silent default channel.
 
    We proactively create BOTH alarm channels here at module load
    so the very first order is guaranteed to ring with the bundled
@@ -63,7 +63,8 @@ if (Platform.OS === 'android') {
             Notifications.AndroidNotificationVisibility?.PUBLIC,
           audioAttributes: {
             usage: Notifications.AndroidAudioUsage?.NOTIFICATION,
-            contentType: Notifications.AndroidAudioContentType?.SONIFICATION,
+            contentType:
+              Notifications.AndroidAudioContentType?.SONIFICATION,
           },
         })
       }
@@ -128,15 +129,22 @@ function InitialLayout() {
    *
    * When login.tsx calls notifyAuthChanged(), the layout's
    * checkAuth() runs asynchronously. During that window,
-   * `isAuthenticated` is still `false`. If the user was on a
-   * protected route (or navigating to one), the navigation
-   * guard below would bounce them back to /login.
+   * `isAuthenticated` is temporarily changed to `null`.
    *
-   * We suppress the "logged-out → /login" rule for a short
-   * window after an auth-change event to allow checkAuth() to
-   * resolve.
+   * While authentication is being re-checked, the layout
+   * returns `null` below instead of allowing Expo Router
+   * to display the login screen.
+   *
+   * Once checkAuth() finishes:
+   *
+   *   valid JWT   -> true  -> role route
+   *   no JWT      -> false -> login
+   *
+   * This prevents the login screen from flashing for 1–2 sec
+   * after a successful Google login.
    */
   const loginTransitionRef = useRef<boolean>(false)
+
   const loginTransitionTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -224,6 +232,12 @@ function InitialLayout() {
    *
    * The Katbox backend creates this token after successful
    * Google authentication.
+   *
+   * IMPORTANT:
+   *
+   * During a login transition, this function is awaited by
+   * the auth listener before the transition is considered
+   * complete.
    */
 
   const checkAuth = useCallback(async () => {
@@ -243,7 +257,8 @@ function InitialLayout() {
         }
 
         setIsAuthenticated(false)
-        return
+
+        return false
       }
 
       /*
@@ -260,7 +275,8 @@ function InitialLayout() {
         await removeToken()
 
         setIsAuthenticated(false)
-        return
+
+        return false
       }
 
       /*
@@ -276,7 +292,7 @@ function InitialLayout() {
       const expiry = getTokenExpiry(token)
 
       if (!expiry) {
-        return
+        return true
       }
 
       const timeLeft = expiry - Date.now()
@@ -285,8 +301,10 @@ function InitialLayout() {
         console.log('⏰ Katbox JWT expired while checking.')
 
         await removeToken()
+
         setIsAuthenticated(false)
-        return
+
+        return false
       }
 
       if (logoutTimerRef.current) {
@@ -309,6 +327,8 @@ function InitialLayout() {
           setIsAuthenticated(false)
         }
       }, timeLeft)
+
+      return true
     } catch (error) {
       console.log('❌ Auth check error:', error)
 
@@ -318,6 +338,8 @@ function InitialLayout() {
       }
 
       setIsAuthenticated(false)
+
+      return false
     }
   }, [])
 
@@ -333,33 +355,86 @@ function InitialLayout() {
    * This causes the layout to immediately re-check the
    * Katbox JWT.
    *
-   * We ALSO mark a short "login transition" window so the
-   * navigation guard does not bounce the user while
-   * checkAuth() is still resolving.
+   * IMPORTANT FIX:
+   *
+   * Before checking the newly-created JWT, we set
+   * isAuthenticated back to null.
+   *
+   * The rendering logic below already treats null as
+   * "authentication is being checked" and returns null.
+   *
+   * Therefore Expo Router does not get a chance to show
+   * the login screen during the short authentication window.
    */
 
   useEffect(() => {
-    checkAuth()
+    let isMounted = true
 
-    const unsubscribe = subscribeAuth(() => {
-      /**
-       * Mark a login transition in-flight so the navigation
-       * guard does not immediately bounce the user.
+    const initializeAuth = async () => {
+      try {
+        await checkAuth()
+      } catch (error) {
+        console.log(
+          '❌ Initial authentication initialization error:',
+          error
+        )
+      }
+    }
+
+    initializeAuth()
+
+    const unsubscribe = subscribeAuth(async () => {
+      console.log('🔄 Authentication change detected')
+
+      /*
+       * Mark authentication transition as active.
        */
       loginTransitionRef.current = true
 
+      /*
+       * Clear any previous transition timer.
+       */
       if (loginTransitionTimerRef.current) {
         clearTimeout(loginTransitionTimerRef.current)
+        loginTransitionTimerRef.current = null
       }
 
-      loginTransitionTimerRef.current = setTimeout(() => {
-        loginTransitionRef.current = false
-      }, 1500)
+      /*
+       * IMPORTANT FIX:
+       *
+       * Put authentication back into the "checking" state.
+       *
+       * Because the render logic below returns null whenever
+       * isAuthenticated === null, the login screen cannot
+       * flash while checkAuth() is reading the new Katbox JWT.
+       */
+      setIsAuthenticated(null)
 
-      checkAuth()
+      try {
+        /*
+         * Wait until the Katbox JWT has actually been checked.
+         */
+        await checkAuth()
+      } catch (error) {
+        console.log(
+          '❌ Authentication transition check error:',
+          error
+        )
+      } finally {
+        if (isMounted) {
+          /*
+           * Authentication check has completed.
+           *
+           * We no longer need the transition guard.
+           */
+          loginTransitionRef.current = false
+        }
+      }
     })
 
     return () => {
+      isMounted = false
+
       unsubscribe()
 
       if (logoutTimerRef.current) {
@@ -523,7 +598,14 @@ function InitialLayout() {
    *   Admin    -> Admin route
    *
    * AND we skip the "logged-out -> /login" rule while a login
-   * transition is in-flight so we don't bounce the user back.
+   * transition is in-flight.
+   *
+   * IMPORTANT:
+   *
+   * When isAuthenticated === null, this effect returns before
+   * making any navigation decision.
+   *
+   * This is what prevents the login flash.
    */
 
   useEffect(() => {
@@ -630,6 +712,15 @@ function InitialLayout() {
    * ------------------------------------------------------------
    * WAIT FOR INITIAL AUTH + FONTS
    * ------------------------------------------------------------
+   *
+   * IMPORTANT:
+   *
+   * null means:
+   *
+   *   "Authentication is currently being checked."
+   *
+   * We intentionally render nothing here so the login screen
+   * cannot appear during a successful login transition.
    */
 
   if (

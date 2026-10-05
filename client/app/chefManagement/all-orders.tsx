@@ -1142,9 +1142,11 @@ export default function AllOrdersScreen() {
   const commissionRateNum = Number(activeOrder?.commissionRate || 0);
   const commissionAmountNum = Number(activeOrder?.commissionAmount || 0);
   const isCommissionFree = activeOrder?.isCommissionFree === true;
-  const commissionLabelText = activeOrder?.commissionLabel || (isCommissionFree ? 'Commission Free' : '18% Commission');
   const commissionNoteText = activeOrder?.commissionNote || '';
   const chefOrderIndexNum = Number(activeOrder?.chefOrderIndex || 1);
+
+  // ✅ NEW — Net amount chef receives after commission is deducted.
+  const netPayableToChefNum = Math.max(0, totalAmountNum - commissionAmountNum);
 
   const currentStatus = activeOrder?.orderStatus || 'Placed';
   const isCurrentOrderAccepted =
@@ -2356,7 +2358,7 @@ export default function AllOrdersScreen() {
                       </View>
                     )}
 
-                    {/* ✅ COMMISSION ROW — visible in the bill breakdown for every order */}
+                    {/* ✅ COMMISSION ROW — shown as a single, clean deduction line */}
                     <View style={styles.priceDescriptionRow}>
                       <Text style={styles.priceDescriptionLabel}>
                         {isCommissionFree
@@ -2374,6 +2376,14 @@ export default function AllOrdersScreen() {
                         {isCommissionFree
                           ? '₹0.00'
                           : `-₹${commissionAmountNum.toFixed(2)}`}
+                      </Text>
+                    </View>
+
+                    {/* ✅ NET PAYABLE ROW — total after commission deduction */}
+                    <View style={styles.netPayableRow}>
+                      <Text style={styles.netPayableLabel}>Total After Commission</Text>
+                      <Text style={styles.netPayableValue}>
+                        ₹{netPayableToChefNum.toFixed(2)}
                       </Text>
                     </View>
 
@@ -2591,45 +2601,94 @@ export default function AllOrdersScreen() {
                 </View>
               </View>
 
-              {/* ✅ COMMISSION NOTE — always shown at the bottom of every order */}
-              <View style={styles.commissionNoteCard}>
-                <View style={styles.commissionNoteRow}>
-                  <Ionicons
-                    name={isCommissionFree ? 'shield-checkmark' : 'trending-down'}
-                    size={18}
-                    color={isCommissionFree ? '#16A34A' : '#D97706'}
-                    style={{ marginRight: 8 }}
-                  />
-                  <Text
+              {/* ✅ CLEAN & USER-FRIENDLY COMMISSION CARD — always shown at the bottom of every order */}
+              <View style={styles.commissionCleanCard}>
+                {/* Header row with icon + status pill */}
+                <View style={styles.commissionCleanHeaderRow}>
+                  <View
                     style={[
-                      styles.commissionNoteLabel,
-                      isCommissionFree && styles.commissionNoteLabelFree,
+                      styles.commissionCleanIconCircle,
+                      isCommissionFree
+                        ? styles.commissionCleanIconCircleFree
+                        : styles.commissionCleanIconCirclePaid,
                     ]}
                   >
-                    {isCommissionFree
-                      ? 'Commission Free Order (0%)'
-                      : `Commission 18% Applied`}
-                  </Text>
-                  <View style={styles.commissionIndexPill}>
-                    <Text style={styles.commissionIndexPillText}>
-                      #{chefOrderIndexNum}
+                    <Ionicons
+                      name={isCommissionFree ? 'shield-checkmark' : 'cash-outline'}
+                      size={18}
+                      color={isCommissionFree ? '#16A34A' : '#DC2626'}
+                    />
+                  </View>
+
+                  <View style={{ flex: 1, paddingLeft: 10 }}>
+                    <Text style={styles.commissionCleanTitle}>Earnings Summary</Text>
+                    <Text style={styles.commissionCleanSubtitle}>
+                      {isCommissionFree
+                        ? `Order #${chefOrderIndexNum} • Commission Free`
+                        : `Order #${chefOrderIndexNum} • 18% Commission Applied`}
+                    </Text>
+                  </View>
+
+                  <View
+                    style={[
+                      styles.commissionCleanStatusPill,
+                      isCommissionFree
+                        ? styles.commissionCleanStatusPillFree
+                        : styles.commissionCleanStatusPillPaid,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.commissionCleanStatusPillText,
+                        isCommissionFree
+                          ? styles.commissionCleanStatusPillTextFree
+                          : styles.commissionCleanStatusPillTextPaid,
+                      ]}
+                    >
+                      {isCommissionFree ? 'FREE' : '18%'}
                     </Text>
                   </View>
                 </View>
 
-                {!isCommissionFree && (
-                  <View style={styles.commissionAmountRow}>
-                    <Text style={styles.commissionAmountLabel}>Commission Amount</Text>
-                    <Text style={styles.commissionAmountValue}>
-                      -₹{commissionAmountNum.toFixed(2)}
+                {/* Divider */}
+                <View style={styles.commissionCleanDivider} />
+
+                {/* Amount breakdown — clean, two rows */}
+                <View style={styles.commissionCleanRow}>
+                  <Text style={styles.commissionCleanRowLabel}>Order Total</Text>
+                  <Text style={styles.commissionCleanRowValue}>
+                    ₹{totalAmountNum.toFixed(2)}
+                  </Text>
+                </View>
+
+                <View style={styles.commissionCleanRow}>
+                  <Text style={styles.commissionCleanRowLabel}>
+                    {isCommissionFree ? 'Commission' : `Commission (${Math.round(commissionRateNum * 100)}%)`}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.commissionCleanRowValue,
+                      isCommissionFree
+                        ? styles.commissionCleanRowValueFree
+                        : styles.commissionCleanRowValuePaid,
+                    ]}
+                  >
+                    {isCommissionFree ? '₹0.00' : `-₹${commissionAmountNum.toFixed(2)}`}
+                  </Text>
+                </View>
+
+                {/* Final payable highlight */}
+                <View style={styles.commissionCleanFinalBox}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.commissionCleanFinalLabel}>You Receive</Text>
+                    <Text style={styles.commissionCleanFinalSublabel}>
+                      After commission deduction
                     </Text>
                   </View>
-                )}
-
-                <Text style={styles.commissionNoteSubtext}>
-                  {commissionNoteText ||
-                    `Order #${chefOrderIndexNum} in your sequence`}
-                </Text>
+                  <Text style={styles.commissionCleanFinalValue}>
+                    ₹{netPayableToChefNum.toFixed(2)}
+                  </Text>
+                </View>
               </View>
 
               {/* 6. BOTTOM ACTIONS */}
@@ -4198,6 +4257,27 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     fontWeight: '900',
   },
+  // ✅ NEW — net payable (total after commission) row inside the bill
+  netPayableRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  netPayableLabel: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#0F172A',
+  },
+  netPayableValue: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#166348',
+    letterSpacing: -0.2,
+  },
   paymentModeStrip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4658,8 +4738,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.3,
   },
-  // ✅ NEW — Commission note card (chef screen, bottom of every order)
-  commissionNoteCard: {
+
+  /* ✅ NEW — CLEAN & USER-FRIENDLY COMMISSION CARD (chef screen, bottom of every order) */
+  commissionCleanCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 22,
     padding: 16,
@@ -4672,62 +4753,116 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 2,
   },
-  commissionNoteRow: {
+  commissionCleanHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
   },
-  commissionNoteLabel: {
-    flex: 1,
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: '#D97706',
+  commissionCleanIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commissionCleanIconCircleFree: {
+    backgroundColor: '#DCFCE7',
+  },
+  commissionCleanIconCirclePaid: {
+    backgroundColor: '#FEE2E2',
+  },
+  commissionCleanTitle: {
+    fontSize: 14.5,
+    fontWeight: '900',
+    color: '#0F172A',
     letterSpacing: -0.2,
   },
-  commissionNoteLabelFree: {
-    color: '#16A34A',
+  commissionCleanSubtitle: {
+    fontSize: 11.5,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 2,
   },
-  commissionIndexPill: {
-    backgroundColor: '#F0FDF4',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+  commissionCleanStatusPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
     borderWidth: 1,
+  },
+  commissionCleanStatusPillFree: {
+    backgroundColor: '#DCFCE7',
     borderColor: '#BBF7D0',
   },
-  commissionIndexPillText: {
-    fontSize: 10.5,
-    fontWeight: '900',
-    color: '#166348',
-    letterSpacing: 0.3,
+  commissionCleanStatusPillPaid: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FECACA',
   },
-  commissionAmountRow: {
+  commissionCleanStatusPillText: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+  commissionCleanStatusPillTextFree: {
+    color: '#166534',
+  },
+  commissionCleanStatusPillTextPaid: {
+    color: '#991B1B',
+  },
+  commissionCleanDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 12,
+  },
+  commissionCleanRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FEF3C7',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginTop: 4,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
+    paddingVertical: 4,
   },
-  commissionAmountLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#92400E',
-  },
-  commissionAmountValue: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#B45309',
-  },
-  commissionNoteSubtext: {
-    fontSize: 11,
+  commissionCleanRowLabel: {
+    fontSize: 12.5,
     color: '#64748B',
-    fontWeight: '500',
-    marginTop: 6,
-    lineHeight: 15,
+    fontWeight: '600',
+  },
+  commissionCleanRowValue: {
+    fontSize: 13,
+    color: '#0F172A',
+    fontWeight: '800',
+  },
+  commissionCleanRowValueFree: {
+    color: '#16A34A',
+    fontWeight: '900',
+  },
+  commissionCleanRowValuePaid: {
+    color: '#DC2626',
+    fontWeight: '900',
+  },
+  commissionCleanFinalBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#DCFCE7',
+  },
+  commissionCleanFinalLabel: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#166348',
+    letterSpacing: -0.2,
+  },
+  commissionCleanFinalSublabel: {
+    fontSize: 10.5,
+    color: '#64748B',
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  commissionCleanFinalValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#166348',
+    letterSpacing: -0.4,
   },
 });
