@@ -10,8 +10,16 @@ const normalizeEmail = (value: unknown): string => {
   return normalizeString(value).toLowerCase();
 };
 
+const normalizePhone = (value: unknown): string => {
+  return normalizeString(value);
+};
+
 const isValidEmail = (email: string): boolean => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+};
+
+const isValidRole = (role: string): role is "customer" | "chef" => {
+  return role === "customer" || role === "chef";
 };
 
 /**
@@ -20,15 +28,15 @@ const isValidEmail = (email: string): boolean => {
  * Public endpoint used by the Katbox website join form.
  *
  * Payload:
- *   {
- *     type: "join",
- *     role: "customer" | "chef",
- *     name,
- *     email,
- *     phone,
- *     city,
- *     about
- *   }
+ * {
+ *   type: "join",
+ *   role: "customer" | "chef",
+ *   name,
+ *   email,
+ *   phone,
+ *   city,
+ *   about
+ * }
  */
 export const createWebsiteMessage = async (
   req: AuthRequest,
@@ -37,24 +45,25 @@ export const createWebsiteMessage = async (
   try {
     const body = req.body || {};
 
-    const role = normalizeString(body.role) as "customer" | "chef";
+    const type = normalizeString(body.type) || "join";
+    const role = normalizeString(body.role);
     const name = normalizeString(body.name);
     const email = normalizeEmail(body.email);
-    const phone = normalizeString(body.phone);
+    const phone = normalizePhone(body.phone);
     const city = normalizeString(body.city);
     const about = normalizeString(body.about);
 
-    if (role !== "customer" && role !== "chef") {
+    if (type !== "join") {
       return res.status(400).json({
         success: false,
-        message: "Role must be customer or chef",
+        message: "Only join submissions are supported by this endpoint",
       });
     }
 
-    if (!email || !isValidEmail(email)) {
+    if (!isValidRole(role)) {
       return res.status(400).json({
         success: false,
-        message: "A valid email address is required",
+        message: "Role must be customer or chef",
       });
     }
 
@@ -62,6 +71,13 @@ export const createWebsiteMessage = async (
       return res.status(400).json({
         success: false,
         message: "Name, phone and city are required",
+      });
+    }
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid email address is required",
       });
     }
 
@@ -89,6 +105,13 @@ export const createWebsiteMessage = async (
         role: message.role,
         name: message.name,
         email: message.email,
+        phone: message.phone,
+        city: message.city,
+        about: message.about || "",
+        source: message.source,
+        status: message.status,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
       },
     });
   } catch (error: any) {
@@ -115,12 +138,17 @@ export const getWebsiteMessages = async (
       .sort({ createdAt: -1 })
       .lean();
 
+    const newCount = messages.reduce(
+      (count: number, message: any) =>
+        message.status === "new" ? count + 1 : count,
+      0
+    );
+
     return res.json({
       success: true,
       messages,
       total: messages.length,
-      newCount: messages.filter((message: any) => message.status === "new")
-        .length,
+      newCount,
     });
   } catch (error: any) {
     console.error("Get website messages error:", error);
@@ -154,7 +182,7 @@ export const markWebsiteMessageRead = async (
     const message = await WebsiteMessage.findByIdAndUpdate(
       messageId,
       { $set: { status: "read" } },
-      { new: true }
+      { new: true, runValidators: true }
     ).lean();
 
     if (!message) {

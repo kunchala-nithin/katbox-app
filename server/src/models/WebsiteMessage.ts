@@ -86,6 +86,7 @@ const websiteMessageSchema = new Schema<IWebsiteMessage>(
 );
 
 websiteMessageSchema.index({ createdAt: -1 });
+websiteMessageSchema.index({ role: 1, status: 1, createdAt: -1 });
 
 export default mongoose.models.WebsiteMessage ||
   mongoose.model<IWebsiteMessage>("WebsiteMessage", websiteMessageSchema);
