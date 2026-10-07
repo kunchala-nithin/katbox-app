@@ -35,24 +35,37 @@ interface WebsiteMessage {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THEME
+   THEME — softer, warmer, chat-friendly dark palette
 ═══════════════════════════════════════════════════════════ */
 const T = {
-  bg: "#0F172A",
-  surface: "rgba(30, 41, 59, 0.6)",
-  surfaceStrong: "rgba(30, 41, 59, 0.92)",
-  border: "rgba(148, 163, 184, 0.15)",
-  divider: "rgba(148, 163, 184, 0.12)",
+  // Backgrounds
+  bg: "#0A1017",
+  bgSoft: "#0E1620",
+  surface: "#131D2A",
+  surfaceElevated: "#182536",
+  surfaceGlass: "rgba(24, 37, 54, 0.72)",
+  surfaceGlassSoft: "rgba(24, 37, 54, 0.45)",
 
-  text: "#F8FAFC",
+  // Borders / dividers
+  border: "rgba(148, 163, 184, 0.10)",
+  borderStrong: "rgba(148, 163, 184, 0.18)",
+  divider: "rgba(148, 163, 184, 0.08)",
+
+  // Text
+  text: "#F1F5F9",
   textDim: "#CBD5E1",
   textMuted: "#94A3B8",
   textFaint: "#64748B",
 
+  // Accents
   blue: "#60A5FA",
-  amber: "#F59E0B",
-  rose: "#F87171",
+  blueSoft: "rgba(96, 165, 250, 0.14)",
+  amber: "#FBBF24",
+  amberSoft: "rgba(251, 191, 36, 0.14)",
+  rose: "#FB7185",
+  roseSoft: "rgba(251, 113, 133, 0.14)",
   emerald: "#34D399",
+  emeraldSoft: "rgba(52, 211, 153, 0.14)",
 } as const;
 
 /* ═══════════════════════════════════════════════════════════
@@ -79,11 +92,11 @@ const formatRelative = (value?: string) => {
   const diffMs = Date.now() - date.getTime();
   const mins = Math.floor(diffMs / 60000);
   if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return `${mins}m`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
+  if (hrs < 24) return `${hrs}h`;
   const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d ago`;
+  if (days < 7) return `${days}d`;
   return formatDate(value).split(",")[0];
 };
 
@@ -99,6 +112,18 @@ const getRoleIcon = (
 
 const getAccent = (message: WebsiteMessage): string => {
   return message.role === "chef" ? T.amber : T.blue;
+};
+
+const getAccentSoft = (message: WebsiteMessage): string => {
+  return message.role === "chef" ? T.amberSoft : T.blueSoft;
+};
+
+const getInitials = (name?: string) => {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -237,9 +262,9 @@ export default function AllMsgsScreen() {
           <View style={styles.loaderRing}>
             <ActivityIndicator size="large" color={T.blue} />
           </View>
-          <Text style={styles.loadingText}>Loading messages...</Text>
+          <Text style={styles.loadingText}>Loading messages…</Text>
           <Text style={styles.loadingHint}>
-            Fetching latest submissions from the website
+            Fetching the latest from the website
           </Text>
         </View>
       </SafeAreaView>
@@ -248,13 +273,17 @@ export default function AllMsgsScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={[styles.container, { paddingTop: insets.top > 0 ? 6 : 12 }]}>
-
+      <View
+        style={[
+          styles.container,
+          { paddingTop: insets.top > 0 ? 6 : 12 },
+        ]}
+      >
         {/* ═══════════════ HEADER ═══════════════ */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <View style={styles.headerIconWrap}>
-              <Ionicons name="mail" size={18} color={T.blue} />
+              <Ionicons name="chatbubbles" size={20} color={T.blue} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.headerTitle} numberOfLines={1}>
@@ -280,7 +309,7 @@ export default function AllMsgsScreen() {
             {refreshing ? (
               <ActivityIndicator size="small" color={T.blue} />
             ) : (
-              <Ionicons name="refresh" size={16} color={T.blue} />
+              <Ionicons name="refresh" size={17} color={T.blue} />
             )}
           </Pressable>
         </View>
@@ -292,26 +321,26 @@ export default function AllMsgsScreen() {
           contentContainerStyle={styles.statsScroll}
         >
           <StatCard
-            icon="layers-outline"
+            icon="layers"
             label="Total"
             value={totalCount}
             accent={T.blue}
           />
           <StatCard
-            icon="sparkles-outline"
+            icon="sparkles"
             label="New"
             value={newCount}
             accent={T.rose}
           />
           <StatCard
-            icon="person-outline"
+            icon="person"
             label="Customers"
             value={customerCount}
-            accent={T.blue}
+            accent={T.emerald}
           />
           <StatCard
-            icon="restaurant-outline"
-            label="Chef Partners"
+            icon="restaurant"
+            label="Chefs"
             value={chefCount}
             accent={T.amber}
           />
@@ -328,7 +357,7 @@ export default function AllMsgsScreen() {
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder="Search name, email, phone, city..."
+            placeholder="Search name, email, phone, city…"
             placeholderTextColor={T.textFaint}
             autoCapitalize="none"
             style={styles.searchInput}
@@ -339,11 +368,7 @@ export default function AllMsgsScreen() {
               hitSlop={8}
               style={styles.clearBtn}
             >
-              <Ionicons
-                name="close-circle"
-                size={16}
-                color={T.textFaint}
-              />
+              <Ionicons name="close-circle" size={16} color={T.textFaint} />
             </Pressable>
           )}
         </View>
@@ -373,10 +398,10 @@ export default function AllMsgsScreen() {
             count={customerCount}
             active={activeFilter === "customer"}
             onPress={() => setActiveFilter("customer")}
-            accent={T.blue}
+            accent={T.emerald}
           />
           <FilterPill
-            label="Chef Partners"
+            label="Chefs"
             count={chefCount}
             active={activeFilter === "chef"}
             onPress={() => setActiveFilter("chef")}
@@ -387,12 +412,9 @@ export default function AllMsgsScreen() {
         {/* ═══════════════ ERROR ═══════════════ */}
         {error ? (
           <View style={styles.errorBox}>
-            <Ionicons
-              name="alert-circle-outline"
-              size={16}
-              color={T.rose}
-              style={{ marginTop: 2 }}
-            />
+            <View style={styles.errorIconWrap}>
+              <Ionicons name="alert-circle" size={16} color={T.rose} />
+            </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.errorTitle}>Couldn’t load messages</Text>
               <Text style={styles.errorText} numberOfLines={3}>
@@ -436,22 +458,22 @@ export default function AllMsgsScreen() {
               onRefresh={() => loadMessages(true)}
               tintColor={T.blue}
               colors={[T.blue]}
-              progressBackgroundColor="#1E293B"
+              progressBackgroundColor={T.surfaceElevated}
             />
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <View style={styles.emptyIconWrap}>
                 <Ionicons
-                  name="mail-open-outline"
-                  size={28}
+                  name="chatbubble-ellipses-outline"
+                  size={30}
                   color={T.blue}
                 />
               </View>
               <Text style={styles.emptyTitle}>
                 {search || activeFilter !== "all"
                   ? "No matches found"
-                  : "Inbox is empty"}
+                  : "No messages yet"}
               </Text>
               <Text style={styles.emptyText}>
                 {search || activeFilter !== "all"
@@ -481,17 +503,20 @@ function StatCard({
   accent: string;
 }) {
   return (
-    <View style={[styles.statCard, { borderColor: accent + "33" }]}>
-      <View
-        style={[
-          styles.statIconWrap,
-          { backgroundColor: accent + "1A", borderColor: accent + "40" },
-        ]}
-      >
-        <Ionicons name={icon} size={13} color={accent} />
+    <View style={styles.statCard}>
+      <View style={[styles.statAccent, { backgroundColor: accent }]} />
+      <View style={styles.statTopRow}>
+        <View
+          style={[
+            styles.statIconWrap,
+            { backgroundColor: accent + "1F" },
+          ]}
+        >
+          <Ionicons name={icon} size={13} color={accent} />
+        </View>
+        <Text style={styles.statLabel}>{label}</Text>
       </View>
       <Text style={styles.statNumber}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
@@ -518,7 +543,7 @@ function FilterPill({
       style={({ pressed }) => [
         styles.filterPill,
         active && {
-          backgroundColor: accent + "1E",
+          backgroundColor: accent + "1C",
           borderColor: accent + "66",
         },
         pressed && styles.pressed,
@@ -535,7 +560,7 @@ function FilterPill({
       <View
         style={[
           styles.filterCount,
-          active && { backgroundColor: accent + "33" },
+          active && { backgroundColor: accent + "2E" },
         ]}
       >
         <Text
@@ -552,7 +577,7 @@ function FilterPill({
 }
 
 /* ═══════════════════════════════════════════════════════════
-   MESSAGE CARD
+   MESSAGE CARD — chat-style row
 ═══════════════════════════════════════════════════════════ */
 function MessageCard({
   item,
@@ -565,25 +590,16 @@ function MessageCard({
 }) {
   const isNew = item.status === "new";
   const accent = getAccent(item);
+  const accentSoft = getAccentSoft(item);
 
   return (
     <View
       style={[
         styles.card,
-        isNew && {
-          borderColor: accent + "55",
-          backgroundColor: T.surfaceStrong,
-        },
+        isNew && styles.cardUnread,
+        isNew && { borderColor: accent + "33" },
       ]}
     >
-      {/* Left accent rail */}
-      <View
-        style={[
-          styles.cardRail,
-          { backgroundColor: isNew ? accent : accent + "55" },
-        ]}
-      />
-
       <Pressable
         onPress={onToggle}
         style={({ pressed }) => [
@@ -591,97 +607,99 @@ function MessageCard({
           pressed && styles.pressed,
         ]}
       >
-        {/* Avatar */}
+        {/* Avatar with initials */}
         <View
           style={[
             styles.avatarBubble,
             {
-              backgroundColor: accent + "1E",
-              borderColor: accent + "55",
+              backgroundColor: accentSoft,
+              borderColor: accent + "44",
             },
           ]}
         >
-          <Ionicons
-            name={getRoleIcon(item)}
-            size={19}
-            color={accent}
-          />
+          <Text style={[styles.avatarText, { color: accent }]}>
+            {getInitials(item.name)}
+          </Text>
+          {isNew && (
+            <View
+              style={[
+                styles.avatarDot,
+                { backgroundColor: accent },
+              ]}
+            />
+          )}
         </View>
 
         {/* Body */}
         <View style={styles.cardBody}>
           <View style={styles.titleRow}>
-            <Text style={styles.name} numberOfLines={1}>
+            <Text
+              style={[styles.name, isNew && styles.nameUnread]}
+              numberOfLines={1}
+            >
               {item.name || "Unnamed"}
             </Text>
-            {isNew && (
-              <View
-                style={[
-                  styles.newPill,
-                  {
-                    backgroundColor: accent + "22",
-                    borderColor: accent + "66",
-                  },
-                ]}
-              >
-                <View
-                  style={[styles.newDot, { backgroundColor: accent }]}
-                />
-                <Text style={[styles.newPillText, { color: accent }]}>
-                  NEW
-                </Text>
-              </View>
-            )}
+
+            <Text style={styles.timeText} numberOfLines={1}>
+              {formatRelative(item.createdAt)}
+            </Text>
           </View>
 
-          <View style={styles.metaRow}>
+          <View style={styles.previewRow}>
             <View
               style={[
-                styles.rolePill,
+                styles.roleChip,
                 {
-                  backgroundColor: accent + "16",
-                  borderColor: accent + "40",
+                  backgroundColor: accentSoft,
+                  borderColor: accent + "44",
                 },
               ]}
             >
-              <Text style={[styles.rolePillText, { color: accent }]}>
+              <Ionicons
+                name={getRoleIcon(item)}
+                size={9}
+                color={accent}
+              />
+              <Text style={[styles.roleChipText, { color: accent }]}>
                 {getRoleLabel(item)}
               </Text>
             </View>
 
-            <Text style={styles.metaSep}>·</Text>
-
-            <Text style={styles.metaTime} numberOfLines={1}>
-              {formatRelative(item.createdAt)}
-            </Text>
-
             {item.city ? (
-              <>
-                <Text style={styles.metaSep}>·</Text>
-                <View style={styles.cityChip}>
-                  <Ionicons
-                    name="location-outline"
-                    size={10}
-                    color={T.textFaint}
-                  />
-                  <Text style={styles.cityChipText} numberOfLines={1}>
-                    {item.city}
-                  </Text>
-                </View>
-              </>
+              <View style={styles.cityChip}>
+                <Ionicons
+                  name="location"
+                  size={10}
+                  color={T.textFaint}
+                />
+                <Text style={styles.cityChipText} numberOfLines={1}>
+                  {item.city}
+                </Text>
+              </View>
             ) : null}
           </View>
+
+          {/* Chat-style preview */}
+          <Text
+            style={[
+              styles.previewText,
+              isNew && styles.previewTextUnread,
+            ]}
+            numberOfLines={1}
+          >
+            {item.about?.trim()
+              ? item.about.trim()
+              : `${item.email} • ${item.phone}`}
+          </Text>
         </View>
 
         {/* Chevron */}
         <View style={styles.chevronSlot}>
-          <View style={styles.chevronWrap}>
-            <Ionicons
-              name={expanded ? "chevron-up" : "chevron-down"}
-              size={16}
-              color={T.textMuted}
-            />
-          </View>
+          <Ionicons
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={T.textMuted}
+          />
         </View>
       </Pressable>
 
@@ -733,10 +751,12 @@ function MessageCard({
               <View style={styles.aboutHeader}>
                 <Ionicons
                   name="chatbubble-ellipses-outline"
-                  size={11}
-                  color={T.textFaint}
+                  size={12}
+                  color={accent}
                 />
-                <Text style={styles.aboutLabel}>Notes from sender</Text>
+                <Text style={[styles.aboutLabel, { color: accent }]}>
+                  Notes from sender
+                </Text>
               </View>
               <Text style={styles.aboutText}>{item.about}</Text>
             </View>
@@ -794,7 +814,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingTop: 8,
-    paddingBottom: 14,
+    paddingBottom: 16,
     gap: 12,
   },
 
@@ -802,85 +822,101 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 12,
     minWidth: 0,
   },
 
   headerIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    backgroundColor: "rgba(37, 99, 235, 0.18)",
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: T.blueSoft,
     borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.4)",
+    borderColor: "rgba(96, 165, 250, 0.35)",
     alignItems: "center",
     justifyContent: "center",
   },
 
   headerTitle: {
-    fontSize: 21,
+    fontSize: 22,
     fontWeight: "800",
     color: T.text,
     letterSpacing: -0.4,
   },
 
   headerSubtitle: {
-    fontSize: 11.5,
+    fontSize: 12,
     color: T.textMuted,
     fontWeight: "500",
     marginTop: 3,
+    letterSpacing: 0.1,
   },
 
   iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: T.surface,
+    backgroundColor: T.surfaceGlass,
     borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.28)",
+    borderColor: "rgba(96, 165, 250, 0.22)",
   },
 
   /* ── Stats ── */
   statsScroll: {
-    gap: 8,
+    gap: 10,
     paddingRight: 4,
-    paddingBottom: 12,
+    paddingBottom: 14,
   },
 
   statCard: {
-    minWidth: 104,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 14,
+    minWidth: 112,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
     backgroundColor: T.surface,
     borderWidth: 1,
+    borderColor: T.border,
+    overflow: "hidden",
+  },
+
+  statAccent: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    opacity: 0.7,
+  },
+
+  statTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
   },
 
   statIconWrap: {
     width: 24,
     height: 24,
     borderRadius: 8,
-    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 6,
   },
 
   statNumber: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "900",
     color: T.text,
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
   },
 
   statLabel: {
-    marginTop: 2,
     fontSize: 9.5,
     fontWeight: "700",
     color: T.textMuted,
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
     textTransform: "uppercase",
   },
 
@@ -889,13 +925,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    minHeight: 46,
-    paddingHorizontal: 12,
-    borderRadius: 14,
+    minHeight: 48,
+    paddingHorizontal: 14,
+    borderRadius: 16,
     backgroundColor: T.surface,
     borderWidth: 1,
-    borderColor: T.border,
-    marginBottom: 10,
+    borderColor: T.borderStrong,
+    marginBottom: 12,
   },
 
   searchInput: {
@@ -912,8 +948,8 @@ const styles = StyleSheet.create({
 
   /* ── Filters ── */
   filtersScroll: {
-    gap: 6,
-    paddingBottom: 12,
+    gap: 8,
+    paddingBottom: 14,
     paddingRight: 4,
   },
 
@@ -921,7 +957,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingLeft: 12,
+    paddingLeft: 13,
     paddingRight: 6,
     paddingVertical: 7,
     borderRadius: 999,
@@ -966,42 +1002,55 @@ const styles = StyleSheet.create({
 
   /* ── Card ── */
   card: {
-    borderRadius: 16,
+    borderRadius: 18,
     backgroundColor: T.surface,
     borderWidth: 1,
     borderColor: T.border,
     overflow: "hidden",
   },
 
-  cardRail: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 3,
+  cardUnread: {
+    backgroundColor: T.surfaceElevated,
   },
 
   cardHeader: {
-    minHeight: 74,
-    paddingLeft: 15,
-    paddingRight: 14,
+    minHeight: 82,
+    paddingHorizontal: 14,
     paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
   },
 
   pressed: {
-    opacity: 0.72,
+    opacity: 0.7,
   },
 
   avatarBubble: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
+    width: 46,
+    height: 46,
+    borderRadius: 15,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 12,
+    position: "relative",
+  },
+
+  avatarText: {
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+  },
+
+  avatarDot: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: T.surfaceElevated,
   },
 
   cardBody: {
@@ -1013,70 +1062,51 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 8,
   },
 
   name: {
     flexShrink: 1,
     fontSize: 14.5,
-    fontWeight: "800",
-    color: T.text,
+    fontWeight: "700",
+    color: T.textDim,
     letterSpacing: -0.2,
   },
 
-  newPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 999,
-    borderWidth: 1,
+  nameUnread: {
+    fontWeight: "800",
+    color: T.text,
   },
 
-  newDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 99,
+  timeText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: T.textFaint,
   },
 
-  newPillText: {
-    fontSize: 8.5,
-    fontWeight: "900",
-    letterSpacing: 0.6,
-  },
-
-  metaRow: {
+  previewRow: {
     marginTop: 6,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
   },
 
-  rolePill: {
+  roleChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 999,
     borderWidth: 1,
   },
 
-  rolePillText: {
+  roleChipText: {
     fontSize: 9.5,
     fontWeight: "800",
     letterSpacing: 0.4,
     textTransform: "uppercase",
-  },
-
-  metaSep: {
-    fontSize: 11,
-    color: T.textFaint,
-    fontWeight: "700",
-  },
-
-  metaTime: {
-    fontSize: 11,
-    color: T.textMuted,
-    fontWeight: "500",
   },
 
   cityChip: {
@@ -1094,28 +1124,31 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
 
+  previewText: {
+    marginTop: 6,
+    fontSize: 12.5,
+    color: T.textFaint,
+    fontWeight: "500",
+    lineHeight: 17,
+  },
+
+  previewTextUnread: {
+    color: T.textMuted,
+    fontWeight: "600",
+  },
+
   chevronSlot: {
     width: 30,
     height: 30,
-    marginLeft: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  chevronWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    backgroundColor: "rgba(148, 163, 184, 0.1)",
+    marginLeft: 8,
     alignItems: "center",
     justifyContent: "center",
   },
 
   /* ── Expanded details ── */
   details: {
-    paddingLeft: 15,
-    paddingRight: 14,
-    paddingBottom: 14,
+    paddingHorizontal: 14,
+    paddingBottom: 16,
   },
 
   divider: {
@@ -1163,8 +1196,8 @@ const styles = StyleSheet.create({
   },
 
   aboutBlock: {
-    marginTop: 12,
-    paddingTop: 12,
+    marginTop: 14,
+    paddingTop: 14,
     borderTopWidth: 1,
     borderTopColor: T.divider,
   },
@@ -1172,8 +1205,8 @@ const styles = StyleSheet.create({
   aboutHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    marginBottom: 7,
+    gap: 6,
+    marginBottom: 8,
   },
 
   aboutLabel: {
@@ -1181,7 +1214,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     textTransform: "uppercase",
     letterSpacing: 0.7,
-    color: T.textFaint,
   },
 
   aboutText: {
@@ -1196,24 +1228,33 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     marginBottom: 12,
-    padding: 12,
-    borderRadius: 14,
-    backgroundColor: "rgba(127, 29, 29, 0.35)",
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: "rgba(127, 29, 29, 0.3)",
     borderWidth: 1,
-    borderColor: "rgba(248, 113, 113, 0.4)",
+    borderColor: "rgba(251, 113, 133, 0.35)",
+  },
+
+  errorIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+    backgroundColor: "rgba(251, 113, 133, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   errorTitle: {
-    fontSize: 12.5,
+    fontSize: 13,
     fontWeight: "800",
-    color: "#FCA5A5",
+    color: "#FDA4AF",
     marginBottom: 3,
   },
 
   errorText: {
     fontSize: 12,
     lineHeight: 17,
-    color: "#FCA5A5",
+    color: "#FDA4AF",
     opacity: 0.85,
     fontWeight: "500",
   },
@@ -1224,18 +1265,18 @@ const styles = StyleSheet.create({
     gap: 5,
     alignSelf: "flex-start",
     marginTop: 10,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 10,
-    backgroundColor: "rgba(30, 41, 59, 0.9)",
+    backgroundColor: "rgba(15, 23, 42, 0.7)",
     borderWidth: 1,
-    borderColor: "rgba(248, 113, 113, 0.5)",
+    borderColor: "rgba(251, 113, 133, 0.4)",
   },
 
   retryText: {
     fontSize: 11.5,
     fontWeight: "800",
-    color: "#FCA5A5",
+    color: "#FDA4AF",
     letterSpacing: 0.3,
   },
 
@@ -1246,22 +1287,23 @@ const styles = StyleSheet.create({
   },
 
   emptyIconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: "rgba(37, 99, 235, 0.15)",
+    width: 72,
+    height: 72,
+    borderRadius: 22,
+    backgroundColor: T.blueSoft,
     borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.35)",
+    borderColor: "rgba(96, 165, 250, 0.3)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 14,
+    marginBottom: 16,
   },
 
   emptyTitle: {
-    fontSize: 16,
+    fontSize: 16.5,
     fontWeight: "800",
     color: T.text,
     textAlign: "center",
+    letterSpacing: -0.2,
   },
 
   emptyText: {
@@ -1271,6 +1313,7 @@ const styles = StyleSheet.create({
     color: T.textMuted,
     textAlign: "center",
     maxWidth: 300,
+    fontWeight: "500",
   },
 
   /* ── Loading ── */
@@ -1282,26 +1325,27 @@ const styles = StyleSheet.create({
   },
 
   loaderRing: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: "rgba(37, 99, 235, 0.12)",
+    width: 68,
+    height: 68,
+    borderRadius: 22,
+    backgroundColor: T.blueSoft,
     borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.3)",
+    borderColor: "rgba(96, 165, 250, 0.28)",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 14,
+    marginBottom: 16,
   },
 
   loadingText: {
-    fontSize: 14,
+    fontSize: 15,
     color: T.text,
-    fontWeight: "700",
+    fontWeight: "800",
+    letterSpacing: -0.2,
   },
 
   loadingHint: {
     marginTop: 6,
-    fontSize: 12,
+    fontSize: 12.5,
     color: T.textMuted,
     fontWeight: "500",
   },
