@@ -17,17 +17,9 @@ const isValidEmail = (email: string): boolean => {
 /**
  * POST /api/messages
  *
- * Public endpoint used by the Katbox website forms.
+ * Public endpoint used by the Katbox website join form.
  *
- * Supported payloads:
- *
- * Newsletter:
- *   {
- *     type: "newsletter",
- *     email: "customer@example.com"
- *   }
- *
- * Join form:
+ * Payload:
  *   {
  *     type: "join",
  *     role: "customer" | "chef",
@@ -44,66 +36,10 @@ export const createWebsiteMessage = async (
 ) => {
   try {
     const body = req.body || {};
-    const type = normalizeString(body.type) as "join" | "newsletter";
-    const email = normalizeEmail(body.email);
-
-    if (type !== "join" && type !== "newsletter") {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid message type",
-      });
-    }
-
-    if (!email || !isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid email address is required",
-      });
-    }
-
-    if (type === "newsletter") {
-      const existing = await WebsiteMessage.findOne({
-        type: "newsletter",
-        email,
-      }).sort({ createdAt: -1 });
-
-      if (existing) {
-        if (existing.status === "read") {
-          existing.status = "new";
-          await existing.save();
-        }
-
-        return res.status(200).json({
-          success: true,
-          message: "Email is already subscribed to Katbox updates.",
-          data: {
-            id: existing._id,
-            type: existing.type,
-            email: existing.email,
-          },
-        });
-      }
-
-      const message = await WebsiteMessage.create({
-        type: "newsletter",
-        email,
-        source: "katbox-website",
-        status: "new",
-      });
-
-      return res.status(201).json({
-        success: true,
-        message: "Newsletter subscription saved successfully.",
-        data: {
-          id: message._id,
-          type: message.type,
-          email: message.email,
-        },
-      });
-    }
 
     const role = normalizeString(body.role) as "customer" | "chef";
     const name = normalizeString(body.name);
+    const email = normalizeEmail(body.email);
     const phone = normalizeString(body.phone);
     const city = normalizeString(body.city);
     const about = normalizeString(body.about);
@@ -111,7 +47,14 @@ export const createWebsiteMessage = async (
     if (role !== "customer" && role !== "chef") {
       return res.status(400).json({
         success: false,
-        message: "Join role must be customer or chef",
+        message: "Role must be customer or chef",
+      });
+    }
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid email address is required",
       });
     }
 

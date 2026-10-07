@@ -50,7 +50,7 @@ const requireAdmin = async (
   }
 };
 
-// Public website form submission.
+// Public website join form submission.
 router.post("/", createWebsiteMessage);
 
 // Admin-only message list and status update.
