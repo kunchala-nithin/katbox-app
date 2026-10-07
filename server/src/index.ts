@@ -15,6 +15,7 @@ import chefCategoryRoutes from "./routes/chefCategory.routes";
 import orderRoutes from "./routes/orders.routes";
 import paymentRoutes from "./routes/payments.routes";
 import bannerRoutes from "./routes/banner.routes";
+import websiteMessageRoutes from "./routes/websiteMessage.routes";
 
 dotenv.config();
 
@@ -45,6 +46,7 @@ app.use("/api/chef-categories", chefCategoryRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use('/api/banners', bannerRoutes);
+app.use("/api/messages", websiteMessageRoutes);
 
 // Connect DB
 connectDB();
