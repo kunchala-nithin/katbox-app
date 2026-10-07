@@ -232,6 +232,11 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
       existingBanners,
       deletedBannerIds,
       removeAvatarOnSave,
+      // ✅ NEW: bank / payout info
+      bankAccountHolderName,
+      bankAccountNumber,
+      bankIfscCode,
+      upiMobileNumber,
     } = req.body;
 
     const userId = req.user.id;
@@ -246,6 +251,14 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
     const sanitizedPhone = String(phone || "").replace(/\D/g, "").slice(0, 10);
     // ─── SANITIZE AADHAR (12 digits strict) ───
     const sanitizedAadhar = String(aadhar || "").replace(/\D/g, "").slice(0, 12);
+    // ─── SANITIZE UPI MOBILE (10 digits strict) ───
+    const sanitizedUpiMobile = String(upiMobileNumber || "")
+      .replace(/\D/g, "")
+      .slice(0, 10);
+    // ─── SANITIZE IFSC (uppercase, alphanumeric only) ───
+    const sanitizedIfsc = String(bankIfscCode || "")
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .toUpperCase();
 
     // Parse coupons array safely if passed as JSON string
     let parsedCoupons: any[] = [];
@@ -345,6 +358,12 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
       existingChef.coupons = parsedCoupons;
       existingChef.banners = finalBanners;
 
+      // ✅ NEW: bank / payout info
+      existingChef.bankAccountHolderName = String(bankAccountHolderName || "").trim();
+      existingChef.bankAccountNumber = String(bankAccountNumber || "").trim();
+      existingChef.bankIfscCode = sanitizedIfsc;
+      existingChef.upiMobileNumber = sanitizedUpiMobile;
+
       existingChef.isAvailable =
         typeof isAvailable !== "undefined"
           ? isAvailable === "true" || isAvailable === true
@@ -381,6 +400,11 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
         coupons: parsedCoupons,
         banners: finalBanners,
         isAvailable: isAvailable === "false" ? false : true,
+        // ✅ NEW: bank / payout info
+        bankAccountHolderName: String(bankAccountHolderName || "").trim(),
+        bankAccountNumber: String(bankAccountNumber || "").trim(),
+        bankIfscCode: sanitizedIfsc,
+        upiMobileNumber: sanitizedUpiMobile,
       });
 
       await User.findByIdAndUpdate(userId, { isChef: true });
@@ -674,6 +698,11 @@ export const updateChefByAdmin = async (req: any, res: Response) => {
       foodType,
       fssaiNo,
       isAvailable,
+      // ✅ NEW: bank / payout info
+      bankAccountHolderName,
+      bankAccountNumber,
+      bankIfscCode,
+      upiMobileNumber,
     } = req.body || {};
 
     if (typeof name === "string" && name.trim()) chef.name = name.trim();
@@ -692,6 +721,22 @@ export const updateChefByAdmin = async (req: any, res: Response) => {
     }
     if (typeof fssaiNo === "string") chef.fssaiNo = fssaiNo.trim();
     if (typeof isAvailable === "boolean") chef.isAvailable = isAvailable;
+
+    // ✅ NEW: bank / payout info
+    if (typeof bankAccountHolderName === "string") {
+      chef.bankAccountHolderName = bankAccountHolderName.trim();
+    }
+    if (typeof bankAccountNumber === "string") {
+      chef.bankAccountNumber = bankAccountNumber.trim();
+    }
+    if (typeof bankIfscCode === "string") {
+      chef.bankIfscCode = bankIfscCode
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .toUpperCase();
+    }
+    if (typeof upiMobileNumber === "string") {
+      chef.upiMobileNumber = upiMobileNumber.replace(/\D/g, "").slice(0, 10);
+    }
 
     await chef.save();
 

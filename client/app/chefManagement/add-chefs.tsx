@@ -143,6 +143,12 @@ const AddChefs = () => {
   const [couponServiceType, setCouponServiceType] = useState<CouponServiceType>("catering");
   const [showServiceDropdown, setShowServiceDropdown] = useState(false);
 
+  // ✅ NEW: Bank / payout info
+  const [bankAccountHolderName, setBankAccountHolderName] = useState("");
+  const [bankAccountNumber, setBankAccountNumber] = useState("");
+  const [bankIfscCode, setBankIfscCode] = useState("");
+  const [upiMobileNumber, setUpiMobileNumber] = useState("");
+
   const safeGoBack = () => {
     if (router.canGoBack()) {
       router.back();
@@ -170,6 +176,12 @@ const AddChefs = () => {
             setAvatarCloudinaryId(c.avatarCloudinaryId || "");
             setRemoveAvatarOnSave(false);
             setIsAvailable(c.isAvailable ?? true);
+
+            // ✅ NEW: load bank / payout info
+            setBankAccountHolderName(c.bankAccountHolderName || "");
+            setBankAccountNumber(c.bankAccountNumber || "");
+            setBankIfscCode(c.bankIfscCode || "");
+            setUpiMobileNumber(c.upiMobileNumber || "");
 
             if (c.coupons && Array.isArray(c.coupons)) {
               setCoupons(
@@ -234,6 +246,11 @@ const AddChefs = () => {
     setDeletedBannerIds([]);
     setIsEditing(false);
     setIsEditable(true);
+    // ✅ NEW: reset bank / payout info
+    setBankAccountHolderName("");
+    setBankAccountNumber("");
+    setBankIfscCode("");
+    setUpiMobileNumber("");
   };
 
   const requestPermissions = async () => {
@@ -330,6 +347,11 @@ const AddChefs = () => {
       formData.append("fssaiNo", fssaiNo);
       formData.append("isAvailable", String(isAvailable));
       formData.append("coupons", JSON.stringify(updatedCoupons));
+      // ✅ NEW: persist bank / payout info too
+      formData.append("bankAccountHolderName", bankAccountHolderName);
+      formData.append("bankAccountNumber", bankAccountNumber);
+      formData.append("bankIfscCode", bankIfscCode);
+      formData.append("upiMobileNumber", upiMobileNumber);
 
       const existingBannersPayload = banners
         .filter((b) => !b.isNew && b.cloudinaryId)
@@ -425,6 +447,11 @@ const AddChefs = () => {
     formData.append("fssaiNo", fssaiNo);
     formData.append("isAvailable", String(isAvailable));
     formData.append("coupons", JSON.stringify(coupons));
+    // ✅ NEW: bank / payout info
+    formData.append("bankAccountHolderName", bankAccountHolderName);
+    formData.append("bankAccountNumber", bankAccountNumber);
+    formData.append("bankIfscCode", bankIfscCode);
+    formData.append("upiMobileNumber", upiMobileNumber);
 
     if (removeAvatarOnSave && !avatar) {
       formData.append("removeAvatarOnSave", "true");
@@ -566,6 +593,11 @@ const AddChefs = () => {
       Alert.alert("Invalid Aadhar", "Aadhar number must be exactly 12 digits.");
       return;
     }
+    // ✅ NEW: validate UPI mobile if provided
+    if (upiMobileNumber && upiMobileNumber.length !== 10) {
+      Alert.alert("Invalid UPI Mobile", "UPI mobile number must be exactly 10 digits.");
+      return;
+    }
 
     setIsSubmitting(true);
     setUploadProgress(0);
@@ -609,6 +641,12 @@ const AddChefs = () => {
         setAvatarCloudinaryId(c.avatarCloudinaryId || "");
         setRemoveAvatarOnSave(false);
         setIsAvailable(c.isAvailable ?? true);
+
+        // ✅ NEW: refresh bank / payout info from server response
+        setBankAccountHolderName(c.bankAccountHolderName || "");
+        setBankAccountNumber(c.bankAccountNumber || "");
+        setBankIfscCode(c.bankIfscCode || "");
+        setUpiMobileNumber(c.upiMobileNumber || "");
 
         if (c.coupons && Array.isArray(c.coupons)) {
           setCoupons(
@@ -1029,6 +1067,91 @@ const AddChefs = () => {
               }}
               editable={isEditable}
             />
+          </View>
+
+          {/* ✅ NEW: BANK & PAYOUT INFO */}
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionTitleRow}>
+              <View style={[styles.sectionIconCircle, { backgroundColor: "#DBEAFE" }]}>
+                <Ionicons name="card" size={16} color="#1D4ED8" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sectionTitle}>Bank & Payout Info</Text>
+                <Text style={styles.sectionHint}>
+                  Used to settle your earnings securely
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.fieldLabel}>Account holder name</Text>
+            <TextInput
+              placeholder="As per bank records"
+              placeholderTextColor="#94A3B8"
+              style={[styles.input, !isEditable && styles.disabledInput]}
+              value={bankAccountHolderName}
+              onChangeText={(text) => {
+                setBankAccountHolderName(text);
+                if (isEditing && !isEditable) setIsEditable(true);
+              }}
+              editable={isEditable}
+            />
+
+            <Text style={styles.fieldLabel}>Bank account number</Text>
+            <TextInput
+              placeholder="Enter your bank account number"
+              placeholderTextColor="#94A3B8"
+              style={[styles.input, !isEditable && styles.disabledInput]}
+              value={bankAccountNumber}
+              onChangeText={(text) => {
+                const cleaned = text.replace(/[^0-9]/g, "");
+                setBankAccountNumber(cleaned);
+                if (isEditing && !isEditable) setIsEditable(true);
+              }}
+              keyboardType="number-pad"
+              editable={isEditable}
+            />
+
+            <Text style={styles.fieldLabel}>IFSC code</Text>
+            <TextInput
+              placeholder="e.g. HDFC0001234"
+              placeholderTextColor="#94A3B8"
+              style={[styles.input, !isEditable && styles.disabledInput]}
+              value={bankIfscCode}
+              onChangeText={(text) => {
+                const cleaned = text
+                  .replace(/[^a-zA-Z0-9]/g, "")
+                  .toUpperCase()
+                  .slice(0, 11);
+                setBankIfscCode(cleaned);
+                if (isEditing && !isEditable) setIsEditable(true);
+              }}
+              autoCapitalize="characters"
+              maxLength={11}
+              editable={isEditable}
+            />
+
+            <Text style={styles.fieldLabel}>UPI mobile number</Text>
+            <TextInput
+              placeholder="10-digit mobile linked to UPI"
+              placeholderTextColor="#94A3B8"
+              style={[styles.input, !isEditable && styles.disabledInput]}
+              value={upiMobileNumber}
+              onChangeText={(text) => {
+                const cleaned = text.replace(/\D/g, "").slice(0, 10);
+                setUpiMobileNumber(cleaned);
+                if (isEditing && !isEditable) setIsEditable(true);
+              }}
+              keyboardType="number-pad"
+              maxLength={10}
+              editable={isEditable}
+            />
+
+            <View style={styles.bankInfoNote}>
+              <Ionicons name="shield-checkmark" size={14} color="#166534" />
+              <Text style={styles.bankInfoNoteText}>
+                Your bank details are encrypted and only used for payouts.
+              </Text>
+            </View>
           </View>
 
           {/* COUPONS & DISCOUNTS */}
@@ -1938,6 +2061,27 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "#FECACA",
+  },
+
+  // ✅ NEW: bank info note
+  bankInfoNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 2,
+  },
+  bankInfoNoteText: {
+    flex: 1,
+    fontSize: 11.5,
+    color: "#166534",
+    fontWeight: "600",
+    lineHeight: 16,
   },
 
   fieldLabel: {

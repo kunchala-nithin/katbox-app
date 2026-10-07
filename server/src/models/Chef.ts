@@ -62,6 +62,12 @@ export interface IChef extends Document {
   // CHEF ORDER HISTORY
   orderHistory: mongoose.Types.ObjectId[];
 
+  // ✅ NEW: BANK / PAYOUT INFO
+  bankAccountHolderName: string;
+  bankAccountNumber: string;
+  bankIfscCode: string;
+  upiMobileNumber: string;
+
   rating?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -189,6 +195,23 @@ const chefSchema = new Schema<IChef>(
         ref: "Order",
       },
     ],
+
+    // ✅ NEW: BANK / PAYOUT INFO
+    bankAccountHolderName: { type: String, default: "", trim: true },
+    bankAccountNumber: { type: String, default: "", trim: true },
+    bankIfscCode: { type: String, default: "", trim: true, uppercase: true },
+    upiMobileNumber: {
+      type: String,
+      default: "",
+      trim: true,
+      validate: {
+        validator: function (v: string) {
+          if (!v) return true;
+          return /^\d{10}$/.test(v);
+        },
+        message: "UPI mobile number must be exactly 10 digits",
+      },
+    },
 
     rating: { type: String, default: "4.8" },
   },
