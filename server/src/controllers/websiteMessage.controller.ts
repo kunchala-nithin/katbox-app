@@ -53,10 +53,45 @@ export const createWebsiteMessage = async (
     const city = normalizeString(body.city);
     const about = normalizeString(body.about);
 
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid email address is required",
+      });
+    }
+
+    if (type === "newsletter") {
+      const message = await WebsiteMessage.create({
+        type: "newsletter",
+        role: undefined,
+        name: "",
+        email,
+        phone: "",
+        city: "",
+        about: "",
+        source: "katbox-website",
+        status: "new",
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: "Newsletter subscription saved successfully.",
+        data: {
+          id: message._id,
+          type: message.type,
+          email: message.email,
+          source: message.source,
+          status: message.status,
+          createdAt: message.createdAt,
+          updatedAt: message.updatedAt,
+        },
+      });
+    }
+
     if (type !== "join") {
       return res.status(400).json({
         success: false,
-        message: "Only join submissions are supported by this endpoint",
+        message: "Unsupported website message type",
       });
     }
 
@@ -71,13 +106,6 @@ export const createWebsiteMessage = async (
       return res.status(400).json({
         success: false,
         message: "Name, phone and city are required",
-      });
-    }
-
-    if (!email || !isValidEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid email address is required",
       });
     }
 

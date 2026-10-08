@@ -1,16 +1,16 @@
 import mongoose, { Document, Schema } from "mongoose";
 
-export type WebsiteMessageType = "join";
+export type WebsiteMessageType = "join" | "newsletter";
 export type WebsiteJoinRole = "customer" | "chef";
 export type WebsiteMessageStatus = "new" | "read";
 
 export interface IWebsiteMessage extends Document {
   type: WebsiteMessageType;
-  role: WebsiteJoinRole;
-  name: string;
+  role?: WebsiteJoinRole;
+  name?: string;
   email: string;
-  phone: string;
-  city: string;
+  phone?: string;
+  city?: string;
   about?: string;
   source: string;
   status: WebsiteMessageStatus;
@@ -22,7 +22,7 @@ const websiteMessageSchema = new Schema<IWebsiteMessage>(
   {
     type: {
       type: String,
-      enum: ["join"],
+      enum: ["join", "newsletter"],
       required: true,
       default: "join",
       index: true,
@@ -31,14 +31,15 @@ const websiteMessageSchema = new Schema<IWebsiteMessage>(
     role: {
       type: String,
       enum: ["customer", "chef"],
-      required: true,
+      required: false,
       index: true,
     },
 
     name: {
       type: String,
       trim: true,
-      required: true,
+      required: false,
+      default: "",
     },
 
     email: {
@@ -52,13 +53,15 @@ const websiteMessageSchema = new Schema<IWebsiteMessage>(
     phone: {
       type: String,
       trim: true,
-      required: true,
+      required: false,
+      default: "",
     },
 
     city: {
       type: String,
       trim: true,
-      required: true,
+      required: false,
+      default: "",
     },
 
     about: {
