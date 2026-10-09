@@ -37,6 +37,63 @@ const MONTHS_MAP: { [key: string]: number } = {
   JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ CANCELLATION / REFUND CONSTANTS
+   Only two cancellation sources exist across the entire system:
+     • "cancelled by customer"  — set by PATCH /:orderId/cancel
+     • "cancelled by chef"      — set by PATCH /:orderId/status when
+                                   status becomes "Cancelled" (this
+                                   covers BOTH the chef tapping Decline
+                                   AND the admin overriding via the
+                                   dropdown — per product decision).
+   ───────────────────────────────────────────────────────────────── */
+const CANCELLATION_SOURCE_CUSTOMER = "cancelled by customer";
+const CANCELLATION_SOURCE_CHEF = "cancelled by chef";
+
+/* ✅ Refund status string used for unpaid COD (or any unpaid) placed-stage
+   cancellations. Money has NOT been collected, so it must never say "Refunded". */
+const REFUND_STATUS_NOT_APPLICABLE = "Not Applicable (No Payment Collected)";
+
+/* ✅ Refund status string used when a cancellation somehow happens on an
+   order that DID capture payment. We never auto-issue a refund here — an
+   ops team must review and act. */
+const REFUND_STATUS_PENDING_REVIEW = "Pending Review";
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ Helper — Build the cancellation-fee / refund patch for a given order.
+
+   COD rules (per product spec):
+     • Before the chef starts preparing the order (Placed-stage): the
+       cancellation fee is ₹0 and the refund amount is ₹0 because no
+       payment has been collected.
+     • Never mark an unpaid COD order as "Refunded".
+
+   Non-COD safety net:
+     • If `paymentCaptured === true` (which should not happen for a
+       Placed-stage order, since verification is what flips that flag),
+       we explicitly set refundStatus to "Pending Review" rather than
+       claiming any money was refunded. This keeps the invariant:
+       "Do not charge customers automatically or create a payment/refund
+       transaction for a COD order that has not been paid."
+   ───────────────────────────────────────────────────────────────── */
+const buildCancellationRefundPatch = (order: any) => {
+  const wasPaymentCaptured = order?.paymentCaptured === true;
+
+  if (wasPaymentCaptured) {
+    return {
+      cancellationFee: 0,
+      refundAmount: 0,
+      refundStatus: REFUND_STATUS_PENDING_REVIEW,
+    };
+  }
+
+  return {
+    cancellationFee: 0,
+    refundAmount: 0,
+    refundStatus: REFUND_STATUS_NOT_APPLICABLE,
+  };
+};
+
 const parseMonthAndDay = (dateStr: string) => {
   if (!dateStr) return { month: 0, day: 0 };
   const cleaned = dateStr.includes("–") ? dateStr.split("–")[0].trim() : dateStr.trim();
@@ -1445,23 +1502,40 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
 /**
  * PATCH /api/orders/:orderId/status
  *
- * ✅ UPDATED: Now also sends a push notification to the customer
- *    whenever the order status changes (chef or admin). Works
- *    whether the customer's app is open, backgrounded, or killed.
+ * ✅ UPDATED: Now uses an ATOMIC findOneAndUpdate guarded by the
+ *    expected previous status. This makes the chef-accept / chef-cancel
+ *    path concurrency-safe against the customer cancel endpoint:
+ *
+ *      • Only ONE of { chef accepts / starts preparing } and
+ *        { customer cancels } can win the race.
+ *      • The loser receives a clear 409 response and the client
+ *        can simply refresh.
+ *
+ *    ✅ Also sets cancellationSource = "cancelled by chef" and the
+ *       COD refund patch whenever status becomes "Cancelled" — this
+ *       covers BOTH the chef tapping Decline AND the admin tapping
+ *       "Cancelled" in the dropdown (per product decision: admin
+ *       cancellations use the same source string as chef cancellations).
+ *
+ *    ✅ The request shape (body: { status }) and the response shape
+ *       ({ success, message, order }) are UNCHANGED — every existing
+ *       caller keeps working without modifications.
+ *
+ *    ✅ Still sends the customer push notification on every status
+ *       change (works whether the customer's app is open, backgrounded,
+ *       or killed).
  */
 export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { orderId } = req.params;
     const { status } = req.body;
 
-    const order = await Order.findOne({ orderId });
-    if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+    if (!orderId || !status) {
+      return res.status(400).json({ success: false, message: "orderId and status are required." });
     }
 
     const normalized = String(status).trim();
     const normalizedLower = normalized.toLowerCase();
-    order.statusTimeline = order.statusTimeline || [];
 
     const isCashCollected =
       normalizedLower === "cash collected" ||
@@ -1469,83 +1543,158 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       normalizedLower === "collected" ||
       normalizedLower === "balance collected";
 
-    if (isCashCollected) {
-      order.paymentStatus = "Fully Paid (Balance Collected)";
-      order.paymentCaptured = true;
-      order.paidAt = new Date();
-      order.orderStatus = "Completed";
-      if (!order.actualDeliveredAt) {
-        order.actualDeliveredAt = new Date();
-      }
-      order.statusTimeline.push({
-        status: "Balance Collected",
-        timestamp: new Date(),
-        note: `Balance amount of ₹${order.balanceAmountToCollect || 0} collected upon delivery`,
-      });
+    const isCancelledStatus = normalizedLower === "cancelled" || normalizedLower === "canceled";
 
-      if (Array.isArray(order.deliverySchedules) && order.deliverySchedules.length > 0) {
-        order.deliverySchedules.forEach((schedule: any) => {
+    // ✅ Fetch the CURRENT document first so we can:
+    //    • decide the correct expected-previous-status guard
+    //    • build the COD refund patch from the actual payment state
+    //    • reuse existing logic for targetDeliveryTime etc.
+    const existingOrder = await Order.findOne({ orderId });
+    if (!existingOrder) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    // ✅ If the order is ALREADY cancelled, refuse to transition it
+    //    again (no double cancellation / no resurrection).
+    const existingStatusLower = String(existingOrder.orderStatus || "").toLowerCase();
+    if (existingStatusLower === "cancelled" || existingStatusLower === "canceled") {
+      return res.status(409).json({
+        success: false,
+        message: "Order is already cancelled.",
+        order: existingOrder,
+      });
+    }
+
+    // ✅ Build the $set payload (mirrors the previous save()-based behaviour).
+    const now = new Date();
+    const setPayload: any = {};
+
+    const timelinePush: any = {
+      status: isCashCollected ? "Balance Collected" : normalized,
+      timestamp: now,
+      note: isCashCollected
+        ? `Balance amount of ₹${existingOrder.balanceAmountToCollect || 0} collected upon delivery`
+        : `Order status changed to ${normalized}`,
+    };
+
+    if (isCancelledStatus) {
+      // ✅ Only two cancellation sources exist: customer + chef.
+      //    The admin dropdown uses the same PATCH endpoint as the chef,
+      //    so its cancellations are recorded as "cancelled by chef" per
+      //    product decision.
+      const existingSource = String(existingOrder.cancellationSource || "").trim();
+      const resolvedSource = existingSource || CANCELLATION_SOURCE_CHEF;
+
+      setPayload.orderStatus = "Cancelled";
+      setPayload.cancellationSource = resolvedSource;
+      setPayload.cancellationReason =
+        String(existingOrder.cancellationReason || "").trim() || resolvedSource;
+      setPayload.cancelledAt = existingOrder.cancelledAt || now;
+
+      // ✅ COD-safe refund patch (fee ₹0, refund ₹0 unless payment was
+      //    somehow captured; see helper for the exact rule).
+      const refundPatch = buildCancellationRefundPatch(existingOrder);
+      setPayload.cancellationFee = refundPatch.cancellationFee;
+      setPayload.refundAmount = refundPatch.refundAmount;
+      setPayload.refundStatus = refundPatch.refundStatus;
+    } else if (isCashCollected) {
+      setPayload.paymentStatus = "Fully Paid (Balance Collected)";
+      setPayload.paymentCaptured = true;
+      setPayload.paidAt = now;
+      setPayload.orderStatus = "Completed";
+      if (!existingOrder.actualDeliveredAt) {
+        setPayload.actualDeliveredAt = now;
+      }
+
+      // ✅ Auto-mark all still-open schedules as delivered (mirrors old logic).
+      if (Array.isArray(existingOrder.deliverySchedules) && existingOrder.deliverySchedules.length > 0) {
+        const updatedSchedules = existingOrder.deliverySchedules.map((schedule: any) => {
           const sStatus = String(schedule.status || "").toLowerCase();
-          if (sStatus !== "delivered" && sStatus !== "completed" && sStatus !== "cash collected") {
-            schedule.status = "Delivered";
-            if (!schedule.actualDeliveredAt) {
-              schedule.actualDeliveredAt = new Date();
-            }
-            if (!schedule.statusTimeline) schedule.statusTimeline = [];
-            schedule.statusTimeline.push({
+          if (
+            sStatus !== "delivered" &&
+            sStatus !== "completed" &&
+            sStatus !== "cash collected"
+          ) {
+            const timeline = Array.isArray(schedule.statusTimeline) ? schedule.statusTimeline.slice() : [];
+            timeline.push({
               status: "Delivered",
-              timestamp: new Date(),
+              timestamp: now,
               note: "Auto-marked delivered upon balance collection",
             });
+            return {
+              ...(schedule.toObject ? schedule.toObject() : schedule),
+              status: "Delivered",
+              actualDeliveredAt: schedule.actualDeliveredAt || now,
+              statusTimeline: timeline,
+            };
           }
+          return schedule.toObject ? schedule.toObject() : schedule;
         });
-        order.markModified("deliverySchedules");
+        setPayload.deliverySchedules = updatedSchedules;
       }
     } else {
-      order.orderStatus = normalized;
-      order.statusTimeline.push({
-        status: normalized,
-        timestamp: new Date(),
-        note: `Order status changed to ${normalized}`,
-      });
+      setPayload.orderStatus = normalized;
 
       if (normalized === "Preparing" || normalized === "Accepted") {
-        if (!order.prepStartedAt) {
-          order.prepStartedAt = new Date();
+        if (!existingOrder.prepStartedAt) {
+          setPayload.prepStartedAt = now;
         }
-        if (!order.targetDeliveryTime) {
-          // ✅ Prefer the persisted estimatedDeliveryAt if we have one
-          if (order.estimatedDeliveryAt) {
-            order.targetDeliveryTime = order.estimatedDeliveryAt;
+        if (!existingOrder.targetDeliveryTime) {
+          if (existingOrder.estimatedDeliveryAt) {
+            setPayload.targetDeliveryTime = existingOrder.estimatedDeliveryAt;
           } else {
-            order.targetDeliveryTime = calculateSlotTargetTime(
-              (order as any).deliveryDate || (order as any).eventDate || "",
-              (order as any).deliveryTimeSlot || (order as any).eventTime || ""
+            setPayload.targetDeliveryTime = calculateSlotTargetTime(
+              (existingOrder as any).deliveryDate || (existingOrder as any).eventDate || "",
+              (existingOrder as any).deliveryTimeSlot || (existingOrder as any).eventTime || ""
             );
           }
         }
       }
 
       if (normalized === "Delivered" || normalized === "Completed") {
-        order.actualDeliveredAt = order.actualDeliveredAt || new Date();
-        const target = order.targetDeliveryTime ? new Date(order.targetDeliveryTime).getTime() : Date.now();
-        const graceMs = (order.gracePeriodMinutes || 0) * 60 * 1000;
-        order.deliveredOnTime = Date.now() <= target + graceMs;
+        const deliveredAt = existingOrder.actualDeliveredAt || now;
+        const target = existingOrder.targetDeliveryTime
+          ? new Date(existingOrder.targetDeliveryTime).getTime()
+          : now.getTime();
+        const graceMs = (existingOrder.gracePeriodMinutes || 0) * 60 * 1000;
+        setPayload.actualDeliveredAt = deliveredAt;
+        setPayload.deliveredOnTime = now.getTime() <= target + graceMs;
       }
     }
 
-    const updatedOrder = await order.save();
+    // ✅ ATOMIC update guarded by the CURRENT status we just read. If
+    //    another request (e.g. customer cancel) changed the status in the
+    //    tiny window between our read and this update, the update will
+    //    match 0 documents and we return a 409 without corrupting state.
+    const updatedOrder = await Order.findOneAndUpdate(
+      { orderId, orderStatus: existingOrder.orderStatus },
+      {
+        $set: setPayload,
+        $push: { statusTimeline: timelinePush },
+      },
+      { new: true }
+    );
+
+    if (!updatedOrder) {
+      const latest = await Order.findOne({ orderId });
+      return res.status(409).json({
+        success: false,
+        message:
+          "Order status changed by another request. Please refresh and retry.",
+        order: latest,
+      });
+    }
 
     try {
       io.emit("order_status_updated", updatedOrder);
       io.emit("order_updated", updatedOrder);
-      if (order.userId) {
-        io.to(order.userId).emit("order_status_updated", updatedOrder);
-        io.to(order.userId).emit("order_updated", updatedOrder);
+      if (updatedOrder.userId) {
+        io.to(updatedOrder.userId).emit("order_status_updated", updatedOrder);
+        io.to(updatedOrder.userId).emit("order_updated", updatedOrder);
       }
-      if (order.chefId) {
-        io.to(String(order.chefId)).emit("order_status_updated", updatedOrder);
-        io.to(String(order.chefId)).emit("order_updated", updatedOrder);
+      if (updatedOrder.chefId) {
+        io.to(String(updatedOrder.chefId)).emit("order_status_updated", updatedOrder);
+        io.to(String(updatedOrder.chefId)).emit("order_updated", updatedOrder);
       }
     } catch (e) {
       console.log("Socket emit warning:", e);
@@ -1563,16 +1712,16 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
        • Never throws — wrapped in its own try/catch.
        ────────────────────────────────────────────────────────── */
     try {
-      if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
-        const customerDoc = await User.findById(order.userId);
+      if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
+        const customerDoc = await User.findById(updatedOrder.userId);
         if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
-          const msg = getCustomerStatusMessage(normalized, order.orderId);
+          const msg = getCustomerStatusMessage(normalized, updatedOrder.orderId);
           await sendExpoPush({
             token: String(customerDoc.pushToken),
             title: msg.title,
             body: msg.body,
             data: {
-              orderId: order.orderId,
+              orderId: updatedOrder.orderId,
               screen: "orders",
               role: "customer",
               status: normalized,
@@ -1589,6 +1738,217 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
     return res.status(200).json({
       success: true,
       message: `Order updated successfully`,
+      order: updatedOrder,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * PATCH /api/orders/:orderId/cancel
+ *
+ * ✅ NEW — Customer-initiated cancellation.
+ *
+ * Rules enforced here (in addition to the frontend's UX gating):
+ *   • Only the authenticated owner can cancel their own order.
+ *   • Only an order still in `Placed` status can be cancelled.
+ *   • `Preparing` (and any later status) is refused with the exact
+ *     message the mobile app shows to the customer.
+ *   • Concurrency-safe via atomic findOneAndUpdate on { orderId, userId,
+ *     orderStatus: "Placed" } — the chef's Accept/Preparing update goes
+ *     through the same atomic pattern in updateOrderStatus above, so
+ *     only one of the two can win the race.
+ *   • Cancellation is idempotent for the SAME customer: if the order is
+ *     already cancelled by them, we return 200 with the current state
+ *     instead of a confusing error.
+ *   • Writes the COD-safe refund patch (fee ₹0, refund ₹0,
+ *     refundStatus = "Not Applicable (No Payment Collected)").
+ *   • Emits the existing `order_updated` + `order_status_updated` events
+ *     so all three screens refresh (no new event name needed).
+ *   • Sends the standard customer push notification.
+ */
+export const cancelOrderByCustomer = async (req: AuthRequest, res: Response) => {
+  try {
+    const { orderId } = req.params;
+    const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
+
+    if (!rawUserId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: "orderId is required." });
+    }
+
+    const userIdStr = String(rawUserId);
+
+    // ✅ Ownership-safe ownership clause — mirrors getMyOrders exactly,
+    //    so any user who can SEE the order can also cancel it (if Placed).
+    const ownershipClauses: any[] = [{ userId: userIdStr }];
+    if (mongoose.Types.ObjectId.isValid(userIdStr)) {
+      ownershipClauses.push({ userId: new mongoose.Types.ObjectId(userIdStr) });
+    }
+
+    // ✅ Read current state once for good error messages (idempotency,
+    //    preparing refusal, not-found vs not-owned disambiguation).
+    const preflightOrder = await Order.findOne({
+      orderId,
+      $or: ownershipClauses,
+    });
+
+    if (!preflightOrder) {
+      // Disambiguate "not found at all" vs "not owned by this user"
+      const anyOrder = await Order.findOne({ orderId });
+      if (!anyOrder) {
+        return res.status(404).json({ success: false, message: "Order not found" });
+      }
+      return res.status(403).json({
+        success: false,
+        message: "You are not allowed to cancel this order.",
+      });
+    }
+
+    const currentStatusLower = String(preflightOrder.orderStatus || "").toLowerCase();
+
+    // ✅ Idempotency — if it is ALREADY cancelled by this customer, return
+    //    the current document with 200 instead of a confusing error.
+    if (currentStatusLower === "cancelled" || currentStatusLower === "canceled") {
+      const alreadySource = String(preflightOrder.cancellationSource || "").toLowerCase();
+      if (alreadySource === CANCELLATION_SOURCE_CUSTOMER) {
+        return res.status(200).json({
+          success: true,
+          message: "Order is already cancelled.",
+          order: preflightOrder,
+        });
+      }
+      return res.status(409).json({
+        success: false,
+        message: "Order is already cancelled.",
+        order: preflightOrder,
+      });
+    }
+
+    // ✅ Refuse if the chef has already started preparing (or anything after).
+    if (currentStatusLower === "preparing" || currentStatusLower === "prep") {
+      return res.status(400).json({
+        success: false,
+        message: "Preparation has started, so cancellation is not possible.",
+        order: preflightOrder,
+      });
+    }
+
+    // ✅ Refuse every other non-cancellable status (Accepted, Packed,
+    //    Out for Delivery, Delivered, Completed, Cash Collected, etc).
+    if (currentStatusLower !== "placed") {
+      return res.status(400).json({
+        success: false,
+        message: `Order cannot be cancelled once it is in ${preflightOrder.orderStatus} status.`,
+        order: preflightOrder,
+      });
+    }
+
+    // ✅ Build the refund patch from the CURRENT document (COD-safe).
+    const refundPatch = buildCancellationRefundPatch(preflightOrder);
+
+    const now = new Date();
+
+    // ✅ ATOMIC update guarded by { orderId, userId, orderStatus: "Placed" }.
+    //    If the chef's updateOrderStatus has just transitioned this order
+    //    out of `Placed`, this update matches 0 docs and we return 409 so
+    //    the client simply refreshes.
+    const updatedOrder = await Order.findOneAndUpdate(
+      {
+        orderId,
+        orderStatus: "Placed",
+        $or: ownershipClauses,
+      },
+      {
+        $set: {
+          orderStatus: "Cancelled",
+          cancellationSource: CANCELLATION_SOURCE_CUSTOMER,
+          cancellationReason: CANCELLATION_SOURCE_CUSTOMER,
+          cancelledAt: now,
+          cancellationFee: refundPatch.cancellationFee,
+          refundAmount: refundPatch.refundAmount,
+          refundStatus: refundPatch.refundStatus,
+        },
+        $push: {
+          statusTimeline: {
+            status: "Cancelled",
+            timestamp: now,
+            note: "Order cancelled by customer before preparation started.",
+          },
+        },
+      },
+      { new: true }
+    );
+
+    if (!updatedOrder) {
+      // Lost the race, or the order moved on. Return the fresh state so
+      // the client can render the correct status immediately.
+      const latest = await Order.findOne({ orderId });
+      const latestStatusLower = String(latest?.orderStatus || "").toLowerCase();
+      if (latestStatusLower === "preparing" || latestStatusLower === "prep") {
+        return res.status(400).json({
+          success: false,
+          message: "Preparation has started, so cancellation is not possible.",
+          order: latest,
+        });
+      }
+      return res.status(409).json({
+        success: false,
+        message:
+          "Order status changed by another request. Please refresh and retry.",
+        order: latest,
+      });
+    }
+
+    // ✅ Broadcast to every screen that already listens for these events.
+    try {
+      io.emit("order_updated", updatedOrder);
+      io.emit("order_status_updated", updatedOrder);
+      if (updatedOrder.userId) {
+        io.to(updatedOrder.userId).emit("order_updated", updatedOrder);
+        io.to(updatedOrder.userId).emit("order_status_updated", updatedOrder);
+      }
+      if (updatedOrder.chefId) {
+        io.to(String(updatedOrder.chefId)).emit("order_updated", updatedOrder);
+        io.to(String(updatedOrder.chefId)).emit("order_status_updated", updatedOrder);
+      }
+    } catch (e) {
+      console.log("Socket emit warning:", e);
+    }
+
+    // ✅ Customer push — same shape as every other status-change push.
+    try {
+      if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
+        const customerDoc = await User.findById(updatedOrder.userId);
+        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+          const msg = getCustomerStatusMessage("Cancelled", updatedOrder.orderId);
+          await sendExpoPush({
+            token: String(customerDoc.pushToken),
+            title: msg.title,
+            body: msg.body,
+            data: {
+              orderId: updatedOrder.orderId,
+              screen: "orders",
+              role: "customer",
+              status: "Cancelled",
+              cancellationSource: CANCELLATION_SOURCE_CUSTOMER,
+            },
+            sound: "default",
+            priority: "high",
+          });
+        }
+      }
+    } catch (customerPushErr) {
+      console.log("Customer cancel push error:", customerPushErr);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Order cancelled successfully.",
       order: updatedOrder,
     });
   } catch (error: any) {

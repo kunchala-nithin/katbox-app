@@ -232,6 +232,31 @@ const formatSpiceLevel = (raw: any): string => {
   return raw;
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Cancellation badge label.
+   Returns the exact display text for a cancelled order based on
+   `cancellationSource`. Returns `null` when the order is not
+   cancelled, so callers can decide whether to override the plain
+   status text or leave it untouched.
+
+   Only two cancellation sources exist across the whole system:
+     • "cancelled by customer"  — set by the customer cancel endpoint.
+     • "cancelled by chef"      — set by PATCH /:orderId/status when the
+                                   status becomes Cancelled (covers both
+                                   the chef tapping Decline AND the admin
+                                   overriding via the dropdown).
+   ───────────────────────────────────────────────────────────────── */
+const getCancellationBadgeLabel = (order: any): string | null => {
+  if (!order) return null;
+  const statusLower = String(order.orderStatus || '').toLowerCase();
+  if (statusLower !== 'cancelled' && statusLower !== 'canceled') return null;
+
+  const sourceLower = String(order.cancellationSource || '').trim().toLowerCase();
+  if (sourceLower === 'cancelled by customer') return 'Cancelled by Customer';
+  if (sourceLower === 'cancelled by chef') return 'Cancelled by Chef';
+  return null;
+};
+
 /* ─── COUNTDOWN TIMER WIDGET (ADMIN BLUE THEME) ─── */
 function DeliverySlotCountdownWidget({
   deliveryDate,
@@ -1135,6 +1160,12 @@ export default function AdminAllOrdersScreen() {
     return !!resolvedDeliveryTypeLabel;
   }, [activeOrder?.serviceType, resolvedDeliveryTypeLabel]);
 
+  // ✅ NEW — Dynamic cancellation badge label for the currently selected order.
+  const activeCancellationBadge = useMemo(
+    () => getCancellationBadgeLabel(activeOrder),
+    [activeOrder]
+  );
+
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
     orderTime: activeOrder?.createdAt
@@ -1584,6 +1615,9 @@ export default function AdminAllOrdersScreen() {
                   const status = (o.orderStatus || 'Placed').toLowerCase();
                   const pStatus = (o.paymentStatus || '').toLowerCase();
 
+                  // ✅ Per-order cancellation badge (used in pill strip)
+                  const orderCancelBadge = getCancellationBadgeLabel(o);
+
                   let pillStyle = styles.orderTabPillPending;
                   let dotStyle = styles.tabIndicatorDotPending;
                   let textStyle = styles.orderTabPillTextPending;
@@ -1627,6 +1661,7 @@ export default function AdminAllOrdersScreen() {
                       <View style={[styles.tabIndicatorDotBase, dotStyle]} />
                       <Text style={[styles.orderTabPillTextBase, textStyle]}>
                         #{o.orderId?.slice(-6) || 'ORDER'} • ₹{o.totalAmount}
+                        {orderCancelBadge ? ` • ${orderCancelBadge}` : ''}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -1892,15 +1927,15 @@ export default function AdminAllOrdersScreen() {
                     style={[
                       styles.statusBadgePill,
                       isCurrentOrderAccepted && { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
-                      orderData.status === 'Cancelled' && { backgroundColor: '#FEF2F2', borderColor: '#FEE2E2' },
-                      !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && { backgroundColor: '#FFFBEB', borderColor: '#FEF3C7' },
+                      (currentStatus.toLowerCase() === 'cancelled' || currentStatus.toLowerCase() === 'canceled') && { backgroundColor: '#FEF2F2', borderColor: '#FEE2E2' },
+                      !isCurrentOrderAccepted && currentStatus.toLowerCase() !== 'cancelled' && { backgroundColor: '#FFFBEB', borderColor: '#FEF3C7' },
                     ]}
                   >
                     <Ionicons
                       name={
                         isCurrentOrderAccepted
                           ? 'checkmark-circle'
-                          : orderData.status === 'Cancelled'
+                          : (currentStatus.toLowerCase() === 'cancelled' || currentStatus.toLowerCase() === 'canceled')
                           ? 'close-circle'
                           : 'time-outline'
                       }
@@ -1908,7 +1943,7 @@ export default function AdminAllOrdersScreen() {
                       color={
                         isCurrentOrderAccepted
                           ? '#2563EB'
-                          : orderData.status === 'Cancelled'
+                          : (currentStatus.toLowerCase() === 'cancelled' || currentStatus.toLowerCase() === 'canceled')
                           ? '#DC2626'
                           : '#D97706'
                       }
@@ -1918,11 +1953,11 @@ export default function AdminAllOrdersScreen() {
                       style={[
                         styles.statusBadgeText,
                         isCurrentOrderAccepted && { color: '#2563EB' },
-                        orderData.status === 'Cancelled' && { color: '#DC2626' },
-                        !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && { color: '#D97706' },
+                        (currentStatus.toLowerCase() === 'cancelled' || currentStatus.toLowerCase() === 'canceled') && { color: '#DC2626' },
+                        !isCurrentOrderAccepted && currentStatus.toLowerCase() !== 'cancelled' && { color: '#D97706' },
                       ]}
                     >
-                      {orderData.status}
+                      {activeCancellationBadge || orderData.status}
                     </Text>
                   </View>
                 </View>

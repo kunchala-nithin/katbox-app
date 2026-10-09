@@ -466,6 +466,31 @@ const formatSpiceLevel = (raw: any): string => {
   return raw;
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Cancellation badge label.
+   Returns the exact display text for a cancelled order based on
+   `cancellationSource`. Returns `null` when the order is not
+   cancelled, so callers can decide whether to override the plain
+   status text or leave it untouched.
+
+   Only two cancellation sources exist across the whole system:
+     • "cancelled by customer"  — set by the customer cancel endpoint.
+     • "cancelled by chef"      — set by PATCH /:orderId/status when the
+                                   status becomes Cancelled (covers both
+                                   the chef tapping Decline AND the admin
+                                   overriding via the dropdown).
+   ───────────────────────────────────────────────────────────────── */
+const getCancellationBadgeLabel = (order: any): string | null => {
+  if (!order) return null;
+  const statusLower = String(order.orderStatus || '').toLowerCase();
+  if (statusLower !== 'cancelled' && statusLower !== 'canceled') return null;
+
+  const sourceLower = String(order.cancellationSource || '').trim().toLowerCase();
+  if (sourceLower === 'cancelled by customer') return 'Cancelled by Customer';
+  if (sourceLower === 'cancelled by chef') return 'Cancelled by Chef';
+  return null;
+};
+
 // ─── DeliverySlotCountdownWidget ──────────────────────────────────
 function DeliverySlotCountdownWidget({
   deliveryDate,
@@ -1426,6 +1451,12 @@ export default function AllOrdersScreen() {
 
   const shouldShowCornerServiceBadge = !!cornerServiceBadgeText;
 
+  // ✅ NEW — Dynamic cancellation badge label for the currently selected order.
+  const activeCancellationBadge = useMemo(
+    () => getCancellationBadgeLabel(activeOrder),
+    [activeOrder]
+  );
+
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
     orderTime: activeOrder?.createdAt
@@ -1592,6 +1623,14 @@ export default function AllOrdersScreen() {
       });
   };
 
+  /* ─────────────────────────────────────────────────────────────────
+     ✅ Chef decline — hits the existing PATCH /:orderId/status endpoint
+     with status: "Cancelled". The backend now defaults the
+     `cancellationSource` to "cancelled by chef" (per product decision,
+     this is the SAME source used for admin cancellations via the
+     admin dropdown). This handler is kept otherwise identical so
+     existing chef behaviour is preserved.
+     ───────────────────────────────────────────────────────────────── */
   const handleRejectOrder = () => {
     if (!activeOrder) return;
     Alert.alert('Reject Order', 'Are you sure you want to reject this order?', [
@@ -1805,6 +1844,9 @@ export default function AllOrdersScreen() {
                   const oServiceType = (o.serviceType || '').toLowerCase();
                   const isOrderMealbox = oServiceType === 'mealbox';
 
+                  // ✅ Per-order cancellation badge (used in pill strip)
+                  const orderCancelBadge = getCancellationBadgeLabel(o);
+
                   let isOrderDeliveredOrCollected = false;
 
                   if (isOrderMealbox) {
@@ -1876,6 +1918,7 @@ export default function AllOrdersScreen() {
                       <View style={[styles.tabIndicatorDotBase, dotStyle]} />
                       <Text style={[styles.orderTabPillTextBase, textStyle]}>
                         #{o.orderId?.slice(-6) || 'ORDER'} • ₹{o.totalAmount}
+                        {orderCancelBadge ? ` • ${orderCancelBadge}` : ''}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -2105,22 +2148,22 @@ export default function AllOrdersScreen() {
                   <View style={[
                     styles.statusBadgePill,
                     isCurrentOrderAccepted && { backgroundColor: '#F0FDF4', borderColor: '#DCFCE7' },
-                    orderData.status === 'Cancelled' && { backgroundColor: '#FEF2F2', borderColor: '#FEE2E2' },
-                    !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && { backgroundColor: '#FFFBEB', borderColor: '#FEF3C7' },
+                    (currentStatus.toLowerCase() === 'cancelled' || currentStatus.toLowerCase() === 'canceled') && { backgroundColor: '#FEF2F2', borderColor: '#FEE2E2' },
+                    !isCurrentOrderAccepted && currentStatus.toLowerCase() !== 'cancelled' && { backgroundColor: '#FFFBEB', borderColor: '#FEF3C7' },
                   ]}>
                     <Ionicons
-                      name={isCurrentOrderAccepted ? 'checkmark-circle' : orderData.status === 'Cancelled' ? 'close-circle' : 'time-outline'}
+                      name={isCurrentOrderAccepted ? 'checkmark-circle' : (currentStatus.toLowerCase() === 'cancelled' || currentStatus.toLowerCase() === 'canceled') ? 'close-circle' : 'time-outline'}
                       size={12}
-                      color={isCurrentOrderAccepted ? '#166348' : orderData.status === 'Cancelled' ? '#DC2626' : '#D97706'}
+                      color={isCurrentOrderAccepted ? '#166348' : (currentStatus.toLowerCase() === 'cancelled' || currentStatus.toLowerCase() === 'canceled') ? '#DC2626' : '#D97706'}
                       style={{ marginRight: 4 }}
                     />
                     <Text style={[
                       styles.statusBadgeText,
                       isCurrentOrderAccepted && { color: '#166348' },
-                      orderData.status === 'Cancelled' && { color: '#DC2626' },
-                      !isCurrentOrderAccepted && orderData.status !== 'Cancelled' && { color: '#D97706' },
+                      (currentStatus.toLowerCase() === 'cancelled' || currentStatus.toLowerCase() === 'canceled') && { color: '#DC2626' },
+                      !isCurrentOrderAccepted && currentStatus.toLowerCase() !== 'cancelled' && { color: '#D97706' },
                     ]}>
-                      {orderData.status}
+                      {activeCancellationBadge || orderData.status}
                     </Text>
                   </View>
                 </View>

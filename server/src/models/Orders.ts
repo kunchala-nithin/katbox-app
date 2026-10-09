@@ -151,6 +151,22 @@ export interface IBaseOrder extends Document {
   // ✅ NEW: Delivery service type string (Standard / Doorstep / Doorstep + Service)
   deliveryType?: string;
 
+  // ✅ NEW: Customer / chef order cancellation + refund tracking.
+  // Only two sources are ever written by the backend:
+  //   • "cancelled by customer"  → set by PATCH /:orderId/cancel
+  //   • "cancelled by chef"      → set by the existing
+  //                                PATCH /:orderId/status when status = "Cancelled"
+  //                                (covers both chef decline AND admin override)
+  cancellationReason?: string;
+  cancellationSource?: string;
+  cancelledAt?: Date;
+  // COD rules: on a placed-stage cancellation, fee = 0 and refund = 0
+  // because no customer payment has been collected. Never mark an unpaid
+  // COD order as refunded.
+  cancellationFee?: number;
+  refundAmount?: number;
+  refundStatus?: string;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -358,6 +374,23 @@ const BaseOrderSchema: Schema = new Schema(
     //    Declaring it again on child discriminator schemas causes Mongoose
     //    to throw a "Cannot use duplicate schema path" error at save() time.
     deliveryType: { type: String, default: "" },
+
+    // ✅ NEW: Cancellation + refund tracking.
+    // ✅ IMPORTANT: Declared ONLY on the base schema, matching the same
+    //    duplicate-path rule as `deliveryType` / `quickDeliverySlot` /
+    //    `specialInstructions`. Child discriminators must NOT redeclare
+    //    these — doing so triggers Mongoose duplicate schema path errors.
+    // Only two values are ever written for `cancellationSource`:
+    //    • "cancelled by customer"
+    //    • "cancelled by chef"
+    cancellationReason: { type: String, default: "" },
+    cancellationSource: { type: String, default: "" },
+    cancelledAt: { type: Date },
+    // COD policy: fee = 0 and refund = 0 on placed-stage cancellations
+    // because no customer payment has been collected yet.
+    cancellationFee: { type: Number, default: 0 },
+    refundAmount: { type: Number, default: 0 },
+    refundStatus: { type: String, default: "" },
   },
   {
     discriminatorKey: "serviceType",
@@ -385,9 +418,10 @@ const HomemadeItemSubSchema = new Schema(
   { _id: false }
 );
 
-// ✅ IMPORTANT: Do NOT redeclare `deliveryType`, `quickDeliverySlot` or
-//    `specialInstructions` here — they are already on the BaseOrderSchema.
-//    Redeclaring causes Mongoose discriminator conflicts.
+// ✅ IMPORTANT: Do NOT redeclare `deliveryType`, `quickDeliverySlot`,
+//    `specialInstructions`, or any cancellation/refund field here — they
+//    are already on the BaseOrderSchema. Redeclaring causes Mongoose
+//    discriminator conflicts.
 const HomemadeOrderSchema = new Schema({
   items: { type: [HomemadeItemSubSchema], required: true, default: [] },
   deliveryAddress: { type: String, required: true, default: "" },
@@ -401,8 +435,9 @@ const HomemadeOrderSchema = new Schema({
 
 // 4. MEALBOX & CATERING SCHEMA
 // ✅ IMPORTANT: Do NOT redeclare `deliveryType`, `specialInstruction*`,
-//    `quickDeliverySlot` or `specialInstructions` here. They already live on
-//    the BaseOrderSchema. Redeclaring causes save() errors.
+//    `quickDeliverySlot`, `specialInstructions`, or any cancellation/refund
+//    field here. They already live on the BaseOrderSchema. Redeclaring
+//    causes save() errors.
 //
 // ✅ NOTE ON CATERING MENU ITEMS:
 //    `selections` (category cards → selected / extraSelected), `items` (flat list

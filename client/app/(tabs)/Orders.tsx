@@ -358,6 +358,23 @@ const resolveHomemadeHeroImage = (order: any): string => {
   return "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400";
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Cancellation badge label.
+   Returns the exact display text for a cancelled order based on
+   `cancellationSource`. Returns `null` when the order is not
+   cancelled, so callers can decide whether to render a badge at all.
+   ───────────────────────────────────────────────────────────────── */
+const getCancellationBadgeLabel = (order: any): string | null => {
+  if (!order) return null;
+  const statusLower = String(order.orderStatus || "").toLowerCase();
+  if (statusLower !== "cancelled" && statusLower !== "canceled") return null;
+
+  const sourceLower = String(order.cancellationSource || "").trim().toLowerCase();
+  if (sourceLower === "cancelled by customer") return "Cancelled by Customer";
+  if (sourceLower === "cancelled by chef") return "Cancelled by Chef";
+  return "Cancelled";
+};
+
 function DeliverySlotCountdownWidget({
   deliveryDate,
   timeSlot,
@@ -767,6 +784,10 @@ export default function MyOrdersScreen() {
 
   // ✅ NEW: Collapsible special-instruction toggle for the detail screen.
   const [isDetailSpecialExpanded, setIsDetailSpecialExpanded] = useState<boolean>(false);
+
+  // ✅ NEW: Cancel-order in-flight tracker. Prevents double taps and drives
+  //    the loading state on the Cancel Order button in the Bill Summary.
+  const [cancellingOrderIds, setCancellingOrderIds] = useState<{ [orderId: string]: boolean }>({});
 
   const previewSheetAnim = useRef(new Animated.Value(400)).current;
   const rescheduleSheetAnim = useRef(new Animated.Value(400)).current;
@@ -1390,6 +1411,159 @@ export default function MyOrdersScreen() {
     setIsInvoiceScreenOpen(false);
   };
 
+  /* ─────────────────────────────────────────────────────────────────
+     ✅ NEW — Customer-triggered Cancel Order flow.
+
+     Rules (mirrored on the backend):
+       • Only an order still in `Placed` status can be cancelled.
+       • `Preparing` (and any later status) is refused with the exact
+         message the spec requires.
+       • Ownership is validated by the backend.
+       • Atomic — the backend uses findOneAndUpdate guarded by
+         { orderId, userId, orderStatus: "Placed" }.
+       • COD-safe: fee ₹0, refund ₹0, refundStatus = "Not Applicable
+         (No Payment Collected)"; never marks an unpaid order as refunded.
+
+     UX:
+       • Confirm dialog for `Placed`.
+       • Exact alert for `Preparing`.
+       • Generic "cannot be cancelled" alert for anything else.
+       • Loading state on the button (via `cancellingOrderIds`).
+       • Never marks anything cancelled locally on failure — we only
+         patch state from the server's response.
+     ───────────────────────────────────────────────────────────────── */
+  const handleCancelOrder = (order: any) => {
+    if (!order) return;
+    const orderId = order.orderId;
+    if (!orderId) return;
+
+    const statusLower = String(order.orderStatus || "").toLowerCase();
+
+    // Preparing → show the exact message, do not call the backend.
+    if (statusLower === "preparing" || statusLower === "prep") {
+      Alert.alert(
+        "Cannot Cancel",
+        "Preparation has started, so cancellation is not possible."
+      );
+      return;
+    }
+
+    // Anything beyond `Placed` (and not already cancelled) → generic refusal.
+    if (statusLower !== "placed") {
+      if (statusLower === "cancelled" || statusLower === "canceled") {
+        Alert.alert("Already Cancelled", "This order has already been cancelled.");
+        return;
+      }
+      Alert.alert(
+        "Cannot Cancel",
+        `This order cannot be cancelled once it is in ${order.orderStatus} status.`
+      );
+      return;
+    }
+
+    // Confirm before cancelling a Placed order.
+    Alert.alert(
+      "Cancel Order",
+      "Are you sure you want to cancel this order? This action cannot be undone.",
+      [
+        { text: "Keep Order", style: "cancel" },
+        {
+          text: "Cancel Order",
+          style: "destructive",
+          onPress: () => confirmCancelOrder(orderId),
+        },
+      ]
+    );
+  };
+
+  // ✅ NEW — Explicitly call the backend cancel endpoint.
+  const confirmCancelOrder = async (orderId: string) => {
+    if (!orderId) return;
+
+    // Guard against double taps.
+    if (cancellingOrderIds[orderId]) return;
+    setCancellingOrderIds((prev) => ({ ...prev, [orderId]: true }));
+
+    try {
+      const res = await api.patch(`/api/orders/${orderId}/cancel`);
+
+      if (res.data && res.data.success && res.data.order) {
+        const updated = res.data.order;
+
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+
+        setUserOrders((prev) =>
+          prev.map((o) => (o.orderId === orderId ? { ...o, ...updated } : o))
+        );
+
+        setSelectedOrderDetails((prev: any) => {
+          if (prev && prev.orderId === orderId) {
+            return { ...prev, ...updated };
+          }
+          return prev;
+        });
+
+        Alert.alert("Order Cancelled", "Your order has been cancelled successfully.");
+      } else {
+        // Backend returned 2xx but no order payload — refetch for truth.
+        Alert.alert(
+          "Notice",
+          res.data?.message || "Cancellation could not be confirmed. Refreshing orders."
+        );
+        fetchMyOrders(true);
+      }
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const msg = err?.response?.data?.message;
+
+      if (status === 400 && msg) {
+        // e.g. "Preparation has started, so cancellation is not possible."
+        Alert.alert("Cannot Cancel", msg);
+      } else if (status === 409 && msg) {
+        Alert.alert("Status Changed", msg);
+      } else if (status === 403) {
+        Alert.alert("Not Allowed", msg || "You are not allowed to cancel this order.");
+      } else if (status === 404) {
+        Alert.alert("Not Found", msg || "Order not found.");
+      } else if (err?.code === "ERR_NETWORK" || !err?.response) {
+        Alert.alert(
+          "Network Error",
+          "Could not reach the server. Please check your connection and try again."
+        );
+      } else {
+        Alert.alert("Error", msg || "Failed to cancel the order. Please try again.");
+      }
+      // ✅ Never mark the order cancelled locally on failure.
+    } finally {
+      setCancellingOrderIds((prev) => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  // ✅ NEW — Tapping the visually-disabled button must still surface the
+  //    exact message required by the spec for `Preparing`.
+  const handleDisabledCancelTap = (order: any) => {
+    if (!order) return;
+    const statusLower = String(order.orderStatus || "").toLowerCase();
+
+    if (statusLower === "preparing" || statusLower === "prep") {
+      Alert.alert(
+        "Cannot Cancel",
+        "Preparation has started, so cancellation is not possible."
+      );
+      return;
+    }
+
+    if (statusLower === "cancelled" || statusLower === "canceled") {
+      Alert.alert("Already Cancelled", "This order has already been cancelled.");
+      return;
+    }
+
+    Alert.alert(
+      "Cannot Cancel",
+      `This order cannot be cancelled once it is in ${order.orderStatus} status.`
+    );
+  };
+
   const getGroupedMealBoxItemsBySection = (items: any[]) => {
     const map: Record<string, any[]> = { STARTERS: [], MAINS: [], "ADD ON'S": [] };
     if (!Array.isArray(items)) return map;
@@ -1867,6 +2041,20 @@ export default function MyOrdersScreen() {
 
     const { dayName: schedDayName, dayNumber: schedDayNum, month: schedMonth } = parseDateParts(detailStartDate);
 
+    // ✅ Cancellation-specific derived values for the Bill Summary block.
+    const detailStatusLower = String(selectedOrderDetails.orderStatus || "").toLowerCase();
+    const isDetailCancelled =
+      detailStatusLower === "cancelled" || detailStatusLower === "canceled";
+    const detailCancellationBadge = getCancellationBadgeLabel(selectedOrderDetails);
+    const detailCancellationSourceText = String(selectedOrderDetails.cancellationSource || "").trim();
+    const detailCancellationFeeNum = Number(selectedOrderDetails.cancellationFee ?? 0);
+    const detailRefundAmountNum = Number(selectedOrderDetails.refundAmount ?? 0);
+    const detailRefundStatusText = String(selectedOrderDetails.refundStatus || "").trim();
+
+    // ✅ Dynamic enable/disable for the Cancel Order button.
+    const canCancelThisOrder = detailStatusLower === "placed" && !isDetailCancelled;
+    const isCancelInFlight = !!cancellingOrderIds[detailOrderId];
+
     return (
       <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
         {/* ✅ Network status banner — absolute at top of the detail screen */}
@@ -1910,11 +2098,15 @@ export default function MyOrdersScreen() {
 
               <View style={styles.scheduledStatusRow}>
                 <View style={styles.greenStatusDotDot} />
-                <Text style={styles.scheduledStatusText}>{detailStatus}</Text>
+                <Text style={styles.scheduledStatusText}>
+                  {detailCancellationBadge || detailStatus}
+                </Text>
               </View>
 
               <Text style={styles.heroConfirmedHeading}>
-                {isCatering
+                {isDetailCancelled
+                  ? "Order Cancelled"
+                  : isCatering
                   ? `Catering Booking Confirmed for ${selectedOrderDetails.occasion || "Event"}`
                   : isHomemade
                   ? (isQuickBites 
@@ -1923,7 +2115,9 @@ export default function MyOrdersScreen() {
                   : `Delivery Scheduled for ${detailStartDate}`}
               </Text>
               <Text style={styles.heroConfirmedSubheading}>
-                {isCatering
+                {isDetailCancelled
+                  ? "This order is no longer active."
+                  : isCatering
                   ? `Our culinary team will set up the buffet at your venue on ${detailStartDate}.`
                   : isHomemade
                   ? (isQuickBites 
@@ -2403,6 +2597,98 @@ export default function MyOrdersScreen() {
                 </View>
               </>
             )}
+
+            {/* ─────────────────────────────────────────────────────
+                ✅ NEW — Cancellation & Refund block (Bill Summary).
+                Renders only when the order carries a cancellation
+                source (i.e. it was cancelled by customer / chef).
+                Uses the same COD-safe values that the backend stores.
+                ───────────────────────────────────────────────────── */}
+            {detailCancellationBadge ? (
+              <View style={styles.cancellationInfoBlock}>
+                <View style={styles.cancellationInfoRow}>
+                  <Text style={styles.cancellationInfoLabel}>Cancellation Status</Text>
+                  <View style={styles.cancellationInfoStatusPill}>
+                    <Text style={styles.cancellationInfoStatusPillText}>
+                      {detailCancellationBadge}
+                    </Text>
+                  </View>
+                </View>
+
+                {detailCancellationSourceText ? (
+                  <View style={styles.cancellationInfoRow}>
+                    <Text style={styles.cancellationInfoLabel}>Cancellation Source</Text>
+                    <Text style={styles.cancellationInfoValue}>{detailCancellationSourceText}</Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.cancellationInfoRow}>
+                  <Text style={styles.cancellationInfoLabel}>Cancellation Fee</Text>
+                  <Text style={styles.cancellationInfoValue}>₹{detailCancellationFeeNum}</Text>
+                </View>
+
+                <View style={styles.cancellationInfoRow}>
+                  <Text style={styles.cancellationInfoLabel}>Refund Amount</Text>
+                  <Text style={styles.cancellationInfoValue}>₹{detailRefundAmountNum}</Text>
+                </View>
+
+                {detailRefundStatusText ? (
+                  <View style={styles.cancellationInfoRow}>
+                    <Text style={styles.cancellationInfoLabel}>Refund Status</Text>
+                    <Text style={styles.cancellationInfoValue}>{detailRefundStatusText}</Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
+            {/* ─────────────────────────────────────────────────────
+                ✅ NEW — Cancel Order button (inside Bill Summary).
+
+                UX rules:
+                  • Enabled only when orderStatus === "Placed".
+                  • When visually disabled we still leave it
+                    pressable so tapping surfaces the exact
+                    "Preparation has started, so cancellation is
+                    not possible." alert for the Preparing status.
+                  • Loading state while the request is in flight.
+                  • Hidden entirely once the order is cancelled.
+                ───────────────────────────────────────────────────── */}
+            {!isDetailCancelled ? (
+              <TouchableOpacity
+                style={[
+                  styles.cancelOrderBtn,
+                  !canCancelThisOrder && styles.cancelOrderBtnDisabled,
+                ]}
+                activeOpacity={0.85}
+                onPress={() =>
+                  canCancelThisOrder
+                    ? handleCancelOrder(selectedOrderDetails)
+                    : handleDisabledCancelTap(selectedOrderDetails)
+                }
+                disabled={isCancelInFlight}
+              >
+                {isCancelInFlight ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <View style={styles.cancelOrderBtnInnerRow}>
+                    <Feather
+                      name="x-octagon"
+                      size={16}
+                      color={canCancelThisOrder ? "#FFFFFF" : "#94A3B8"}
+                      style={{ marginRight: 8 }}
+                    />
+                    <Text
+                      style={[
+                        styles.cancelOrderBtnText,
+                        !canCancelThisOrder && styles.cancelOrderBtnTextDisabled,
+                      ]}
+                    >
+                      Cancel Order
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           {isHomemade && (
@@ -2689,7 +2975,11 @@ export default function MyOrdersScreen() {
               order.paymentCaptured === true;
             const dynamicChefName = order.chefName || order.restaurantName || "Partner Chef";
 
-            const displayBadgeStatus = isDeliveredState
+            const cancelledBadgeText = getCancellationBadgeLabel(order);
+
+            const displayBadgeStatus = cancelledBadgeText
+              ? cancelledBadgeText
+              : isDeliveredState
               ? (orderStatusString.toLowerCase() === "cash collected" ||
                  orderPaymentStatusString === "collected"
                   ? "Cash Collected"
@@ -2901,11 +3191,13 @@ export default function MyOrdersScreen() {
                         styles.floatingTopRightBadge,
                         isDeliveredState && styles.floatingBadgeDelivered,
                         orderStatusString.toLowerCase().includes('prep') && styles.floatingBadgePreparing,
+                        (orderStatusString.toLowerCase() === 'cancelled' || orderStatusString.toLowerCase() === 'canceled') && styles.floatingBadgeCancelled,
                       ]}>
                         <Text style={[
                           styles.floatingTopRightBadgeText,
                           isDeliveredState && styles.floatingBadgeTextDelivered,
                           orderStatusString.toLowerCase().includes('prep') && styles.floatingBadgeTextPreparing,
+                          (orderStatusString.toLowerCase() === 'cancelled' || orderStatusString.toLowerCase() === 'canceled') && styles.floatingBadgeTextCancelled,
                         ]}>
                           {displayBadgeStatus}
                         </Text>
@@ -3164,11 +3456,13 @@ export default function MyOrdersScreen() {
                         styles.floatingTopRightBadge,
                         isDeliveredState && styles.floatingBadgeDelivered,
                         orderStatusString.toLowerCase().includes('prep') && styles.floatingBadgePreparing,
+                        (orderStatusString.toLowerCase() === 'cancelled' || orderStatusString.toLowerCase() === 'canceled') && styles.floatingBadgeCancelled,
                       ]}>
                         <Text style={[
                           styles.floatingTopRightBadgeText,
                           isDeliveredState && styles.floatingBadgeTextDelivered,
                           orderStatusString.toLowerCase().includes('prep') && styles.floatingBadgeTextPreparing,
+                          (orderStatusString.toLowerCase() === 'cancelled' || orderStatusString.toLowerCase() === 'canceled') && styles.floatingBadgeTextCancelled,
                         ]}>
                           {displayBadgeStatus}
                         </Text>
@@ -4589,6 +4883,88 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
+  /* ✅ NEW — Cancellation info block inside Bill Summary */
+  cancellationInfoBlock: {
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 12,
+    gap: 6,
+  },
+  cancellationInfoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 2,
+  },
+  cancellationInfoLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#7F1D1D",
+  },
+  cancellationInfoValue: {
+    fontSize: 12.5,
+    fontWeight: "800",
+    color: "#991B1B",
+    textAlign: "right",
+    flexShrink: 1,
+    marginLeft: 12,
+  },
+  cancellationInfoStatusPill: {
+    backgroundColor: "#FEE2E2",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+  },
+  cancellationInfoStatusPillText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#991B1B",
+    letterSpacing: 0.2,
+  },
+
+  /* ✅ NEW — Cancel Order button (Bill Summary) */
+  cancelOrderBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#DC2626",
+    borderRadius: 14,
+    paddingVertical: 13,
+    marginTop: 14,
+    shadowColor: "#DC2626",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  cancelOrderBtnDisabled: {
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  cancelOrderBtnInnerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cancelOrderBtnText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    letterSpacing: 0.3,
+  },
+  cancelOrderBtnTextDisabled: {
+    color: "#94A3B8",
+  },
+
   feedbackCardContainer: {
     backgroundColor: "#F0FDF4",
     borderRadius: 18,
@@ -4797,6 +5173,13 @@ const styles = StyleSheet.create({
   },
   floatingBadgeTextDelivered: {
     color: "#15803D",
+  },
+  floatingBadgeCancelled: {
+    backgroundColor: "#FEF2F2",
+    borderColor: "#FCA5A5",
+  },
+  floatingBadgeTextCancelled: {
+    color: "#B91C1C",
   },
   dateTile: {
     width: 58,

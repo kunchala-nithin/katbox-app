@@ -15,18 +15,25 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import api from "@/src/lib/api";
 
+type MessageType = "join" | "newsletter";
 type JoinRole = "customer" | "chef";
 type MessageStatus = "new" | "read";
-type FilterKey = "all" | "new" | "customer" | "chef";
+
+type FilterKey =
+  | "all"
+  | "new"
+  | "customer"
+  | "chef"
+  | "newsletter";
 
 interface WebsiteMessage {
   _id: string;
-  type: "join";
-  role: JoinRole;
-  name: string;
+  type: MessageType;
+  role?: JoinRole;
+  name?: string;
   email: string;
-  phone: string;
-  city: string;
+  phone?: string;
+  city?: string;
   about?: string;
   source?: string;
   status: MessageStatus;
@@ -60,21 +67,33 @@ const T = {
   // Accents
   blue: "#60A5FA",
   blueSoft: "rgba(96, 165, 250, 0.14)",
+
   amber: "#FBBF24",
   amberSoft: "rgba(251, 191, 36, 0.14)",
+
   rose: "#FB7185",
   roseSoft: "rgba(251, 113, 133, 0.14)",
+
   emerald: "#34D399",
   emeraldSoft: "rgba(52, 211, 153, 0.14)",
+
+  purple: "#A78BFA",
+  purpleSoft: "rgba(167, 139, 250, 0.14)",
 } as const;
 
 /* ═══════════════════════════════════════════════════════════
    HELPERS
 ═══════════════════════════════════════════════════════════ */
+
 const formatDate = (value?: string) => {
   if (!value) return "";
+
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
   return date.toLocaleString("en-IN", {
     day: "2-digit",
     month: "short",
@@ -86,44 +105,137 @@ const formatDate = (value?: string) => {
 
 const formatRelative = (value?: string) => {
   if (!value) return "";
+
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
 
   const diffMs = Date.now() - date.getTime();
   const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m`;
+
+  if (mins < 1) {
+    return "just now";
+  }
+
+  if (mins < 60) {
+    return `${mins}m`;
+  }
+
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
+
+  if (hrs < 24) {
+    return `${hrs}h`;
+  }
+
   const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d`;
+
+  if (days < 7) {
+    return `${days}d`;
+  }
+
   return formatDate(value).split(",")[0];
 };
 
 const getRoleLabel = (message: WebsiteMessage) => {
-  return message.role === "chef" ? "Chef Partner" : "Customer";
+  if (message.type === "newsletter") {
+    return "Newsletter";
+  }
+
+  return message.role === "chef"
+    ? "Chef Partner"
+    : "Customer";
 };
 
 const getRoleIcon = (
   message: WebsiteMessage
 ): keyof typeof Ionicons.glyphMap => {
-  return message.role === "chef" ? "restaurant-outline" : "person-outline";
+  if (message.type === "newsletter") {
+    return "mail-outline";
+  }
+
+  return message.role === "chef"
+    ? "restaurant-outline"
+    : "person-outline";
 };
 
 const getAccent = (message: WebsiteMessage): string => {
-  return message.role === "chef" ? T.amber : T.blue;
+  if (message.type === "newsletter") {
+    return T.purple;
+  }
+
+  return message.role === "chef"
+    ? T.amber
+    : T.blue;
 };
 
 const getAccentSoft = (message: WebsiteMessage): string => {
-  return message.role === "chef" ? T.amberSoft : T.blueSoft;
+  if (message.type === "newsletter") {
+    return T.purpleSoft;
+  }
+
+  return message.role === "chef"
+    ? T.amberSoft
+    : T.blueSoft;
 };
 
 const getInitials = (name?: string) => {
-  if (!name) return "?";
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  if (!name) {
+    return "?";
+  }
+
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return "?";
+  }
+
+  if (parts.length === 1) {
+    return parts[0]
+      .slice(0, 2)
+      .toUpperCase();
+  }
+
+  return (
+    parts[0][0] +
+    parts[parts.length - 1][0]
+  ).toUpperCase();
+};
+
+const getMessageDisplayName = (message: WebsiteMessage) => {
+  if (message.type === "newsletter") {
+    return "Newsletter Subscriber";
+  }
+
+  return message.name?.trim() || "Unnamed";
+};
+
+const getMessagePreview = (message: WebsiteMessage) => {
+  if (message.type === "newsletter") {
+    return message.email || "Newsletter subscription";
+  }
+
+  if (message.about?.trim()) {
+    return message.about.trim();
+  }
+
+  if (message.email && message.phone) {
+    return `${message.email} • ${message.phone}`;
+  }
+
+  if (message.email) {
+    return message.email;
+  }
+
+  if (message.phone) {
+    return message.phone;
+  }
+
+  return "No additional information";
 };
 
 /* ═══════════════════════════════════════════════════════════
@@ -142,37 +254,56 @@ export default function AllMsgsScreen() {
   );
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
 
-  /* ── Load ── */
-  const loadMessages = useCallback(async (isRefresh = false) => {
-    try {
-      if (isRefresh) setRefreshing(true);
-      else setLoading(true);
+  /* ── Load messages ── */
+  const loadMessages = useCallback(
+    async (isRefresh = false) => {
+      try {
+        if (isRefresh) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
 
-      setError("");
+        setError("");
 
-      const response = await api.get("/api/messages/admin");
-      const data = response.data;
+        const response = await api.get(
+          "/api/messages/admin"
+        );
 
-      if (!data?.success) {
-        throw new Error(data?.message || "Failed to load messages");
+        const data = response.data;
+
+        if (!data?.success) {
+          throw new Error(
+            data?.message ||
+              "Failed to load messages"
+          );
+        }
+
+        setMessages(
+          Array.isArray(data.messages)
+            ? data.messages
+            : []
+        );
+      } catch (err: any) {
+        console.log(
+          "❌ Failed to load messages:",
+          err?.response?.data ||
+            err?.message ||
+            err
+        );
+
+        setError(
+          err?.response?.data?.message ||
+            err?.message ||
+            "Unable to load messages."
+        );
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-
-      setMessages(Array.isArray(data.messages) ? data.messages : []);
-    } catch (err: any) {
-      console.log(
-        "❌ Failed to load messages:",
-        err?.response?.data || err?.message || err
-      );
-      setError(
-        err?.response?.data?.message ||
-          err?.message ||
-          "Unable to load messages."
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -181,88 +312,182 @@ export default function AllMsgsScreen() {
   );
 
   /* ── Mark read ── */
-  const markAsRead = useCallback(async (message: WebsiteMessage) => {
-    if (message.status === "read") return;
+  const markAsRead = useCallback(
+    async (message: WebsiteMessage) => {
+      if (message.status === "read") {
+        return;
+      }
 
-    try {
-      await api.patch(`/api/messages/admin/${message._id}/read`);
-      setMessages((current) =>
-        current.map((item) =>
-          item._id === message._id ? { ...item, status: "read" } : item
-        )
-      );
-    } catch (err: any) {
-      console.log(
-        "❌ Failed to mark message as read:",
-        err?.response?.data || err?.message || err
-      );
-    }
-  }, []);
+      try {
+        await api.patch(
+          `/api/messages/admin/${message._id}/read`
+        );
+
+        setMessages((current) =>
+          current.map((item) =>
+            item._id === message._id
+              ? {
+                  ...item,
+                  status: "read",
+                }
+              : item
+          )
+        );
+      } catch (err: any) {
+        console.log(
+          "❌ Failed to mark message as read:",
+          err?.response?.data ||
+            err?.message ||
+            err
+        );
+      }
+    },
+    []
+  );
 
   /* ── Counts ── */
+
   const totalCount = messages.length;
+
   const newCount = useMemo(
-    () => messages.filter((m) => m.status === "new").length,
-    [messages]
-  );
-  const customerCount = useMemo(
-    () => messages.filter((m) => m.role === "customer").length,
-    [messages]
-  );
-  const chefCount = useMemo(
-    () => messages.filter((m) => m.role === "chef").length,
+    () =>
+      messages.filter(
+        (message) =>
+          message.status === "new"
+      ).length,
     [messages]
   );
 
+  const customerCount = useMemo(
+    () =>
+      messages.filter(
+        (message) =>
+          message.type === "join" &&
+          message.role === "customer"
+      ).length,
+    [messages]
+  );
+
+  const chefCount = useMemo(
+    () =>
+      messages.filter(
+        (message) =>
+          message.type === "join" &&
+          message.role === "chef"
+      ).length,
+    [messages]
+  );
+
+  const newsletterCount = useMemo(
+    () =>
+      messages.filter(
+        (message) =>
+          message.type === "newsletter"
+      ).length,
+    [messages]
+  );
+
+  /* ── Filter + Search ── */
   const filteredMessages = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = search
+      .trim()
+      .toLowerCase();
 
     let base = messages;
-    if (activeFilter === "new") base = base.filter((m) => m.status === "new");
-    else if (activeFilter === "customer")
-      base = base.filter((m) => m.role === "customer");
-    else if (activeFilter === "chef")
-      base = base.filter((m) => m.role === "chef");
 
-    if (!query) return base;
+    if (activeFilter === "new") {
+      base = base.filter(
+        (message) =>
+          message.status === "new"
+      );
+    } else if (
+      activeFilter === "customer"
+    ) {
+      base = base.filter(
+        (message) =>
+          message.type === "join" &&
+          message.role === "customer"
+      );
+    } else if (activeFilter === "chef") {
+      base = base.filter(
+        (message) =>
+          message.type === "join" &&
+          message.role === "chef"
+      );
+    } else if (
+      activeFilter === "newsletter"
+    ) {
+      base = base.filter(
+        (message) =>
+          message.type === "newsletter"
+      );
+    }
+
+    if (!query) {
+      return base;
+    }
 
     return base.filter((message) => {
       const haystack = [
+        message.type,
+        message.role,
         message.name,
         message.email,
         message.phone,
         message.city,
         message.about,
-        message.role,
+        message.source,
         message.status,
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
+
       return haystack.includes(query);
     });
-  }, [messages, search, activeFilter]);
+  }, [
+    messages,
+    search,
+    activeFilter,
+  ]);
 
   /* ── Toggle expanded ── */
   const toggleExpanded = useCallback(
     (message: WebsiteMessage) => {
       setSelectedMessageId((current) =>
-        current === message._id ? null : message._id
+        current === message._id
+          ? null
+          : message._id
       );
-      if (message.status === "new") markAsRead(message);
+
+      if (message.status === "new") {
+        markAsRead(message);
+      }
     },
     [markAsRead]
   );
 
   /* ── Loading state ── */
-  if (loading && messages.length === 0) {
+  if (
+    loading &&
+    messages.length === 0
+  ) {
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView
+        style={styles.safeArea}
+      >
         <View style={styles.center}>
           <View style={styles.loaderRing}>
-            <ActivityIndicator size="large" color={T.blue} />
+            <ActivityIndicator
+              size="large"
+              color={T.blue}
+            />
           </View>
-          <Text style={styles.loadingText}>Loading messages…</Text>
+
+          <Text style={styles.loadingText}>
+            Loading messages…
+          </Text>
+
           <Text style={styles.loadingHint}>
             Fetching the latest from the website
           </Text>
@@ -272,24 +497,51 @@ export default function AllMsgsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView
+      style={styles.safeArea}
+    >
       <View
         style={[
           styles.container,
-          { paddingTop: insets.top > 0 ? 6 : 12 },
+          {
+            paddingTop:
+              insets.top > 0
+                ? 6
+                : 12,
+          },
         ]}
       >
         {/* ═══════════════ HEADER ═══════════════ */}
+
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <View style={styles.headerIconWrap}>
-              <Ionicons name="chatbubbles" size={20} color={T.blue} />
+            <View
+              style={styles.headerIconWrap}
+            >
+              <Ionicons
+                name="chatbubbles"
+                size={20}
+                color={T.blue}
+              />
             </View>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.headerTitle} numberOfLines={1}>
+
+            <View
+              style={{
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              <Text
+                style={styles.headerTitle}
+                numberOfLines={1}
+              >
                 Messages
               </Text>
-              <Text style={styles.headerSubtitle} numberOfLines={1}>
+
+              <Text
+                style={styles.headerSubtitle}
+                numberOfLines={1}
+              >
                 {newCount > 0
                   ? `${newCount} new · ${totalCount} total`
                   : `${totalCount} total submissions`}
@@ -298,27 +550,42 @@ export default function AllMsgsScreen() {
           </View>
 
           <Pressable
-            onPress={() => loadMessages(true)}
+            onPress={() =>
+              loadMessages(true)
+            }
             disabled={refreshing}
             style={({ pressed }) => [
               styles.iconBtn,
-              pressed && styles.pressed,
+              pressed &&
+                styles.pressed,
             ]}
             hitSlop={6}
           >
             {refreshing ? (
-              <ActivityIndicator size="small" color={T.blue} />
+              <ActivityIndicator
+                size="small"
+                color={T.blue}
+              />
             ) : (
-              <Ionicons name="refresh" size={17} color={T.blue} />
+              <Ionicons
+                name="refresh"
+                size={17}
+                color={T.blue}
+              />
             )}
           </Pressable>
         </View>
 
         {/* ═══════════════ STATS ═══════════════ */}
+
         <ScrollView
           horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.statsScroll}
+          showsHorizontalScrollIndicator={
+            false
+          }
+          contentContainerStyle={
+            styles.statsScroll
+          }
         >
           <StatCard
             icon="layers"
@@ -326,159 +593,305 @@ export default function AllMsgsScreen() {
             value={totalCount}
             accent={T.blue}
           />
+
           <StatCard
             icon="sparkles"
             label="New"
             value={newCount}
             accent={T.rose}
           />
+
           <StatCard
             icon="person"
             label="Customers"
             value={customerCount}
             accent={T.emerald}
           />
+
           <StatCard
             icon="restaurant"
             label="Chefs"
             value={chefCount}
             accent={T.amber}
           />
+
+          <StatCard
+            icon="mail"
+            label="Newsletter"
+            value={newsletterCount}
+            accent={T.purple}
+          />
         </ScrollView>
 
         {/* ═══════════════ SEARCH ═══════════════ */}
+
         <View style={styles.searchWrap}>
           <Ionicons
             name="search"
             size={16}
             color={T.textFaint}
-            style={{ marginLeft: 2 }}
+            style={{
+              marginLeft: 2,
+            }}
           />
+
           <TextInput
             value={search}
             onChangeText={setSearch}
             placeholder="Search name, email, phone, city…"
-            placeholderTextColor={T.textFaint}
+            placeholderTextColor={
+              T.textFaint
+            }
             autoCapitalize="none"
             style={styles.searchInput}
           />
+
           {search.length > 0 && (
             <Pressable
-              onPress={() => setSearch("")}
+              onPress={() =>
+                setSearch("")
+              }
               hitSlop={8}
               style={styles.clearBtn}
             >
-              <Ionicons name="close-circle" size={16} color={T.textFaint} />
+              <Ionicons
+                name="close-circle"
+                size={16}
+                color={T.textFaint}
+              />
             </Pressable>
           )}
         </View>
 
         {/* ═══════════════ FILTER PILLS ═══════════════ */}
+
         <ScrollView
           horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filtersScroll}
+          showsHorizontalScrollIndicator={
+            false
+          }
+          contentContainerStyle={
+            styles.filtersScroll
+          }
         >
           <FilterPill
             label="All"
             count={totalCount}
-            active={activeFilter === "all"}
-            onPress={() => setActiveFilter("all")}
+            active={
+              activeFilter === "all"
+            }
+            onPress={() =>
+              setActiveFilter("all")
+            }
             accent={T.blue}
           />
+
           <FilterPill
             label="Unread"
             count={newCount}
-            active={activeFilter === "new"}
-            onPress={() => setActiveFilter("new")}
+            active={
+              activeFilter === "new"
+            }
+            onPress={() =>
+              setActiveFilter("new")
+            }
             accent={T.rose}
           />
+
           <FilterPill
             label="Customers"
             count={customerCount}
-            active={activeFilter === "customer"}
-            onPress={() => setActiveFilter("customer")}
+            active={
+              activeFilter ===
+              "customer"
+            }
+            onPress={() =>
+              setActiveFilter(
+                "customer"
+              )
+            }
             accent={T.emerald}
           />
+
           <FilterPill
             label="Chefs"
             count={chefCount}
-            active={activeFilter === "chef"}
-            onPress={() => setActiveFilter("chef")}
+            active={
+              activeFilter === "chef"
+            }
+            onPress={() =>
+              setActiveFilter("chef")
+            }
             accent={T.amber}
+          />
+
+          <FilterPill
+            label="Newsletter"
+            count={newsletterCount}
+            active={
+              activeFilter ===
+              "newsletter"
+            }
+            onPress={() =>
+              setActiveFilter(
+                "newsletter"
+              )
+            }
+            accent={T.purple}
           />
         </ScrollView>
 
         {/* ═══════════════ ERROR ═══════════════ */}
+
         {error ? (
           <View style={styles.errorBox}>
-            <View style={styles.errorIconWrap}>
-              <Ionicons name="alert-circle" size={16} color={T.rose} />
+            <View
+              style={styles.errorIconWrap}
+            >
+              <Ionicons
+                name="alert-circle"
+                size={16}
+                color={T.rose}
+              />
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.errorTitle}>Couldn’t load messages</Text>
-              <Text style={styles.errorText} numberOfLines={3}>
+
+            <View
+              style={{
+                flex: 1,
+              }}
+            >
+              <Text
+                style={styles.errorTitle}
+              >
+                Couldn’t load messages
+              </Text>
+
+              <Text
+                style={styles.errorText}
+                numberOfLines={3}
+              >
                 {error}
               </Text>
+
               <Pressable
-                onPress={() => loadMessages()}
+                onPress={() =>
+                  loadMessages()
+                }
                 style={({ pressed }) => [
                   styles.retryButton,
-                  pressed && styles.pressed,
+                  pressed &&
+                    styles.pressed,
                 ]}
               >
-                <Ionicons name="refresh" size={12} color={T.rose} />
-                <Text style={styles.retryText}>Try again</Text>
+                <Ionicons
+                  name="refresh"
+                  size={12}
+                  color={T.rose}
+                />
+
+                <Text
+                  style={styles.retryText}
+                >
+                  Try again
+                </Text>
               </Pressable>
             </View>
           </View>
         ) : null}
 
         {/* ═══════════════ LIST ═══════════════ */}
+
         <FlatList
           data={filteredMessages}
-          keyExtractor={(item) => String(item._id)}
+          keyExtractor={(item) =>
+            String(item._id)
+          }
           renderItem={({ item }) => (
             <MessageCard
               item={item}
-              expanded={selectedMessageId === item._id}
-              onToggle={() => toggleExpanded(item)}
+              expanded={
+                selectedMessageId ===
+                item._id
+              }
+              onToggle={() =>
+                toggleExpanded(item)
+              }
             />
           )}
-          showsVerticalScrollIndicator={false}
-          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          showsVerticalScrollIndicator={
+            false
+          }
+          ItemSeparatorComponent={() => (
+            <View
+              style={{
+                height: 10,
+              }}
+            />
+          )}
           contentContainerStyle={
             filteredMessages.length === 0
-              ? [styles.emptyContent, { paddingBottom: 140 + insets.bottom }]
-              : [styles.listContent, { paddingBottom: 140 + insets.bottom }]
+              ? [
+                  styles.emptyContent,
+                  {
+                    paddingBottom:
+                      140 +
+                      insets.bottom,
+                  },
+                ]
+              : [
+                  styles.listContent,
+                  {
+                    paddingBottom:
+                      140 +
+                      insets.bottom,
+                  },
+                ]
           }
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => loadMessages(true)}
+              onRefresh={() =>
+                loadMessages(true)
+              }
               tintColor={T.blue}
               colors={[T.blue]}
-              progressBackgroundColor={T.surfaceElevated}
+              progressBackgroundColor={
+                T.surfaceElevated
+              }
             />
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <View style={styles.emptyIconWrap}>
+              <View
+                style={
+                  styles.emptyIconWrap
+                }
+              >
                 <Ionicons
                   name="chatbubble-ellipses-outline"
                   size={30}
                   color={T.blue}
                 />
               </View>
-              <Text style={styles.emptyTitle}>
-                {search || activeFilter !== "all"
+
+              <Text
+                style={styles.emptyTitle}
+              >
+                {search ||
+                activeFilter !==
+                  "all"
                   ? "No matches found"
                   : "No messages yet"}
               </Text>
-              <Text style={styles.emptyText}>
-                {search || activeFilter !== "all"
+
+              <Text
+                style={styles.emptyText}
+              >
+                {search ||
+                activeFilter !==
+                  "all"
                   ? "Try a different keyword or clear the filter."
-                  : "Website submissions will appear here after a customer or chef fills the Join form."}
+                  : "Website submissions will appear here after a customer, chef or newsletter subscriber submits the website form."}
               </Text>
             </View>
           }
@@ -491,6 +904,7 @@ export default function AllMsgsScreen() {
 /* ═══════════════════════════════════════════════════════════
    STAT CARD
 ═══════════════════════════════════════════════════════════ */
+
 function StatCard({
   icon,
   label,
@@ -504,19 +918,46 @@ function StatCard({
 }) {
   return (
     <View style={styles.statCard}>
-      <View style={[styles.statAccent, { backgroundColor: accent }]} />
-      <View style={styles.statTopRow}>
+      <View
+        style={[
+          styles.statAccent,
+          {
+            backgroundColor: accent,
+          },
+        ]}
+      />
+
+      <View
+        style={styles.statTopRow}
+      >
         <View
           style={[
             styles.statIconWrap,
-            { backgroundColor: accent + "1F" },
+            {
+              backgroundColor:
+                accent + "1F",
+            },
           ]}
         >
-          <Ionicons name={icon} size={13} color={accent} />
+          <Ionicons
+            name={icon}
+            size={13}
+            color={accent}
+          />
         </View>
-        <Text style={styles.statLabel}>{label}</Text>
+
+        <Text
+          style={styles.statLabel}
+        >
+          {label}
+        </Text>
       </View>
-      <Text style={styles.statNumber}>{value}</Text>
+
+      <Text
+        style={styles.statNumber}
+      >
+        {value}
+      </Text>
     </View>
   );
 }
@@ -524,6 +965,7 @@ function StatCard({
 /* ═══════════════════════════════════════════════════════════
    FILTER PILL
 ═══════════════════════════════════════════════════════════ */
+
 function FilterPill({
   label,
   count,
@@ -543,30 +985,43 @@ function FilterPill({
       style={({ pressed }) => [
         styles.filterPill,
         active && {
-          backgroundColor: accent + "1C",
-          borderColor: accent + "66",
+          backgroundColor:
+            accent + "1C",
+          borderColor:
+            accent + "66",
         },
-        pressed && styles.pressed,
+        pressed &&
+          styles.pressed,
       ]}
     >
       <Text
         style={[
           styles.filterPillText,
-          active && { color: accent, fontWeight: "800" },
+          active && {
+            color: accent,
+            fontWeight: "800",
+          },
         ]}
       >
         {label}
       </Text>
+
       <View
         style={[
           styles.filterCount,
-          active && { backgroundColor: accent + "2E" },
+          active && {
+            backgroundColor:
+              accent + "2E",
+          },
         ]}
       >
         <Text
           style={[
             styles.filterCountText,
-            active && { color: accent, fontWeight: "900" },
+            active && {
+              color: accent,
+              fontWeight: "900",
+            },
           ]}
         >
           {count}
@@ -579,6 +1034,7 @@ function FilterPill({
 /* ═══════════════════════════════════════════════════════════
    MESSAGE CARD — chat-style row
 ═══════════════════════════════════════════════════════════ */
+
 function MessageCard({
   item,
   expanded,
@@ -588,179 +1044,223 @@ function MessageCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const isNew = item.status === "new";
-  const accent = getAccent(item);
-  const accentSoft = getAccentSoft(item);
+  const isNew =
+    item.status === "new";
+
+  const accent =
+    getAccent(item);
+
+  const accentSoft =
+    getAccentSoft(item);
+
+  const displayName =
+    getMessageDisplayName(item);
+
+  const initials =
+    item.type === "newsletter"
+      ? "NL"
+      : getInitials(item.name);
 
   return (
     <View
       style={[
         styles.card,
-        isNew && styles.cardUnread,
-        isNew && { borderColor: accent + "33" },
+        isNew &&
+          styles.cardUnread,
+        isNew && {
+          borderColor:
+            accent + "33",
+        },
       ]}
     >
       <Pressable
         onPress={onToggle}
         style={({ pressed }) => [
           styles.cardHeader,
-          pressed && styles.pressed,
+          pressed &&
+            styles.pressed,
         ]}
       >
-        {/* Avatar with initials */}
+        {/* Avatar */}
+
         <View
           style={[
             styles.avatarBubble,
             {
-              backgroundColor: accentSoft,
-              borderColor: accent + "44",
+              backgroundColor:
+                accentSoft,
+              borderColor:
+                accent + "44",
             },
           ]}
         >
-          <Text style={[styles.avatarText, { color: accent }]}>
-            {getInitials(item.name)}
+          <Text
+            style={[
+              styles.avatarText,
+              {
+                color: accent,
+              },
+            ]}
+          >
+            {initials}
           </Text>
+
           {isNew && (
             <View
               style={[
                 styles.avatarDot,
-                { backgroundColor: accent },
+                {
+                  backgroundColor:
+                    accent,
+                },
               ]}
             />
           )}
         </View>
 
         {/* Body */}
+
         <View style={styles.cardBody}>
-          <View style={styles.titleRow}>
+          <View
+            style={styles.titleRow}
+          >
             <Text
-              style={[styles.name, isNew && styles.nameUnread]}
+              style={[
+                styles.name,
+                isNew &&
+                  styles.nameUnread,
+              ]}
               numberOfLines={1}
             >
-              {item.name || "Unnamed"}
+              {displayName}
             </Text>
 
-            <Text style={styles.timeText} numberOfLines={1}>
-              {formatRelative(item.createdAt)}
+            <Text
+              style={styles.timeText}
+              numberOfLines={1}
+            >
+              {formatRelative(
+                item.createdAt
+              )}
             </Text>
           </View>
 
-          <View style={styles.previewRow}>
+          <View
+            style={styles.previewRow}
+          >
             <View
               style={[
                 styles.roleChip,
                 {
-                  backgroundColor: accentSoft,
-                  borderColor: accent + "44",
+                  backgroundColor:
+                    accentSoft,
+                  borderColor:
+                    accent + "44",
                 },
               ]}
             >
               <Ionicons
-                name={getRoleIcon(item)}
+                name={getRoleIcon(
+                  item
+                )}
                 size={9}
                 color={accent}
               />
-              <Text style={[styles.roleChipText, { color: accent }]}>
-                {getRoleLabel(item)}
+
+              <Text
+                style={[
+                  styles.roleChipText,
+                  {
+                    color: accent,
+                  },
+                ]}
+              >
+                {getRoleLabel(
+                  item
+                )}
               </Text>
             </View>
 
-            {item.city ? (
-              <View style={styles.cityChip}>
+            {item.type ===
+              "join" &&
+            item.city ? (
+              <View
+                style={
+                  styles.cityChip
+                }
+              >
                 <Ionicons
                   name="location"
                   size={10}
-                  color={T.textFaint}
+                  color={
+                    T.textFaint
+                  }
                 />
-                <Text style={styles.cityChipText} numberOfLines={1}>
+
+                <Text
+                  style={
+                    styles.cityChipText
+                  }
+                  numberOfLines={1}
+                >
                   {item.city}
                 </Text>
               </View>
             ) : null}
           </View>
 
-          {/* Chat-style preview */}
+          {/* Preview */}
+
           <Text
             style={[
               styles.previewText,
-              isNew && styles.previewTextUnread,
+              isNew &&
+                styles.previewTextUnread,
             ]}
             numberOfLines={1}
           >
-            {item.about?.trim()
-              ? item.about.trim()
-              : `${item.email} • ${item.phone}`}
+            {getMessagePreview(
+              item
+            )}
           </Text>
         </View>
 
         {/* Chevron */}
-        <View style={styles.chevronSlot}>
+
+        <View
+          style={styles.chevronSlot}
+        >
           <Ionicons
-            name={expanded ? "chevron-up" : "chevron-down"}
+            name={
+              expanded
+                ? "chevron-up"
+                : "chevron-down"
+            }
             size={16}
-            color={T.textMuted}
+            color={
+              T.textMuted
+            }
           />
         </View>
       </Pressable>
 
       {expanded && (
         <View style={styles.details}>
-          <View style={styles.divider} />
+          <View
+            style={styles.divider}
+          />
 
-          <View style={styles.detailGrid}>
-            <DetailCell
-              label="Name"
-              value={item.name}
-              icon="person-outline"
+          {item.type ===
+          "newsletter" ? (
+            <NewsletterDetails
+              item={item}
+              accent={accent}
             />
-            <DetailCell
-              label="Email"
-              value={item.email}
-              icon="mail-outline"
+          ) : (
+            <JoinDetails
+              item={item}
             />
-            <DetailCell
-              label="Phone"
-              value={item.phone}
-              icon="call-outline"
-            />
-            <DetailCell
-              label="City"
-              value={item.city}
-              icon="location-outline"
-            />
-            <DetailCell
-              label="Role"
-              value={getRoleLabel(item)}
-              icon={getRoleIcon(item)}
-            />
-            <DetailCell
-              label="Status"
-              value={item.status}
-              icon="checkmark-circle-outline"
-            />
-            <DetailCell
-              label="Submitted"
-              value={formatDate(item.createdAt)}
-              icon="time-outline"
-              wide
-            />
-          </View>
-
-          {item.about ? (
-            <View style={styles.aboutBlock}>
-              <View style={styles.aboutHeader}>
-                <Ionicons
-                  name="chatbubble-ellipses-outline"
-                  size={12}
-                  color={accent}
-                />
-                <Text style={[styles.aboutLabel, { color: accent }]}>
-                  Notes from sender
-                </Text>
-              </View>
-              <Text style={styles.aboutText}>{item.about}</Text>
-            </View>
-          ) : null}
+          )}
         </View>
       )}
     </View>
@@ -768,8 +1268,256 @@ function MessageCard({
 }
 
 /* ═══════════════════════════════════════════════════════════
+   JOIN DETAILS
+═══════════════════════════════════════════════════════════ */
+
+function JoinDetails({
+  item,
+}: {
+  item: WebsiteMessage;
+}) {
+  const accent =
+    getAccent(item);
+
+  return (
+    <>
+      <View
+        style={styles.detailGrid}
+      >
+        <DetailCell
+          label="Name"
+          value={
+            item.name ||
+            "Not provided"
+          }
+          icon="person-outline"
+        />
+
+        <DetailCell
+          label="Email"
+          value={
+            item.email ||
+            "Not provided"
+          }
+          icon="mail-outline"
+        />
+
+        <DetailCell
+          label="Phone"
+          value={
+            item.phone ||
+            "Not provided"
+          }
+          icon="call-outline"
+        />
+
+        <DetailCell
+          label="City"
+          value={
+            item.city ||
+            "Not provided"
+          }
+          icon="location-outline"
+        />
+
+        <DetailCell
+          label="Role"
+          value={getRoleLabel(
+            item
+          )}
+          icon={getRoleIcon(
+            item
+          )}
+        />
+
+        <DetailCell
+          label="Status"
+          value={
+            item.status
+          }
+          icon="checkmark-circle-outline"
+        />
+
+        <DetailCell
+          label="Submitted"
+          value={
+            formatDate(
+              item.createdAt
+            ) ||
+            "Unknown"
+          }
+          icon="time-outline"
+          wide
+        />
+
+        {item.source ? (
+          <DetailCell
+            label="Source"
+            value={
+              item.source
+            }
+            icon="globe-outline"
+            wide
+          />
+        ) : null}
+      </View>
+
+      {item.about ? (
+        <View
+          style={styles.aboutBlock}
+        >
+          <View
+            style={
+              styles.aboutHeader
+            }
+          >
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={12}
+              color={accent}
+            />
+
+            <Text
+              style={[
+                styles.aboutLabel,
+                {
+                  color: accent,
+                },
+              ]}
+            >
+              Notes from sender
+            </Text>
+          </View>
+
+          <Text
+            style={styles.aboutText}
+          >
+            {item.about}
+          </Text>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NEWSLETTER DETAILS
+═══════════════════════════════════════════════════════════ */
+
+function NewsletterDetails({
+  item,
+  accent,
+}: {
+  item: WebsiteMessage;
+  accent: string;
+}) {
+  return (
+    <>
+      <View
+        style={[
+          styles.newsletterBanner,
+          {
+            backgroundColor:
+              T.purpleSoft,
+            borderColor:
+              accent + "33",
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.newsletterIconWrap,
+            {
+              backgroundColor:
+                accent + "22",
+            },
+          ]}
+        >
+          <Ionicons
+            name="mail"
+            size={18}
+            color={accent}
+          />
+        </View>
+
+        <View
+          style={{
+            flex: 1,
+          }}
+        >
+          <Text
+            style={[
+              styles.newsletterTitle,
+              {
+                color: accent,
+              },
+            ]}
+          >
+            Newsletter Subscriber
+          </Text>
+
+          <Text
+            style={
+              styles.newsletterSubtitle
+            }
+          >
+            This person subscribed
+            through the Katbox website.
+          </Text>
+        </View>
+      </View>
+
+      <View
+        style={styles.detailGrid}
+      >
+        <DetailCell
+          label="Email"
+          value={
+            item.email ||
+            "Not provided"
+          }
+          icon="mail-outline"
+          wide
+        />
+
+        <DetailCell
+          label="Status"
+          value={
+            item.status
+          }
+          icon="checkmark-circle-outline"
+        />
+
+        <DetailCell
+          label="Submitted"
+          value={
+            formatDate(
+              item.createdAt
+            ) ||
+            "Unknown"
+          }
+          icon="time-outline"
+        />
+
+        {item.source ? (
+          <DetailCell
+            label="Source"
+            value={
+              item.source
+            }
+            icon="globe-outline"
+            wide
+          />
+        ) : null}
+      </View>
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
    DETAIL CELL
 ═══════════════════════════════════════════════════════════ */
+
 function DetailCell({
   label,
   value,
@@ -782,12 +1530,39 @@ function DetailCell({
   wide?: boolean;
 }) {
   return (
-    <View style={[styles.detailCell, wide && styles.detailCellWide]}>
-      <View style={styles.detailLabelRow}>
-        <Ionicons name={icon} size={10} color={T.textFaint} />
-        <Text style={styles.detailLabel}>{label}</Text>
+    <View
+      style={[
+        styles.detailCell,
+        wide &&
+          styles.detailCellWide,
+      ]}
+    >
+      <View
+        style={
+          styles.detailLabelRow
+        }
+      >
+        <Ionicons
+          name={icon}
+          size={10}
+          color={T.textFaint}
+        />
+
+        <Text
+          style={
+            styles.detailLabel
+          }
+        >
+          {label}
+        </Text>
       </View>
-      <Text style={styles.detailValue} numberOfLines={3}>
+
+      <Text
+        style={
+          styles.detailValue
+        }
+        numberOfLines={3}
+      >
         {value}
       </Text>
     </View>
@@ -797,6 +1572,7 @@ function DetailCell({
 /* ═══════════════════════════════════════════════════════════
    STYLES
 ═══════════════════════════════════════════════════════════ */
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -809,6 +1585,7 @@ const styles = StyleSheet.create({
   },
 
   /* ── Header ── */
+
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -832,7 +1609,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: T.blueSoft,
     borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.35)",
+    borderColor:
+      "rgba(96, 165, 250, 0.35)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -858,12 +1636,15 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: T.surfaceGlass,
+    backgroundColor:
+      T.surfaceGlass,
     borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.22)",
+    borderColor:
+      "rgba(96, 165, 250, 0.22)",
   },
 
   /* ── Stats ── */
+
   statsScroll: {
     gap: 10,
     paddingRight: 4,
@@ -921,6 +1702,7 @@ const styles = StyleSheet.create({
   },
 
   /* ── Search ── */
+
   searchWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -947,6 +1729,7 @@ const styles = StyleSheet.create({
   },
 
   /* ── Filters ── */
+
   filtersScroll: {
     gap: 8,
     paddingBottom: 14,
@@ -978,7 +1761,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 999,
-    backgroundColor: "rgba(148, 163, 184, 0.15)",
+    backgroundColor:
+      "rgba(148, 163, 184, 0.15)",
     alignItems: "center",
     justifyContent: "center",
     marginLeft: 2,
@@ -991,6 +1775,7 @@ const styles = StyleSheet.create({
   },
 
   /* ── List containers ── */
+
   listContent: {
     paddingTop: 2,
   },
@@ -1001,6 +1786,7 @@ const styles = StyleSheet.create({
   },
 
   /* ── Card ── */
+
   card: {
     borderRadius: 18,
     backgroundColor: T.surface,
@@ -1010,7 +1796,8 @@ const styles = StyleSheet.create({
   },
 
   cardUnread: {
-    backgroundColor: T.surfaceElevated,
+    backgroundColor:
+      T.surfaceElevated,
   },
 
   cardHeader: {
@@ -1050,7 +1837,8 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     borderWidth: 2,
-    borderColor: T.surfaceElevated,
+    borderColor:
+      T.surfaceElevated,
   },
 
   cardBody: {
@@ -1062,7 +1850,8 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     gap: 8,
   },
 
@@ -1106,7 +1895,8 @@ const styles = StyleSheet.create({
     fontSize: 9.5,
     fontWeight: "800",
     letterSpacing: 0.4,
-    textTransform: "uppercase",
+    textTransform:
+      "uppercase",
   },
 
   cityChip: {
@@ -1146,6 +1936,7 @@ const styles = StyleSheet.create({
   },
 
   /* ── Expanded details ── */
+
   details: {
     paddingHorizontal: 14,
     paddingBottom: 16,
@@ -1153,7 +1944,8 @@ const styles = StyleSheet.create({
 
   divider: {
     height: 1,
-    backgroundColor: T.divider,
+    backgroundColor:
+      T.divider,
     marginBottom: 14,
   },
 
@@ -1183,7 +1975,8 @@ const styles = StyleSheet.create({
   detailLabel: {
     fontSize: 9.5,
     fontWeight: "800",
-    textTransform: "uppercase",
+    textTransform:
+      "uppercase",
     letterSpacing: 0.7,
     color: T.textFaint,
   },
@@ -1195,11 +1988,14 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
+  /* ── About ── */
+
   aboutBlock: {
     marginTop: 14,
     paddingTop: 14,
     borderTopWidth: 1,
-    borderTopColor: T.divider,
+    borderTopColor:
+      T.divider,
   },
 
   aboutHeader: {
@@ -1212,7 +2008,8 @@ const styles = StyleSheet.create({
   aboutLabel: {
     fontSize: 9.5,
     fontWeight: "800",
-    textTransform: "uppercase",
+    textTransform:
+      "uppercase",
     letterSpacing: 0.7,
   },
 
@@ -1223,23 +2020,60 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
 
+  /* ── Newsletter ── */
+
+  newsletterBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+
+  newsletterIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  newsletterTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    marginBottom: 3,
+  },
+
+  newsletterSubtitle: {
+    fontSize: 11.5,
+    lineHeight: 17,
+    color: T.textMuted,
+    fontWeight: "500",
+  },
+
   /* ── Error ── */
+
   errorBox: {
     flexDirection: "row",
     gap: 10,
     marginBottom: 12,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: "rgba(127, 29, 29, 0.3)",
+    backgroundColor:
+      "rgba(127, 29, 29, 0.3)",
     borderWidth: 1,
-    borderColor: "rgba(251, 113, 133, 0.35)",
+    borderColor:
+      "rgba(251, 113, 133, 0.35)",
   },
 
   errorIconWrap: {
     width: 28,
     height: 28,
     borderRadius: 10,
-    backgroundColor: "rgba(251, 113, 133, 0.15)",
+    backgroundColor:
+      "rgba(251, 113, 133, 0.15)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1268,9 +2102,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 10,
-    backgroundColor: "rgba(15, 23, 42, 0.7)",
+    backgroundColor:
+      "rgba(15, 23, 42, 0.7)",
     borderWidth: 1,
-    borderColor: "rgba(251, 113, 133, 0.4)",
+    borderColor:
+      "rgba(251, 113, 133, 0.4)",
   },
 
   retryText: {
@@ -1281,6 +2117,7 @@ const styles = StyleSheet.create({
   },
 
   /* ── Empty ── */
+
   emptyState: {
     alignItems: "center",
     paddingHorizontal: 24,
@@ -1292,7 +2129,8 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: T.blueSoft,
     borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.3)",
+    borderColor:
+      "rgba(96, 165, 250, 0.3)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
@@ -1317,6 +2155,7 @@ const styles = StyleSheet.create({
   },
 
   /* ── Loading ── */
+
   center: {
     flex: 1,
     alignItems: "center",
@@ -1330,7 +2169,8 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     backgroundColor: T.blueSoft,
     borderWidth: 1,
-    borderColor: "rgba(96, 165, 250, 0.28)",
+    borderColor:
+      "rgba(96, 165, 250, 0.28)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
