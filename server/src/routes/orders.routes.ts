@@ -14,8 +14,14 @@ import {
   extendOrderTimer,
   submitOrderFeedback,
   verifyAdvancePayment,
-  // ✅ NEW — Customer-initiated cancellation endpoint
+  // ✅ Customer-initiated cancellation endpoint
   cancelOrderByCustomer,
+  // ✅ NEW — Admin-only refund processor.
+  //    Sets refundStatus = "Refunded" and refundedAt = now for a
+  //    cancelled order whose refundAmount > 0. The customer's Bill
+  //    Summary then flips from "Refund initiated — 3–4 hrs" to
+  //    "Advance amount refunded".
+  processRefund,
 } from "../controllers/orders.controller";
 import { protect } from "../middleware/auth.middleware";
 
@@ -28,14 +34,23 @@ router.get("/chef-orders", protect, getChefOrders);
 router.get("/all", protect, getAllOrders);
 router.get("/admin/orders", protect, getAllOrders);
 
-// ✅ NEW — Customer-initiated cancellation.
+// ✅ Customer-initiated cancellation.
 //    • Ownership + status checks live inside the controller
 //      (atomic findOneAndUpdate guarded by orderStatus: "Placed").
 //    • Returns 200 with the updated order on success.
-//    • Returns 400 with "Preparation has started, so cancellation is
-//      not possible." when the order is already `Preparing`.
+//    • Returns 400 with the professional "Cancellation and refund is not
+//      possible. Please contact support." message when the order is
+//      already Accepted / Preparing / anything beyond.
 //    • Returns 403 / 404 / 409 for ownership / missing / race-loss cases.
 router.patch("/:orderId/cancel", protect, cancelOrderByCustomer);
+
+// ✅ NEW — Admin-only refund processor.
+//    • Caller must have isAdmin === true (verified inside the controller).
+//    • Only valid for a cancelled order whose refundAmount > 0 and whose
+//      refundStatus is not already "Refunded".
+//    • On success: refundStatus = "Refunded", refundedAt = now.
+//    • Idempotent: returns 200 with the current state if already refunded.
+router.patch("/:orderId/refund", protect, processRefund);
 
 router.patch("/:orderId/status", protect, updateOrderStatus);
 router.patch("/:orderId/schedule-status", protect, updateScheduleStatus);

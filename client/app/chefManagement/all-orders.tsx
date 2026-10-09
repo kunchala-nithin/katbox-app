@@ -491,6 +491,29 @@ const getCancellationBadgeLabel = (order: any): string | null => {
   return null;
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Has the admin already processed the refund?
+   ───────────────────────────────────────────────────────────────── */
+const isRefundProcessed = (order: any): boolean => {
+  if (!order) return false;
+  return String(order.refundStatus || '').trim().toLowerCase() === 'refunded';
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Friendly short status for the refund.
+   ───────────────────────────────────────────────────────────────── */
+const formatRefundStatusShort = (order: any): string => {
+  if (!order) return '';
+  const raw = String(order.refundStatus || '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  if (lower === 'refunded') return 'Advance amount refunded';
+  if (lower.includes('initiated')) return 'Refund initiated — 3–4 hrs';
+  if (lower.includes('not applicable')) return raw;
+  if (lower.includes('pending review')) return 'Refund pending review';
+  return raw;
+};
+
 // ─── DeliverySlotCountdownWidget ──────────────────────────────────
 function DeliverySlotCountdownWidget({
   deliveryDate,
@@ -798,6 +821,10 @@ export default function AllOrdersScreen() {
   const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>('');
   const sheetAnim = useRef(new Animated.Value(400)).current;
+
+  // ✅ NEW: Inline refund-note expander (used by the ⓘ icon in the
+  //    cancellation block of the currently selected order).
+  const [refundNoteExpandedByOrder, setRefundNoteExpandedByOrder] = useState<{ [orderId: string]: boolean }>({});
 
   // ✅ Alarm snooze-cycle interval ref.
   //    Sound + vibration + 10s auto-stop are now fully owned by the
@@ -1457,6 +1484,21 @@ export default function AllOrdersScreen() {
     [activeOrder]
   );
 
+  // ✅ NEW — Cancellation/refund derived values for the current order.
+  const activeIsCancelled = useMemo(() => {
+    const s = String(activeOrder?.orderStatus || '').toLowerCase();
+    return s === 'cancelled' || s === 'canceled';
+  }, [activeOrder?.orderStatus]);
+
+  const activeCancellationSourceText = String(activeOrder?.cancellationSource || '').trim();
+  const activeCancellationFeeNum = Number(activeOrder?.cancellationFee ?? 0);
+  const activeRefundAmountNum = Number(activeOrder?.refundAmount ?? 0);
+  const activeRefundStatusText = String(activeOrder?.refundStatus || '').trim();
+  const activeRefundProcessed = isRefundProcessed(activeOrder);
+  const activeRefundStatusShort = formatRefundStatusShort(activeOrder);
+  const activeOrderId = String(activeOrder?.orderId || '');
+  const activeRefundNoteOpen = !!refundNoteExpandedByOrder[activeOrderId];
+
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
     orderTime: activeOrder?.createdAt
@@ -1625,7 +1667,7 @@ export default function AllOrdersScreen() {
 
   /* ─────────────────────────────────────────────────────────────────
      ✅ Chef decline — hits the existing PATCH /:orderId/status endpoint
-     with status: "Cancelled". The backend now defaults the
+     with status: "Cancelled". The backend defaults the
      `cancellationSource` to "cancelled by chef" (per product decision,
      this is the SAME source used for admin cancellations via the
      admin dropdown). This handler is kept otherwise identical so
@@ -2444,6 +2486,106 @@ export default function AllOrdersScreen() {
                     </View>
                   </View>
                 )}
+
+                {/* ─────────────────────────────────────────────────────
+                    ✅ NEW — READ-ONLY Cancellation & Refund block (chef).
+                    Renders only when the current order carries a
+                    cancellation source. Mirrors the exact values that
+                    the backend stores and that the admin / customer
+                    screens display, keeping the three views consistent.
+                    ───────────────────────────────────────────────────── */}
+                {activeIsCancelled && activeCancellationBadge ? (
+                  <View style={styles.cancellationInfoBlock}>
+                    <View style={styles.cancellationInfoRow}>
+                      <Text style={styles.cancellationInfoLabel}>Cancellation Status</Text>
+                      <View
+                        style={[
+                          styles.cancellationInfoStatusPill,
+                          activeRefundProcessed && styles.cancellationInfoStatusPillRefunded,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.cancellationInfoStatusPillText,
+                            activeRefundProcessed && styles.cancellationInfoStatusPillTextRefunded,
+                          ]}
+                        >
+                          {activeCancellationBadge}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {activeCancellationSourceText ? (
+                      <View style={styles.cancellationInfoRow}>
+                        <Text style={styles.cancellationInfoLabel}>Cancellation Source</Text>
+                        <Text style={styles.cancellationInfoValue}>
+                          {activeCancellationSourceText}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    <View style={styles.cancellationInfoRow}>
+                      <Text style={styles.cancellationInfoLabel}>Cancellation Fee</Text>
+                      <Text style={styles.cancellationInfoValue}>₹{activeCancellationFeeNum}</Text>
+                    </View>
+
+                    <View style={styles.cancellationInfoRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                        <Text style={styles.cancellationInfoLabel}>Refund Amount</Text>
+                        {activeRefundAmountNum > 0 ? (
+                          <TouchableOpacity
+                            style={styles.infoIconHitbox}
+                            activeOpacity={0.7}
+                            onPress={() => {
+                              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                              setRefundNoteExpandedByOrder((prev) => ({
+                                ...prev,
+                                [activeOrderId]: !prev[activeOrderId],
+                              }));
+                            }}
+                          >
+                            <Feather name="info" size={13} color="#2563EB" />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                      <Text
+                        style={[
+                          styles.cancellationInfoValue,
+                          activeRefundProcessed && styles.cancellationInfoValueRefunded,
+                        ]}
+                      >
+                        ₹{activeRefundAmountNum}
+                      </Text>
+                    </View>
+
+                    {activeRefundStatusText ? (
+                      <View style={styles.cancellationInfoRow}>
+                        <Text style={styles.cancellationInfoLabel}>Refund Status</Text>
+                        <Text
+                          style={[
+                            styles.cancellationInfoValue,
+                            activeRefundProcessed && styles.cancellationInfoValueRefunded,
+                          ]}
+                        >
+                          {activeRefundStatusShort}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {activeRefundAmountNum > 0 && activeRefundNoteOpen ? (
+                      <View style={styles.cancellationInfoRefundNoteRow}>
+                        <Feather name="clock" size={12} color="#1D4ED8" />
+                        <Text style={styles.cancellationInfoRefundNoteText}>
+                          Refunds take 3–4 hrs to get settled to your account.
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    <Text style={styles.cancellationInfoFeeNoteText}>
+                      Cancellation charges (if any) are sent to the chef.
+                    </Text>
+                  </View>
+                ) : null}
               </View>
 
               {/* ─── MEALBOX ALL UPCOMING DELIVERIES SCHEDULER & STATUS CONTROLLER ─── */}
@@ -4359,6 +4501,89 @@ const styles = StyleSheet.create({
   paymentOnlinePillText: {
     color: '#166348',
   },
+
+  /* ✅ NEW — READ-ONLY cancellation/refund block (chef). */
+  cancellationInfoBlock: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 12,
+    gap: 6,
+  },
+  cancellationInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  cancellationInfoLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#7F1D1D',
+  },
+  cancellationInfoValue: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#991B1B',
+    textAlign: 'right',
+    flexShrink: 1,
+    marginLeft: 12,
+  },
+  cancellationInfoValueRefunded: {
+    color: '#15803D',
+  },
+  cancellationInfoStatusPill: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  cancellationInfoStatusPillRefunded: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  cancellationInfoStatusPillText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#991B1B',
+    letterSpacing: 0.2,
+  },
+  cancellationInfoStatusPillTextRefunded: {
+    color: '#166534',
+  },
+  cancellationInfoRefundNoteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#FECACA',
+  },
+  cancellationInfoRefundNoteText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1D4ED8',
+    lineHeight: 15,
+  },
+  cancellationInfoFeeNoteText: {
+    fontSize: 10.5,
+    fontWeight: '500',
+    color: '#7F1D1D',
+    fontStyle: 'italic',
+    marginTop: 4,
+    lineHeight: 14,
+  },
+  infoIconHitbox: {
+    padding: 3,
+  },
+
   addressRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -50,34 +50,56 @@ const MONTHS_MAP: { [key: string]: number } = {
 const CANCELLATION_SOURCE_CUSTOMER = "cancelled by customer";
 const CANCELLATION_SOURCE_CHEF = "cancelled by chef";
 
-/* ✅ Refund status string used for unpaid COD (or any unpaid) placed-stage
-   cancellations. Money has NOT been collected, so it must never say "Refunded". */
+/* ✅ Refund status shown after a successful customer cancellation where
+   the advance has been captured / is being returned. */
+const REFUND_STATUS_INITIATED = "Refund Initiated (3–4 hrs)";
+
+/* ✅ Refund status used when no advance was ever paid (pure-COD placed
+   cancellations). Money has NOT been collected, so it must never say
+   "Refunded". */
 const REFUND_STATUS_NOT_APPLICABLE = "Not Applicable (No Payment Collected)";
 
-/* ✅ Refund status string used when a cancellation somehow happens on an
-   order that DID capture payment. We never auto-issue a refund here — an
-   ops team must review and act. */
+/* ✅ Refund status used when a cancellation somehow happens on an
+   order that DID capture payment via a route other than the customer
+   cancel endpoint and we have no advance to compute against. An ops
+   team must review and act. */
 const REFUND_STATUS_PENDING_REVIEW = "Pending Review";
+
+/* ✅ Final refund status once the admin has tapped "Process Refund". */
+const REFUND_STATUS_REFUNDED = "Refunded";
+
+/* ✅ Professional disclosure text shown to the customer whenever a
+   cancellation is blocked because preparation has already begun. */
+const CANCELLATION_NOT_PERMITTED_MESSAGE =
+  "Cancellation and refund is not possible. Please contact support.";
+
+const CANCELLATION_NOT_PERMITTED_NOTE =
+  "Cancellation is not permitted once food preparation has begun. Cancellation charges apply and are payable to the chef as compensation for ingredients and preparation already undertaken. Please contact support.";
 
 /* ─────────────────────────────────────────────────────────────────
    ✅ Helper — Build the cancellation-fee / refund patch for a given order.
 
-   COD rules (per product spec):
-     • Before the chef starts preparing the order (Placed-stage): the
-       cancellation fee is ₹0 and the refund amount is ₹0 because no
-       payment has been collected.
-     • Never mark an unpaid COD order as "Refunded".
-
-   Non-COD safety net:
-     • If `paymentCaptured === true` (which should not happen for a
-       Placed-stage order, since verification is what flips that flag),
-       we explicitly set refundStatus to "Pending Review" rather than
-       claiming any money was refunded. This keeps the invariant:
-       "Do not charge customers automatically or create a payment/refund
-       transaction for a COD order that has not been paid."
+   Refund policy (final):
+     • Placed-stage customer cancellation → refundAmount = advancePaidAmount
+       (full advance refunded), cancellationFee = 0.
+     • If advancePaidAmount === 0 (pure-COD, no advance collected):
+       refundAmount = 0 and refundStatus = "Not Applicable (No Payment Collected)".
+     • If a cancellation somehow happens on an order that DID capture
+       payment via another path and advancePaidAmount is 0, we do NOT
+       fabricate a refund — refundStatus becomes "Pending Review" so an
+       ops team can act.
    ───────────────────────────────────────────────────────────────── */
 const buildCancellationRefundPatch = (order: any) => {
+  const advanceNum = Number(order?.advancePaidAmount || 0);
   const wasPaymentCaptured = order?.paymentCaptured === true;
+
+  if (advanceNum > 0) {
+    return {
+      cancellationFee: 0,
+      refundAmount: advanceNum,
+      refundStatus: REFUND_STATUS_INITIATED,
+    };
+  }
 
   if (wasPaymentCaptured) {
     return {
@@ -1512,7 +1534,7 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
  *        can simply refresh.
  *
  *    ✅ Also sets cancellationSource = "cancelled by chef" and the
- *       COD refund patch whenever status becomes "Cancelled" — this
+ *       refund patch whenever status becomes "Cancelled" — this
  *       covers BOTH the chef tapping Decline AND the admin tapping
  *       "Cancelled" in the dropdown (per product decision: admin
  *       cancellations use the same source string as chef cancellations).
@@ -1547,7 +1569,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
 
     // ✅ Fetch the CURRENT document first so we can:
     //    • decide the correct expected-previous-status guard
-    //    • build the COD refund patch from the actual payment state
+    //    • build the refund patch from the actual payment state
     //    • reuse existing logic for targetDeliveryTime etc.
     const existingOrder = await Order.findOne({ orderId });
     if (!existingOrder) {
@@ -1591,8 +1613,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
         String(existingOrder.cancellationReason || "").trim() || resolvedSource;
       setPayload.cancelledAt = existingOrder.cancelledAt || now;
 
-      // ✅ COD-safe refund patch (fee ₹0, refund ₹0 unless payment was
-      //    somehow captured; see helper for the exact rule).
+      // ✅ Refund patch (full advance refund if advance > 0, else ₹0).
       const refundPatch = buildCancellationRefundPatch(existingOrder);
       setPayload.cancellationFee = refundPatch.cancellationFee;
       setPayload.refundAmount = refundPatch.refundAmount;
@@ -1748,22 +1769,24 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
 /**
  * PATCH /api/orders/:orderId/cancel
  *
- * ✅ NEW — Customer-initiated cancellation.
+ * ✅ Customer-initiated cancellation.
  *
  * Rules enforced here (in addition to the frontend's UX gating):
  *   • Only the authenticated owner can cancel their own order.
  *   • Only an order still in `Placed` status can be cancelled.
+ *     (The `Accepted` stage is intentionally blocked — the customer
+ *     is directed to contact support instead; the same guard is
+ *     enforced by the mobile app's disabled button.)
  *   • `Preparing` (and any later status) is refused with the exact
- *     message the mobile app shows to the customer.
+ *     message the mobile app shows to the customer, plus the
+ *     professional disclosure note.
  *   • Concurrency-safe via atomic findOneAndUpdate on { orderId, userId,
- *     orderStatus: "Placed" } — the chef's Accept/Preparing update goes
- *     through the same atomic pattern in updateOrderStatus above, so
- *     only one of the two can win the race.
+ *     orderStatus: "Placed" }.
  *   • Cancellation is idempotent for the SAME customer: if the order is
  *     already cancelled by them, we return 200 with the current state
  *     instead of a confusing error.
- *   • Writes the COD-safe refund patch (fee ₹0, refund ₹0,
- *     refundStatus = "Not Applicable (No Payment Collected)").
+ *   • Writes the refund patch (full advancePaidAmount when advance > 0,
+ *     fee ₹0, refundStatus = "Refund Initiated (3–4 hrs)").
  *   • Emits the existing `order_updated` + `order_status_updated` events
  *     so all three screens refresh (no new event name needed).
  *   • Sends the standard customer push notification.
@@ -1829,26 +1852,31 @@ export const cancelOrderByCustomer = async (req: AuthRequest, res: Response) => 
       });
     }
 
-    // ✅ Refuse if the chef has already started preparing (or anything after).
-    if (currentStatusLower === "preparing" || currentStatusLower === "prep") {
+    // ✅ Refuse once the chef has accepted or begun preparing (or anything after).
+    //    The customer is directed to support with the professional disclosure.
+    if (
+      currentStatusLower === "preparing" ||
+      currentStatusLower === "prep" ||
+      currentStatusLower === "accepted"
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Preparation has started, so cancellation is not possible.",
+        message: `${CANCELLATION_NOT_PERMITTED_MESSAGE}\n\n${CANCELLATION_NOT_PERMITTED_NOTE}`,
         order: preflightOrder,
       });
     }
 
-    // ✅ Refuse every other non-cancellable status (Accepted, Packed,
-    //    Out for Delivery, Delivered, Completed, Cash Collected, etc).
+    // ✅ Refuse every other non-cancellable status (Packed, Out for Delivery,
+    //    Delivered, Completed, Cash Collected, etc).
     if (currentStatusLower !== "placed") {
       return res.status(400).json({
         success: false,
-        message: `Order cannot be cancelled once it is in ${preflightOrder.orderStatus} status.`,
+        message: `${CANCELLATION_NOT_PERMITTED_MESSAGE}\n\n${CANCELLATION_NOT_PERMITTED_NOTE}`,
         order: preflightOrder,
       });
     }
 
-    // ✅ Build the refund patch from the CURRENT document (COD-safe).
+    // ✅ Build the refund patch from the CURRENT document.
     const refundPatch = buildCancellationRefundPatch(preflightOrder);
 
     const now = new Date();
@@ -1877,7 +1905,7 @@ export const cancelOrderByCustomer = async (req: AuthRequest, res: Response) => 
           statusTimeline: {
             status: "Cancelled",
             timestamp: now,
-            note: "Order cancelled by customer before preparation started.",
+            note: `Order cancelled by customer before preparation started. Refund amount: ₹${refundPatch.refundAmount}.`,
           },
         },
       },
@@ -1889,10 +1917,14 @@ export const cancelOrderByCustomer = async (req: AuthRequest, res: Response) => 
       // the client can render the correct status immediately.
       const latest = await Order.findOne({ orderId });
       const latestStatusLower = String(latest?.orderStatus || "").toLowerCase();
-      if (latestStatusLower === "preparing" || latestStatusLower === "prep") {
+      if (
+        latestStatusLower === "preparing" ||
+        latestStatusLower === "prep" ||
+        latestStatusLower === "accepted"
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Preparation has started, so cancellation is not possible.",
+          message: `${CANCELLATION_NOT_PERMITTED_MESSAGE}\n\n${CANCELLATION_NOT_PERMITTED_NOTE}`,
           order: latest,
         });
       }
@@ -1949,6 +1981,159 @@ export const cancelOrderByCustomer = async (req: AuthRequest, res: Response) => 
     return res.status(200).json({
       success: true,
       message: "Order cancelled successfully.",
+      order: updatedOrder,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * PATCH /api/orders/:orderId/refund
+ *
+ * ✅ NEW — Admin-only refund processor.
+ *
+ * When the admin taps "Process Refund" on the admin /all-orders screen
+ * for a cancelled order with refundAmount > 0, this endpoint sets:
+ *   • refundStatus = "Refunded"
+ *   • refundedAt   = new Date()
+ *   • statusTimeline entry
+ *
+ * The customer's Bill Summary then switches from
+ * "Refund initiated — 3–4 hrs" to "Advance amount refunded".
+ *
+ * The actual money movement (Razorpay / UPI refund) is handled by the
+ * ops team outside the app — this endpoint only records the completion.
+ */
+export const processRefund = async (req: AuthRequest, res: Response) => {
+  try {
+    const { orderId } = req.params;
+    const rawUserId = req.user?.userId || req.user?._id || req.user?.id;
+
+    if (!rawUserId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: "orderId is required." });
+    }
+
+    // ✅ Verify the caller is an admin.
+    let isAdminCaller = false;
+    if (mongoose.Types.ObjectId.isValid(String(rawUserId))) {
+      const caller = await User.findById(rawUserId).select("isAdmin");
+      isAdminCaller = !!caller?.isAdmin;
+    }
+    if (!isAdminCaller) {
+      return res.status(403).json({ success: false, message: "Admin access required." });
+    }
+
+    const order = await Order.findOne({ orderId });
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    const statusLower = String(order.orderStatus || "").toLowerCase();
+    if (statusLower !== "cancelled" && statusLower !== "canceled") {
+      return res.status(400).json({
+        success: false,
+        message: "Refund can only be processed for a cancelled order.",
+        order,
+      });
+    }
+
+    const refundAmountNum = Number(order.refundAmount || 0);
+    if (refundAmountNum <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No refund amount due for this order.",
+        order,
+      });
+    }
+
+    const existingRefundStatus = String(order.refundStatus || "").trim();
+    if (existingRefundStatus === REFUND_STATUS_REFUNDED) {
+      return res.status(200).json({
+        success: true,
+        message: "Refund already processed.",
+        order,
+      });
+    }
+
+    const now = new Date();
+
+    const updatedOrder = await Order.findOneAndUpdate(
+      {
+        orderId,
+        refundStatus: { $ne: REFUND_STATUS_REFUNDED },
+      },
+      {
+        $set: {
+          refundStatus: REFUND_STATUS_REFUNDED,
+          refundedAt: now,
+        },
+        $push: {
+          statusTimeline: {
+            status: "Refund Processed",
+            timestamp: now,
+            note: `Refund of ₹${refundAmountNum} processed by admin.`,
+          },
+        },
+      },
+      { new: true }
+    );
+
+    if (!updatedOrder) {
+      const latest = await Order.findOne({ orderId });
+      return res.status(409).json({
+        success: false,
+        message: "Refund state changed by another request. Please refresh.",
+        order: latest,
+      });
+    }
+
+    // ✅ Broadcast to every screen that already listens for these events.
+    try {
+      io.emit("order_updated", updatedOrder);
+      io.emit("order_status_updated", updatedOrder);
+      if (updatedOrder.userId) {
+        io.to(updatedOrder.userId).emit("order_updated", updatedOrder);
+        io.to(updatedOrder.userId).emit("order_status_updated", updatedOrder);
+      }
+      if (updatedOrder.chefId) {
+        io.to(String(updatedOrder.chefId)).emit("order_updated", updatedOrder);
+        io.to(String(updatedOrder.chefId)).emit("order_status_updated", updatedOrder);
+      }
+    } catch (e) {
+      console.log("Socket emit warning:", e);
+    }
+
+    // ✅ Customer push — informs the customer their refund has been processed.
+    try {
+      if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
+        const customerDoc = await User.findById(updatedOrder.userId);
+        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+          await sendExpoPush({
+            token: String(customerDoc.pushToken),
+            title: "💸 Refund Processed",
+            body: `Your refund of ₹${refundAmountNum} for order #${updatedOrder.orderId} has been processed.`,
+            data: {
+              orderId: updatedOrder.orderId,
+              screen: "orders",
+              role: "customer",
+              status: "Refunded",
+            },
+            sound: "default",
+            priority: "high",
+          });
+        }
+      }
+    } catch (customerPushErr) {
+      console.log("Customer refund push error:", customerPushErr);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Refund processed successfully.",
       order: updatedOrder,
     });
   } catch (error: any) {

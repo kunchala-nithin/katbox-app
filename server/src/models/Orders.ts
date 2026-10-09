@@ -160,12 +160,19 @@ export interface IBaseOrder extends Document {
   cancellationReason?: string;
   cancellationSource?: string;
   cancelledAt?: Date;
-  // COD rules: on a placed-stage cancellation, fee = 0 and refund = 0
-  // because no customer payment has been collected. Never mark an unpaid
-  // COD order as refunded.
+  // Refund policy:
+  //   • Placed-stage customer cancellation → refundAmount = advancePaidAmount
+  //     (full advance refunded), cancellationFee = 0.
+  //   • If advancePaidAmount === 0, refundAmount = 0 and
+  //     refundStatus = "Not Applicable (No Payment Collected)".
   cancellationFee?: number;
   refundAmount?: number;
   refundStatus?: string;
+  // ✅ NEW: Set by the admin-only PATCH /:orderId/refund endpoint once the
+  // refund has been processed (refundStatus = "Refunded"). The customer's
+  // Bill Summary switches from "Refund initiated — 3–4 hrs" to
+  // "Advance amount refunded" only after this is written.
+  refundedAt?: Date;
 
   createdAt: Date;
   updatedAt: Date;
@@ -386,11 +393,18 @@ const BaseOrderSchema: Schema = new Schema(
     cancellationReason: { type: String, default: "" },
     cancellationSource: { type: String, default: "" },
     cancelledAt: { type: Date },
-    // COD policy: fee = 0 and refund = 0 on placed-stage cancellations
-    // because no customer payment has been collected yet.
+    // Refund policy:
+    //   • Placed-stage customer cancellation → refundAmount = advancePaidAmount
+    //     (full advance refunded), cancellationFee = 0.
+    //   • If advancePaidAmount === 0, refundAmount = 0 and
+    //     refundStatus = "Not Applicable (No Payment Collected)".
     cancellationFee: { type: Number, default: 0 },
     refundAmount: { type: Number, default: 0 },
     refundStatus: { type: String, default: "" },
+    // ✅ NEW: Set by the admin-only PATCH /:orderId/refund endpoint once the
+    // refund has been processed. Only after this is set does the customer's
+    // Bill Summary show "Advance amount refunded".
+    refundedAt: { type: Date, default: undefined },
   },
   {
     discriminatorKey: "serviceType",

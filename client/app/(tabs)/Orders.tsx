@@ -359,7 +359,7 @@ const resolveHomemadeHeroImage = (order: any): string => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ NEW HELPER — Cancellation badge label.
+   ✅ HELPER — Cancellation badge label.
    Returns the exact display text for a cancelled order based on
    `cancellationSource`. Returns `null` when the order is not
    cancelled, so callers can decide whether to render a badge at all.
@@ -373,6 +373,31 @@ const getCancellationBadgeLabel = (order: any): string | null => {
   if (sourceLower === "cancelled by customer") return "Cancelled by Customer";
   if (sourceLower === "cancelled by chef") return "Cancelled by Chef";
   return "Cancelled";
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ HELPER — Has the admin already processed this refund?
+   ───────────────────────────────────────────────────────────────── */
+const isRefundProcessed = (order: any): boolean => {
+  if (!order) return false;
+  return String(order.refundStatus || "").trim().toLowerCase() === "refunded";
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ HELPER — Friendly short status for the refund.
+   Returns a display string that the Bill Summary uses to label the
+   current refund state.
+   ───────────────────────────────────────────────────────────────── */
+const formatRefundStatusShort = (order: any): string => {
+  if (!order) return "";
+  const raw = String(order.refundStatus || "").trim();
+  if (!raw) return "";
+  const lower = raw.toLowerCase();
+  if (lower === "refunded") return "Advance amount refunded";
+  if (lower.includes("initiated")) return "Refund initiated — 3–4 hrs";
+  if (lower.includes("not applicable")) return raw;
+  if (lower.includes("pending review")) return "Refund pending review";
+  return raw;
 };
 
 function DeliverySlotCountdownWidget({
@@ -788,6 +813,10 @@ export default function MyOrdersScreen() {
   // ✅ NEW: Cancel-order in-flight tracker. Prevents double taps and drives
   //    the loading state on the Cancel Order button in the Bill Summary.
   const [cancellingOrderIds, setCancellingOrderIds] = useState<{ [orderId: string]: boolean }>({});
+
+  // ✅ NEW: Inline refund-note expander per order (used by the ⓘ icon in
+  //    the Bill Summary). Tapping the icon toggles the note visibility.
+  const [refundNoteExpandedByOrder, setRefundNoteExpandedByOrder] = useState<{ [orderId: string]: boolean }>({});
 
   const previewSheetAnim = useRef(new Animated.Value(400)).current;
   const rescheduleSheetAnim = useRef(new Animated.Value(400)).current;
@@ -1412,22 +1441,24 @@ export default function MyOrdersScreen() {
   };
 
   /* ─────────────────────────────────────────────────────────────────
-     ✅ NEW — Customer-triggered Cancel Order flow.
+     ✅ Customer-triggered Cancel Order flow.
 
      Rules (mirrored on the backend):
        • Only an order still in `Placed` status can be cancelled.
+       • `Accepted` (chef accepted but not yet cooking) is DISABLED —
+         the customer is directed to contact support.
        • `Preparing` (and any later status) is refused with the exact
-         message the spec requires.
+         "Cancellation and refund is not possible. Please contact support."
+         message plus the professional disclosure note.
        • Ownership is validated by the backend.
        • Atomic — the backend uses findOneAndUpdate guarded by
          { orderId, userId, orderStatus: "Placed" }.
-       • COD-safe: fee ₹0, refund ₹0, refundStatus = "Not Applicable
-         (No Payment Collected)"; never marks an unpaid order as refunded.
+       • On success: refundAmount = advancePaidAmount (full advance),
+         cancellationFee = 0, refundStatus = "Refund Initiated (3–4 hrs)".
 
      UX:
        • Confirm dialog for `Placed`.
-       • Exact alert for `Preparing`.
-       • Generic "cannot be cancelled" alert for anything else.
+       • Combined alert for any disabled-status tap.
        • Loading state on the button (via `cancellingOrderIds`).
        • Never marks anything cancelled locally on failure — we only
          patch state from the server's response.
@@ -1439,41 +1470,25 @@ export default function MyOrdersScreen() {
 
     const statusLower = String(order.orderStatus || "").toLowerCase();
 
-    // Preparing → show the exact message, do not call the backend.
-    if (statusLower === "preparing" || statusLower === "prep") {
+    // Placed → allow cancel with confirmation.
+    if (statusLower === "placed") {
       Alert.alert(
-        "Cannot Cancel",
-        "Preparation has started, so cancellation is not possible."
+        "Cancel Order",
+        "Are you sure you want to cancel this order? Your advance amount will be refunded in 3–4 hrs.",
+        [
+          { text: "Keep Order", style: "cancel" },
+          {
+            text: "Cancel Order",
+            style: "destructive",
+            onPress: () => confirmCancelOrder(orderId),
+          },
+        ]
       );
       return;
     }
 
-    // Anything beyond `Placed` (and not already cancelled) → generic refusal.
-    if (statusLower !== "placed") {
-      if (statusLower === "cancelled" || statusLower === "canceled") {
-        Alert.alert("Already Cancelled", "This order has already been cancelled.");
-        return;
-      }
-      Alert.alert(
-        "Cannot Cancel",
-        `This order cannot be cancelled once it is in ${order.orderStatus} status.`
-      );
-      return;
-    }
-
-    // Confirm before cancelling a Placed order.
-    Alert.alert(
-      "Cancel Order",
-      "Are you sure you want to cancel this order? This action cannot be undone.",
-      [
-        { text: "Keep Order", style: "cancel" },
-        {
-          text: "Cancel Order",
-          style: "destructive",
-          onPress: () => confirmCancelOrder(orderId),
-        },
-      ]
-    );
+    // Any other status → show the combined "not possible" alert.
+    handleDisabledCancelTap(order);
   };
 
   // ✅ NEW — Explicitly call the backend cancel endpoint.
@@ -1503,7 +1518,10 @@ export default function MyOrdersScreen() {
           return prev;
         });
 
-        Alert.alert("Order Cancelled", "Your order has been cancelled successfully.");
+        Alert.alert(
+          "Order Cancelled",
+          "Your order has been cancelled. The advance amount will be refunded within 3–4 hrs."
+        );
       } else {
         // Backend returned 2xx but no order payload — refetch for truth.
         Alert.alert(
@@ -1517,8 +1535,8 @@ export default function MyOrdersScreen() {
       const msg = err?.response?.data?.message;
 
       if (status === 400 && msg) {
-        // e.g. "Preparation has started, so cancellation is not possible."
-        Alert.alert("Cannot Cancel", msg);
+        // e.g. "Cancellation and refund is not possible. Please contact support."
+        Alert.alert("Cancellation Not Available", msg);
       } else if (status === 409 && msg) {
         Alert.alert("Status Changed", msg);
       } else if (status === 403) {
@@ -1539,28 +1557,15 @@ export default function MyOrdersScreen() {
     }
   };
 
-  // ✅ NEW — Tapping the visually-disabled button must still surface the
-  //    exact message required by the spec for `Preparing`.
+  // ✅ NEW — Combined message for any disabled-status tap.
   const handleDisabledCancelTap = (order: any) => {
     if (!order) return;
-    const statusLower = String(order.orderStatus || "").toLowerCase();
-
-    if (statusLower === "preparing" || statusLower === "prep") {
-      Alert.alert(
-        "Cannot Cancel",
-        "Preparation has started, so cancellation is not possible."
-      );
-      return;
-    }
-
-    if (statusLower === "cancelled" || statusLower === "canceled") {
-      Alert.alert("Already Cancelled", "This order has already been cancelled.");
-      return;
-    }
-
     Alert.alert(
-      "Cannot Cancel",
-      `This order cannot be cancelled once it is in ${order.orderStatus} status.`
+      "Cancellation Not Available",
+      "Cancellation and refund is not possible. Please contact support.\n\n" +
+        "Cancellation is not permitted once the chef has accepted your order. " +
+        "Cancellation charges apply and are payable to the chef as compensation " +
+        "for ingredients and preparation already undertaken. Please contact support."
     );
   };
 
@@ -1578,7 +1583,7 @@ export default function MyOrdersScreen() {
   };
 
   /* ─────────────────────────────────────────────────────────
-     ✅ NEW — Defensive resolution of selections for preview modal.
+     ✅ Defensive resolution of selections for preview modal.
      Handles both Array (catering), Object (mealbox map), and
      JSON-string (legacy) forms of `previewOrder.selections`.
      ───────────────────────────────────────────────────────── */
@@ -2050,8 +2055,13 @@ export default function MyOrdersScreen() {
     const detailCancellationFeeNum = Number(selectedOrderDetails.cancellationFee ?? 0);
     const detailRefundAmountNum = Number(selectedOrderDetails.refundAmount ?? 0);
     const detailRefundStatusText = String(selectedOrderDetails.refundStatus || "").trim();
+    const detailRefundProcessed = isRefundProcessed(selectedOrderDetails);
+    const detailRefundStatusShort = formatRefundStatusShort(selectedOrderDetails);
+    const detailRefundNoteOpen = !!refundNoteExpandedByOrder[detailOrderId];
 
-    // ✅ Dynamic enable/disable for the Cancel Order button.
+    // ✅ Cancel button is ENABLED only when status === "Placed".
+    //    For Accepted / Preparing / later, the button is visually disabled
+    //    but still pressable so tapping surfaces the combined alert.
     const canCancelThisOrder = detailStatusLower === "placed" && !isDetailCancelled;
     const isCancelInFlight = !!cancellingOrderIds[detailOrderId];
 
@@ -2547,10 +2557,16 @@ export default function MyOrdersScreen() {
               <>
                 <View style={[styles.orderSummaryRow, { marginTop: 10 }]}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Ionicons name="checkmark-circle" size={14} color="#16A34A" />
-                    <Text style={styles.orderSummaryLabel}>Advance Paid</Text>
+                    <Ionicons
+                      name={detailRefundProcessed ? "checkmark-done-circle" : "checkmark-circle"}
+                      size={14}
+                      color={detailRefundProcessed ? "#15803D" : "#16A34A"}
+                    />
+                    <Text style={styles.orderSummaryLabel}>
+                      {detailRefundProcessed ? "Advance amount refunded" : "Advance Paid"}
+                    </Text>
                   </View>
-                  <Text style={[styles.orderSummaryValue, { color: "#16A34A", fontWeight: "800" }]}>
+                  <Text style={[styles.orderSummaryValue, { color: detailRefundProcessed ? "#15803D" : "#16A34A", fontWeight: "800" }]}>
                     ₹{detailAdvancePaid}
                   </Text>
                 </View>
@@ -2599,17 +2615,27 @@ export default function MyOrdersScreen() {
             )}
 
             {/* ─────────────────────────────────────────────────────
-                ✅ NEW — Cancellation & Refund block (Bill Summary).
+                ✅ Cancellation & Refund block (Bill Summary).
                 Renders only when the order carries a cancellation
                 source (i.e. it was cancelled by customer / chef).
-                Uses the same COD-safe values that the backend stores.
+                Uses the same backend-stored values on all screens.
                 ───────────────────────────────────────────────────── */}
             {detailCancellationBadge ? (
               <View style={styles.cancellationInfoBlock}>
                 <View style={styles.cancellationInfoRow}>
                   <Text style={styles.cancellationInfoLabel}>Cancellation Status</Text>
-                  <View style={styles.cancellationInfoStatusPill}>
-                    <Text style={styles.cancellationInfoStatusPillText}>
+                  <View
+                    style={[
+                      styles.cancellationInfoStatusPill,
+                      detailRefundProcessed && styles.cancellationInfoStatusPillRefunded,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.cancellationInfoStatusPillText,
+                        detailRefundProcessed && styles.cancellationInfoStatusPillTextRefunded,
+                      ]}
+                    >
                       {detailCancellationBadge}
                     </Text>
                   </View>
@@ -2628,30 +2654,78 @@ export default function MyOrdersScreen() {
                 </View>
 
                 <View style={styles.cancellationInfoRow}>
-                  <Text style={styles.cancellationInfoLabel}>Refund Amount</Text>
-                  <Text style={styles.cancellationInfoValue}>₹{detailRefundAmountNum}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                    <Text style={styles.cancellationInfoLabel}>Refund Amount</Text>
+                    {detailRefundAmountNum > 0 ? (
+                      <TouchableOpacity
+                        style={styles.infoIconHitbox}
+                        activeOpacity={0.7}
+                        onPress={() => {
+                          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                          setRefundNoteExpandedByOrder((prev) => ({
+                            ...prev,
+                            [detailOrderId]: !prev[detailOrderId],
+                          }));
+                        }}
+                      >
+                        <Feather name="info" size={13} color="#2563EB" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                  <Text
+                    style={[
+                      styles.cancellationInfoValue,
+                      detailRefundProcessed && styles.cancellationInfoValueRefunded,
+                    ]}
+                  >
+                    ₹{detailRefundAmountNum}
+                  </Text>
                 </View>
 
                 {detailRefundStatusText ? (
                   <View style={styles.cancellationInfoRow}>
                     <Text style={styles.cancellationInfoLabel}>Refund Status</Text>
-                    <Text style={styles.cancellationInfoValue}>{detailRefundStatusText}</Text>
+                    <Text
+                      style={[
+                        styles.cancellationInfoValue,
+                        detailRefundProcessed && styles.cancellationInfoValueRefunded,
+                      ]}
+                    >
+                      {detailRefundStatusShort}
+                    </Text>
                   </View>
                 ) : null}
+
+                {/* ✅ Info note shown when the ⓘ icon is tapped and a refund
+                    is due / has been processed. */}
+                {detailRefundAmountNum > 0 && detailRefundNoteOpen ? (
+                  <View style={styles.cancellationInfoRefundNoteRow}>
+                    <Feather name="clock" size={12} color="#1D4ED8" />
+                    <Text style={styles.cancellationInfoRefundNoteText}>
+                      Refunds take 3–4 hrs to get settled to your account.
+                    </Text>
+                  </View>
+                ) : null}
+
+                {/* ✅ Fee disclosure line — shown whenever there is a
+                    cancellation source recorded. */}
+                <Text style={styles.cancellationInfoFeeNoteText}>
+                  Cancellation charges (if any) are sent to the chef.
+                </Text>
               </View>
             ) : null}
 
             {/* ─────────────────────────────────────────────────────
-                ✅ NEW — Cancel Order button (inside Bill Summary).
+                ✅ Cancel Order button (inside Bill Summary).
 
                 UX rules:
-                  • Enabled only when orderStatus === "Placed".
-                  • When visually disabled we still leave it
-                    pressable so tapping surfaces the exact
-                    "Preparation has started, so cancellation is
-                    not possible." alert for the Preparing status.
+                  • ENABLED only when orderStatus === "Placed".
+                  • DISABLED (visually greyed but still pressable) for
+                    Accepted, Preparing, and every other status.
+                  • Tapping a disabled button surfaces the combined
+                    "Cancellation and refund is not possible" alert.
                   • Loading state while the request is in flight.
-                  • Hidden entirely once the order is cancelled.
+                  • Hidden once the order is cancelled.
                 ───────────────────────────────────────────────────── */}
             {!isDetailCancelled ? (
               <TouchableOpacity
@@ -4883,7 +4957,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  /* ✅ NEW — Cancellation info block inside Bill Summary */
+  /* ✅ Cancellation info block inside Bill Summary */
   cancellationInfoBlock: {
     backgroundColor: "#FEF2F2",
     borderWidth: 1,
@@ -4913,6 +4987,9 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     marginLeft: 12,
   },
+  cancellationInfoValueRefunded: {
+    color: "#15803D",
+  },
   cancellationInfoStatusPill: {
     backgroundColor: "#FEE2E2",
     borderRadius: 8,
@@ -4921,14 +4998,48 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#FCA5A5",
   },
+  cancellationInfoStatusPillRefunded: {
+    backgroundColor: "#DCFCE7",
+    borderColor: "#86EFAC",
+  },
   cancellationInfoStatusPillText: {
     fontSize: 11,
     fontWeight: "900",
     color: "#991B1B",
     letterSpacing: 0.2,
   },
+  cancellationInfoStatusPillTextRefunded: {
+    color: "#166534",
+  },
+  cancellationInfoRefundNoteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: "#FECACA",
+  },
+  cancellationInfoRefundNoteText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#1D4ED8",
+    lineHeight: 15,
+  },
+  cancellationInfoFeeNoteText: {
+    fontSize: 10.5,
+    fontWeight: "500",
+    color: "#7F1D1D",
+    fontStyle: "italic",
+    marginTop: 4,
+    lineHeight: 14,
+  },
+  infoIconHitbox: {
+    padding: 3,
+  },
 
-  /* ✅ NEW — Cancel Order button (Bill Summary) */
+  /* ✅ Cancel Order button (Bill Summary) */
   cancelOrderBtn: {
     flexDirection: "row",
     alignItems: "center",

@@ -257,6 +257,29 @@ const getCancellationBadgeLabel = (order: any): string | null => {
   return null;
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Has the admin already processed the refund?
+   ───────────────────────────────────────────────────────────────── */
+const isRefundProcessed = (order: any): boolean => {
+  if (!order) return false;
+  return String(order.refundStatus || '').trim().toLowerCase() === 'refunded';
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Friendly short status for the refund.
+   ───────────────────────────────────────────────────────────────── */
+const formatRefundStatusShort = (order: any): string => {
+  if (!order) return '';
+  const raw = String(order.refundStatus || '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  if (lower === 'refunded') return 'Advance amount refunded';
+  if (lower.includes('initiated')) return 'Refund initiated — 3–4 hrs';
+  if (lower.includes('not applicable')) return raw;
+  if (lower.includes('pending review')) return 'Refund pending review';
+  return raw;
+};
+
 /* ─── COUNTDOWN TIMER WIDGET (ADMIN BLUE THEME) ─── */
 function DeliverySlotCountdownWidget({
   deliveryDate,
@@ -534,6 +557,14 @@ export default function AdminAllOrdersScreen() {
   const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
   const [previewActiveDay, setPreviewActiveDay] = useState<string>('');
   const sheetAnim = useRef(new Animated.Value(400)).current;
+
+  // ✅ NEW: Inline refund-note expander (used by the ⓘ icon in the
+  //    cancellation block of the currently selected order).
+  const [refundNoteExpandedByOrder, setRefundNoteExpandedByOrder] = useState<{ [orderId: string]: boolean }>({});
+
+  // ✅ NEW: Per-order in-flight tracker for the "Process Refund" button.
+  //    Drives the loading state and prevents double taps.
+  const [processingRefundByOrder, setProcessingRefundByOrder] = useState<{ [orderId: string]: boolean }>({});
 
   // ✅ Alarm snooze-cycle interval ref.
   //    Sound + vibration + 10s auto-stop are now fully owned by the
@@ -1166,6 +1197,28 @@ export default function AdminAllOrdersScreen() {
     [activeOrder]
   );
 
+  // ✅ NEW — Cancellation/refund derived values for the current order.
+  const activeIsCancelled = useMemo(() => {
+    const s = String(activeOrder?.orderStatus || '').toLowerCase();
+    return s === 'cancelled' || s === 'canceled';
+  }, [activeOrder?.orderStatus]);
+
+  const activeCancellationSourceText = String(activeOrder?.cancellationSource || '').trim();
+  const activeCancellationFeeNum = Number(activeOrder?.cancellationFee ?? 0);
+  const activeRefundAmountNum = Number(activeOrder?.refundAmount ?? 0);
+  const activeRefundStatusText = String(activeOrder?.refundStatus || '').trim();
+  const activeRefundProcessed = isRefundProcessed(activeOrder);
+  const activeRefundStatusShort = formatRefundStatusShort(activeOrder);
+  const activeOrderId = String(activeOrder?.orderId || '');
+  const activeRefundNoteOpen = !!refundNoteExpandedByOrder[activeOrderId];
+  const isProcessingRefund = !!processingRefundByOrder[activeOrderId];
+
+  // ✅ Whether to show the "Process Refund" button for the current order.
+  const shouldShowProcessRefundBtn =
+    activeIsCancelled &&
+    activeRefundAmountNum > 0 &&
+    !activeRefundProcessed;
+
   const orderData = {
     orderId: activeOrder?.orderId ? `#${activeOrder.orderId}` : '#KATBOX12345',
     orderTime: activeOrder?.createdAt
@@ -1467,6 +1520,92 @@ export default function AdminAllOrdersScreen() {
       Alert.alert('Error', err.response?.data?.message || 'Failed to update schedule status');
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  /* ─────────────────────────────────────────────────────────────────
+     ✅ NEW — Admin-only "Process Refund" flow.
+     Tapping the button hits PATCH /api/orders/:orderId/refund, which
+     sets refundStatus = "Refunded" and refundedAt = now. The customer
+     screen then flips from "Refund initiated — 3–4 hrs" to
+     "Advance amount refunded".
+     ───────────────────────────────────────────────────────────────── */
+  const handleProcessRefund = (order: any) => {
+    if (!order) return;
+    const orderId = String(order.orderId || '');
+    if (!orderId) return;
+
+    const amount = Number(order.refundAmount || 0);
+    if (amount <= 0) {
+      Alert.alert('No Refund Due', 'There is no refund amount to process for this order.');
+      return;
+    }
+
+    Alert.alert(
+      'Process Refund',
+      `Confirm that the refund of ₹${amount} has been sent to the customer. This will mark the order as fully refunded.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm Refund',
+          style: 'default',
+          onPress: () => confirmProcessRefund(orderId),
+        },
+      ]
+    );
+  };
+
+  const confirmProcessRefund = async (orderId: string) => {
+    if (!orderId) return;
+
+    if (processingRefundByOrder[orderId]) return;
+    setProcessingRefundByOrder((prev) => ({ ...prev, [orderId]: true }));
+
+    try {
+      const res = await api.patch(`/api/orders/${orderId}/refund`);
+
+      if (res.data && res.data.success && res.data.order) {
+        const updated = res.data.order;
+
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+
+        setOrders((prev) =>
+          prev.map((o) => (o.orderId === orderId ? { ...o, ...updated } : o))
+        );
+
+        Alert.alert(
+          'Refund Processed',
+          'The refund has been marked as processed. The customer will now see "Advance amount refunded".'
+        );
+      } else {
+        Alert.alert(
+          'Notice',
+          res.data?.message || 'Refund could not be confirmed. Refreshing orders.'
+        );
+        fetchAllOrders();
+      }
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const msg = err?.response?.data?.message;
+
+      if (status === 400 && msg) {
+        Alert.alert('Cannot Process Refund', msg);
+      } else if (status === 403) {
+        Alert.alert('Not Allowed', msg || 'Admin access required.');
+      } else if (status === 404) {
+        Alert.alert('Not Found', msg || 'Order not found.');
+      } else if (status === 409 && msg) {
+        Alert.alert('Status Changed', msg);
+      } else if (err?.code === 'ERR_NETWORK' || !err?.response) {
+        Alert.alert(
+          'Network Error',
+          'Could not reach the server. Please check your connection and try again.'
+        );
+      } else {
+        Alert.alert('Error', msg || 'Failed to process the refund. Please try again.');
+      }
+    } finally {
+      setProcessingRefundByOrder((prev) => ({ ...prev, [orderId]: false }));
     }
   };
 
@@ -2170,12 +2309,6 @@ export default function AdminAllOrdersScreen() {
                   </Animated.View>
                 </TouchableOpacity>
 
-                {/* ──────────────────────────────────────────────────────────
-                    ✅ VIEW DETAILS — now shows subtotal, delivery charge
-                    (with delivery type), coupon discount, advance paid,
-                    balance to collect, commission, NET AMOUNT AFTER
-                    COMMISSION, and payment mode for EVERY service type.
-                    ────────────────────────────────────────────────────────── */}
                 {isPriceExpanded && (
                   <View style={styles.priceBreakdownFrame}>
                     {isCateringFlow && pricePerPlateNum > 0 && (
@@ -2240,7 +2373,6 @@ export default function AdminAllOrdersScreen() {
                       </View>
                     )}
 
-                    {/* ✅ COMMISSION ROW — single, clean deduction line */}
                     <View style={styles.priceDescriptionRow}>
                       <Text style={styles.priceDescriptionLabel}>
                         {isCommissionFree
@@ -2261,8 +2393,6 @@ export default function AdminAllOrdersScreen() {
                       </Text>
                     </View>
 
-                    {/* ✅ NET AMOUNT AFTER COMMISSION — the amount that
-                        actually flows to the chef */}
                     <View style={styles.netPayableRow}>
                       <Text style={styles.netPayableLabel}>Amount After Commission</Text>
                       <Text style={styles.netPayableValue}>
@@ -2302,11 +2432,130 @@ export default function AdminAllOrdersScreen() {
                     </View>
                   </View>
                 )}
+
+                {/* ─────────────────────────────────────────────────────
+                    ✅ NEW — Cancellation & Refund block (admin).
+                    Renders only when the current order carries a
+                    cancellation source. Includes the admin-only
+                    "Process Refund" button when a refund is due and
+                    has not yet been marked as refunded.
+                    ───────────────────────────────────────────────────── */}
+                {activeIsCancelled && activeCancellationBadge ? (
+                  <View style={styles.cancellationInfoBlock}>
+                    <View style={styles.cancellationInfoRow}>
+                      <Text style={styles.cancellationInfoLabel}>Cancellation Status</Text>
+                      <View
+                        style={[
+                          styles.cancellationInfoStatusPill,
+                          activeRefundProcessed && styles.cancellationInfoStatusPillRefunded,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.cancellationInfoStatusPillText,
+                            activeRefundProcessed && styles.cancellationInfoStatusPillTextRefunded,
+                          ]}
+                        >
+                          {activeCancellationBadge}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {activeCancellationSourceText ? (
+                      <View style={styles.cancellationInfoRow}>
+                        <Text style={styles.cancellationInfoLabel}>Cancellation Source</Text>
+                        <Text style={styles.cancellationInfoValue}>
+                          {activeCancellationSourceText}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    <View style={styles.cancellationInfoRow}>
+                      <Text style={styles.cancellationInfoLabel}>Cancellation Fee</Text>
+                      <Text style={styles.cancellationInfoValue}>₹{activeCancellationFeeNum}</Text>
+                    </View>
+
+                    <View style={styles.cancellationInfoRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                        <Text style={styles.cancellationInfoLabel}>Refund Amount</Text>
+                        {activeRefundAmountNum > 0 ? (
+                          <TouchableOpacity
+                            style={styles.infoIconHitbox}
+                            activeOpacity={0.7}
+                            onPress={() => {
+                              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                              setRefundNoteExpandedByOrder((prev) => ({
+                                ...prev,
+                                [activeOrderId]: !prev[activeOrderId],
+                              }));
+                            }}
+                          >
+                            <Feather name="info" size={13} color="#2563EB" />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                      <Text
+                        style={[
+                          styles.cancellationInfoValue,
+                          activeRefundProcessed && styles.cancellationInfoValueRefunded,
+                        ]}
+                      >
+                        ₹{activeRefundAmountNum}
+                      </Text>
+                    </View>
+
+                    {activeRefundStatusText ? (
+                      <View style={styles.cancellationInfoRow}>
+                        <Text style={styles.cancellationInfoLabel}>Refund Status</Text>
+                        <Text
+                          style={[
+                            styles.cancellationInfoValue,
+                            activeRefundProcessed && styles.cancellationInfoValueRefunded,
+                          ]}
+                        >
+                          {activeRefundStatusShort}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {activeRefundAmountNum > 0 && activeRefundNoteOpen ? (
+                      <View style={styles.cancellationInfoRefundNoteRow}>
+                        <Feather name="clock" size={12} color="#1D4ED8" />
+                        <Text style={styles.cancellationInfoRefundNoteText}>
+                          Refunds take 3–4 hrs to get settled to your account.
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    <Text style={styles.cancellationInfoFeeNoteText}>
+                      Cancellation charges (if any) are sent to the chef.
+                    </Text>
+
+                    {/* ✅ ADMIN-ONLY: "Process Refund" button. Only
+                        visible when a refund is due and has not yet
+                        been marked as refunded. */}
+                    {shouldShowProcessRefundBtn ? (
+                      <TouchableOpacity
+                        style={styles.processRefundBtn}
+                        activeOpacity={0.85}
+                        onPress={() => handleProcessRefund(activeOrder)}
+                        disabled={isProcessingRefund}
+                      >
+                        {isProcessingRefund ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Ionicons name="cash-outline" size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+                            <Text style={styles.processRefundBtnText}>Process Refund</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
 
-              {/* ─── SINGLE COMMISSION SECTION (admin) ───
-                  This is the ONLY commission section on the admin screen.
-                  It replaces the previously duplicated commission note. */}
+              {/* ─── SINGLE COMMISSION SECTION (admin) ─── */}
               <View style={styles.card}>
                 <View style={styles.commissionHeaderRow}>
                   <View
@@ -2381,7 +2630,6 @@ export default function AdminAllOrdersScreen() {
                   </Text>
                 </View>
 
-                {/* ✅ Net amount after commission — the amount payable to chef */}
                 <View style={styles.commissionNetBox}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.commissionNetLabel}>Amount After Commission</Text>
@@ -3284,6 +3532,108 @@ const styles = StyleSheet.create({
   paymentMethodPillText: { fontSize: 10.5, fontWeight: '800' },
   paymentCodPillText: { color: '#B45309' },
   paymentOnlinePillText: { color: '#2563EB' },
+
+  /* ✅ NEW — cancellation/refund block (admin). */
+  cancellationInfoBlock: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 12,
+    gap: 6,
+  },
+  cancellationInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  cancellationInfoLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#7F1D1D',
+  },
+  cancellationInfoValue: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#991B1B',
+    textAlign: 'right',
+    flexShrink: 1,
+    marginLeft: 12,
+  },
+  cancellationInfoValueRefunded: {
+    color: '#15803D',
+  },
+  cancellationInfoStatusPill: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  cancellationInfoStatusPillRefunded: {
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+  },
+  cancellationInfoStatusPillText: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#991B1B',
+    letterSpacing: 0.2,
+  },
+  cancellationInfoStatusPillTextRefunded: {
+    color: '#166534',
+  },
+  cancellationInfoRefundNoteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#FECACA',
+  },
+  cancellationInfoRefundNoteText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1D4ED8',
+    lineHeight: 15,
+  },
+  cancellationInfoFeeNoteText: {
+    fontSize: 10.5,
+    fontWeight: '500',
+    color: '#7F1D1D',
+    fontStyle: 'italic',
+    marginTop: 4,
+    lineHeight: 14,
+  },
+  infoIconHitbox: {
+    padding: 3,
+  },
+  processRefundBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#166534',
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 10,
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  processRefundBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
 
   scheduleHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 10, marginBottom: 4, position: 'relative' },
   scheduleHeaderSubtitle: { fontSize: 12, color: '#64748B', marginTop: 2, fontWeight: '500' },
