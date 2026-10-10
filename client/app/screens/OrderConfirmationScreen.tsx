@@ -1,4 +1,4 @@
-// orderconfirmationscreen.tsx
+
 import React, { useEffect, useRef, useMemo, useState } from "react";
 import {
   View,
@@ -909,8 +909,8 @@ export default function OrderConfirmationScreen() {
                       </View>
                       <View style={{ flex: 1, marginLeft: 8 }}>
                         <Text style={styles.homemadeConfirmedDeliveryLabel}>DELIVERY SLOT</Text>
-                        <Text style={styles.homemadeConfirmedDeliveryValue} numberOfLines={2}>
-                          {estimatedDeliveryLabel || homemadeDeliverySlotResolved}
+                        <Text style={styles.homemadeConfirmedDeliveryValue} numberOfLines={1}>
+                          {homemadeDeliverySlotResolved || estimatedDeliveryLabel}
                         </Text>
                       </View>
                     </View>
@@ -918,202 +918,11 @@ export default function OrderConfirmationScreen() {
                 </View>
               ) : null}
 
-              
-
-              {/* ✅ NEW: Special Instructions Display for Homemade Flow */}
-              {resolvedSpecialInstruction.hasAny && (
-                <View style={styles.simpleSpecialInstrWrapper}>
-                  <TouchableOpacity
-                    activeOpacity={0.75}
-                    onPress={toggleSpecialInstructions}
-                    style={styles.simpleSpecialInstrTrigger}
-                  >
-                    <Ionicons
-                      name="restaurant-outline"
-                      size={14}
-                      color="#0F382A"
-                    />
-                    <Text style={styles.simpleSpecialInstrTriggerText}>
-                      Special Instructions
-                    </Text>
-                    <Animated.View
-                      style={{
-                        transform: [{ rotate: specialInstructionsChevronRotate }],
-                        marginLeft: 4,
-                      }}
-                    >
-                      <Ionicons
-                        name="chevron-down"
-                        size={14}
-                        color="#0F382A"
-                      />
-                    </Animated.View>
-                  </TouchableOpacity>
-
-                  {specialInstructionsExpanded && (
-                    <Animated.View
-                      style={[
-                        styles.simpleSpecialInstrBody,
-                        {
-                          maxHeight: specialInstructionsContentHeight,
-                          opacity: specialInstructionsContentOpacity,
-                          overflow: "hidden",
-                        },
-                      ]}
-                    >
-                      {!!resolvedSpecialInstruction.label && (
-                        <View style={styles.simpleSpecialInstrRow}>
-                          <Text style={styles.simpleSpecialInstrEmoji}>
-                            {resolvedSpecialInstruction.spiceEmoji}
-                          </Text>
-                          <Text style={styles.simpleSpecialInstrRowText}>
-                            {resolvedSpecialInstruction.label}
-                          </Text>
-                        </View>
-                      )}
-
-                      {!!resolvedSpecialInstruction.text && (
-                        <View style={styles.simpleSpecialInstrNoteBox}>
-                          <Text style={styles.simpleSpecialInstrNoteText}>
-                            {resolvedSpecialInstruction.text}
-                          </Text>
-                        </View>
-                      )}
-                    </Animated.View>
-                  )}
-                </View>
-              )}
-
-              <View style={styles.homemadeDishesContainer}>
-                {parsedItems.map((dishItem: any, idx: number) => {
-                  const isLastDish = idx === parsedItems.length - 1;
-                  const itemTotal = (Number(dishItem.price) || 0) * (Number(dishItem.quantity) || 1);
-
-                  return (
-                    <View
-                      key={`conf-dish-${idx}`}
-                      style={[
-                        styles.homemadePremiumCard,
-                        !isLastDish && { marginBottom: 12 },
-                      ]}
-                    >
-                      <View style={styles.homemadeThumbnailWrapper}>
-                        <Image
-                          source={{ uri: dishItem.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=160&auto=format&fit=crop" }}
-                          style={styles.homemadeThumbnailImg}
-                        />
-                      </View>
-
-                      <View style={styles.homemadeCardContentBlock}>
-                        <View style={styles.dishTitlePriceRow}>
-                          <Text style={styles.homemadeDishNameText} numberOfLines={2}>
-                            {dishItem.name}
-                          </Text>
-                          <Text style={styles.homemadeDishPriceHighlight}>
-                            ₹{itemTotal}
-                          </Text>
-                        </View>
-
-                        <View style={styles.dishDetailsPortionRow}>
-                          <View style={styles.servingPortionPill}>
-                            <Ionicons name="layers-outline" size={11} color="#166348" style={{ marginRight: 4 }} />
-                            <Text style={styles.servingPortionPillText} numberOfLines={1}>
-                              {dishItem.selectedQtyConfig || "Standard Serving"}
-                            </Text>
-                          </View>
-
-                          <View style={styles.quantityCountBadge}>
-                            <Text style={styles.quantityCountBadgeLabel}>Qty:</Text>
-                            <Text style={styles.quantityCountBadgeNumber}>{dishItem.quantity || 1}</Text>
-                          </View>
-                        </View>
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-
-              <View style={styles.dashedDivider} />
-
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Dishes Subtotal</Text>
-                <Text style={styles.breakdownValueText}>₹{subtotal}</Text>
-              </View>
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Delivery & Handling</Text>
-                <Text style={[styles.breakdownValueText, deliveryPrice === 0 && { color: "#166348", fontWeight: "800" }]}>
-                  {deliveryPrice === 0 ? "FREE" : `₹${deliveryPrice}`}
-                </Text>
-              </View>
-              {discount > 0 && (
-                <View style={styles.priceBreakdownRow}>
-                  <Text style={styles.breakdownLabelText}>Coupon Discount</Text>
-                  <Text style={[styles.breakdownValueText, { color: "#166348", fontWeight: "800" }]}>
-                    -₹{discount}
-                  </Text>
-                </View>
-              )}
-
-              <View style={styles.solidDivider} />
-
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Advance Paid (40%)</Text>
-                <Text style={[styles.breakdownValueText, { color: "#166348" }]}>₹{advancePaidAmount}</Text>
-              </View>
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Balance to Collect upon Delivery (60%)</Text>
-                <Text style={styles.breakdownValueText}>₹{balanceAmountToCollect}</Text>
-              </View>
-
-              <View style={styles.solidDivider} />
-
-              <View style={styles.totalPaidRow}>
-                <Text style={styles.totalPaidLabelText}>Total Amount</Text>
-                <Text style={styles.cateringTotalAmountText}>₹{totalAmount}</Text>
-              </View>
-            </View>
-          ) : isCateringFlow ? (
-            <View style={styles.cateringMainSummaryCard}>
-              <View style={styles.cateringOccasionTopStrip}>
-                <Text style={styles.cateringOccasionEmoji}>{getOccasionEmoji(occasion)}</Text>
-                <Text style={styles.cateringOccasionText}>{occasion} Catering</Text>
-                <View style={styles.cateringGuestPill}>
-                  <Ionicons name="people" size={12} color="#0F382A" style={{ marginRight: 4 }} />
-                  <Text style={styles.cateringGuestPillText}>{guests} Guests</Text>
-                </View>
-              </View>
-
-              <View style={styles.cateringContentRow}>
-                <Image source={{ uri: menuImage }} style={styles.cateringThumbImage} />
-                <View style={{ flex: 1, marginLeft: 14, justifyContent: "center" }}>
-                  <Text style={styles.cateringRestaurantTag}>👨‍🍳 {restaurantName}</Text>
-                  <Text style={styles.cateringMenuTitle} numberOfLines={1}>{menuName}</Text>
-                  
-                  <View style={styles.cateringMetaRow}>
-                    <Ionicons name="calendar" size={13} color="#0F382A" />
-                    <Text style={styles.cateringMetaTextHighlight}>
-                      {eventDate} • {eventTime}
-                    </Text>
-                  </View>
-
-                  <View style={styles.cateringMetaRow}>
-                    <Ionicons name="location-outline" size={13} color="#5B756C" />
-                    <Text style={styles.cateringMetaText} numberOfLines={1}>
-                      {addressDetails}
-                    </Text>
-                  </View>
-
-                  <View style={styles.cateringDeliveryBadge}>
-                    <Text style={styles.cateringDeliveryBadgeText}>🚚 {deliveryType} Setup</Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* ✅ NEW: Delivery Type Display for Catering Flow */}
-              {!!resolvedDeliveryType && deliveryInfo && (
+              {/* Delivery option line */}
+              {!!resolvedDeliveryType && (
                 <View style={styles.deliveryOptionRowInline}>
                   <Text style={styles.deliveryOptionEmojiInline}>
-                    {deliveryInfo.emoji}
+                    {deliveryInfo?.emoji || "📦"}
                   </Text>
                   <Text style={styles.deliveryOptionTextInline}>
                     {resolvedDeliveryType}
@@ -1121,7 +930,39 @@ export default function OrderConfirmationScreen() {
                 </View>
               )}
 
-              {/* ✅ NEW: Special Instructions Display for Catering Flow */}
+              {/* Items list */}
+              <View style={styles.homemadeDishesContainer}>
+                {parsedItems.map((dishItem: any, idx: number) => (
+                  <View key={`conf-homemade-${idx}`} style={[styles.homemadePremiumCard, { marginBottom: idx === parsedItems.length - 1 ? 0 : 10 }]}>
+                    <View style={styles.homemadeThumbnailWrapper}>
+                      <Image
+                        source={{ uri: dishItem.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
+                        style={styles.homemadeThumbnailImg}
+                      />
+                    </View>
+                    <View style={styles.homemadeCardContentBlock}>
+                      <View style={styles.dishTitlePriceRow}>
+                        <Text style={styles.homemadeDishNameText} numberOfLines={2}>{dishItem.name}</Text>
+                        <Text style={styles.homemadeDishPriceHighlight}>
+                          ₹{(Number(dishItem.price) || 0) * (Number(dishItem.quantity) || 1)}
+                        </Text>
+                      </View>
+                      <View style={styles.dishDetailsPortionRow}>
+                        <View style={styles.servingPortionPill}>
+                          <Ionicons name="layers-outline" size={11} color="#166348" style={{ marginRight: 4 }} />
+                          <Text style={styles.servingPortionPillText}>{dishItem.selectedQtyConfig || "Standard"}</Text>
+                        </View>
+                        <View style={styles.quantityCountBadge}>
+                          <Text style={styles.quantityCountBadgeLabel}>Qty</Text>
+                          <Text style={styles.quantityCountBadgeNumber}>{dishItem.quantity || 1}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+              </View>
+
+              {/* Special Instructions */}
               {resolvedSpecialInstruction.hasAny && (
                 <View style={styles.simpleSpecialInstrWrapper}>
                   <TouchableOpacity
@@ -1129,25 +970,10 @@ export default function OrderConfirmationScreen() {
                     onPress={toggleSpecialInstructions}
                     style={styles.simpleSpecialInstrTrigger}
                   >
-                    <Ionicons
-                      name="restaurant-outline"
-                      size={14}
-                      color="#0F382A"
-                    />
-                    <Text style={styles.simpleSpecialInstrTriggerText}>
-                      Special Instructions
-                    </Text>
-                    <Animated.View
-                      style={{
-                        transform: [{ rotate: specialInstructionsChevronRotate }],
-                        marginLeft: 4,
-                      }}
-                    >
-                      <Ionicons
-                        name="chevron-down"
-                        size={14}
-                        color="#0F382A"
-                      />
+                    <Ionicons name="restaurant-outline" size={14} color="#0F382A" />
+                    <Text style={styles.simpleSpecialInstrTriggerText}>Special Instructions</Text>
+                    <Animated.View style={{ transform: [{ rotate: specialInstructionsChevronRotate }], marginLeft: 4 }}>
+                      <Ionicons name="chevron-down" size={14} color="#0F382A" />
                     </Animated.View>
                   </TouchableOpacity>
 
@@ -1164,20 +990,19 @@ export default function OrderConfirmationScreen() {
                     >
                       {!!resolvedSpecialInstruction.label && (
                         <View style={styles.simpleSpecialInstrRow}>
-                          <Text style={styles.simpleSpecialInstrEmoji}>
-                            {resolvedSpecialInstruction.spiceEmoji}
-                          </Text>
-                          <Text style={styles.simpleSpecialInstrRowText}>
-                            {resolvedSpecialInstruction.label}
-                          </Text>
+                          <Text style={styles.simpleSpecialInstrEmoji}>{resolvedSpecialInstruction.spiceEmoji}</Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>{resolvedSpecialInstruction.label}</Text>
                         </View>
                       )}
-
+                      {resolvedSpecialInstruction.noOnion && (
+                        <View style={styles.simpleSpecialInstrRow}>
+                          <Text style={styles.simpleSpecialInstrEmoji}>🚫🧄</Text>
+                          <Text style={styles.simpleSpecialInstrRowText}>No onion & garlic</Text>
+                        </View>
+                      )}
                       {!!resolvedSpecialInstruction.text && (
                         <View style={styles.simpleSpecialInstrNoteBox}>
-                          <Text style={styles.simpleSpecialInstrNoteText}>
-                            {resolvedSpecialInstruction.text}
-                          </Text>
+                          <Text style={styles.simpleSpecialInstrNoteText}>{resolvedSpecialInstruction.text}</Text>
                         </View>
                       )}
                     </Animated.View>
@@ -1185,7 +1010,46 @@ export default function OrderConfirmationScreen() {
                 </View>
               )}
 
-              {(parsedSelections || parsedItems.length > 0 || parsedAddons.length > 0) && (
+              <View style={styles.solidDivider} />
+              <View style={styles.totalPaidRow}>
+                <Text style={styles.totalPaidLabelText}>Total Paid</Text>
+                <Text style={styles.totalPaidValueText}>₹{totalAmount}</Text>
+              </View>
+            </View>
+          ) : isCateringFlow ? (
+            <View style={styles.cateringMainSummaryCard}>
+              <View style={styles.cateringOccasionTopStrip}>
+                <Text style={styles.cateringOccasionEmoji}>{getOccasionEmoji(occasion)}</Text>
+                <Text style={styles.cateringOccasionText}>{occasion}</Text>
+                <View style={styles.cateringGuestPill}>
+                  <Text style={styles.cateringGuestPillText}>{guests} Guests</Text>
+                </View>
+              </View>
+
+              <View style={styles.cateringContentRow}>
+                <Image source={{ uri: menuImage }} style={styles.cateringThumbImage} />
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={styles.cateringRestaurantTag}>{restaurantName}</Text>
+                  <Text style={styles.cateringMenuTitle} numberOfLines={2}>{menuName}</Text>
+                  <View style={styles.cateringMetaRow}>
+                    <Ionicons name="calendar-outline" size={13} color="#0F382A" />
+                    <Text style={styles.cateringMetaTextHighlight}>{eventDate} • {eventTime}</Text>
+                  </View>
+                  <View style={styles.cateringMetaRow}>
+                    <Ionicons name="location-outline" size={13} color="#5B756C" />
+                    <Text style={styles.cateringMetaText} numberOfLines={1}>{addressDetails}</Text>
+                  </View>
+                  {!!resolvedDeliveryType && (
+                    <View style={styles.cateringDeliveryBadge}>
+                      <Text style={styles.cateringDeliveryBadgeText}>
+                        {deliveryInfo?.emoji || "📦"} {resolvedDeliveryType}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+
+              {(parsedSelections || parsedAddons.length > 0) && (
                 <TouchableOpacity
                   style={styles.cateringViewMenuCTA}
                   activeOpacity={0.85}
@@ -1194,157 +1058,45 @@ export default function OrderConfirmationScreen() {
                     setTimeout(openSheet, 50);
                   }}
                 >
-                  <Ionicons name="restaurant-outline" size={15} color="#0F382A" style={{ marginRight: 6 }} />
-                  <Text style={styles.cateringViewMenuCTAText}>View Confirmed Menu & Add-ons</Text>
+                  <Text style={styles.cateringViewMenuCTAText}>View Platter Menu & Add-ons</Text>
+                  <Ionicons name="chevron-forward" size={14} color="#0F382A" style={{ marginLeft: 4 }} />
                 </TouchableOpacity>
               )}
 
-              <View style={styles.dashedDivider} />
-
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Price per plate</Text>
-                <Text style={styles.breakdownValueText}>₹{pricePerPlate}</Text>
-              </View>
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Guests</Text>
-                <Text style={styles.breakdownValueText}>× {guests}</Text>
-              </View>
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Platter Subtotal</Text>
-                <Text style={styles.breakdownValueText}>₹{subtotal}</Text>
-              </View>
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Delivery & Handling ({deliveryType})</Text>
-                <Text style={[styles.breakdownValueText, deliveryPrice === 0 && { color: "#107C41", fontWeight: "800" }]}>
-                  {deliveryPrice === 0 ? "FREE" : `₹${deliveryPrice}`}
-                </Text>
-              </View>
-
-              {discount > 0 && (
-                <View style={styles.priceBreakdownRow}>
-                  <Text style={styles.breakdownLabelText}>Coupon Discount</Text>
-                  <Text style={[styles.breakdownValueText, { color: "#0F382A", fontWeight: "800" }]}>
-                    -₹{discount}
-                  </Text>
-                </View>
-              )}
-
               <View style={styles.solidDivider} />
-
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Advance Paid (40%)</Text>
-                <Text style={[styles.breakdownValueText, { color: "#166538" }]}>₹{advancePaidAmount}</Text>
-              </View>
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Balance to Collect upon Delivery (60%)</Text>
-                <Text style={styles.breakdownValueText}>₹{balanceAmountToCollect}</Text>
-              </View>
-
-              <View style={styles.solidDivider} />
-
               <View style={styles.totalPaidRow}>
-                <Text style={styles.totalPaidLabelText}>Total Amount</Text>
+                <Text style={styles.totalPaidLabelText}>Total Paid</Text>
                 <Text style={styles.cateringTotalAmountText}>₹{totalAmount}</Text>
               </View>
             </View>
           ) : (
+            /* ========== MEALBOX SUMMARY CARD ========== */
             <View style={styles.summaryCard}>
               <Text style={styles.cardHeaderTitle}>Order Summary</Text>
 
               <View style={styles.itemRowContainer}>
                 <Image source={{ uri: menuImage }} style={styles.summaryItemImage} />
-                <View style={{ flex: 1, marginLeft: 12, justifyContent: "center" }}>
-                  <Text style={styles.summaryMenuTitle}>{menuName}</Text>
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={styles.summaryMenuTitle} numberOfLines={2}>{menuName}</Text>
+                  <Text style={styles.summaryMetaText}>Chef: {chefName}</Text>
                   <Text style={styles.summaryMetaText}>{rawDurationType}</Text>
-                  <Text style={styles.summaryMetaText}>Starts: {confirmedFirstDeliveryDate}</Text>
+                  {!!resolvedDeliveryType && (
+                    <Text style={[styles.summaryMetaText, { marginTop: 2 }]}>
+                      {deliveryInfo?.emoji || "📦"} {resolvedDeliveryType}
+                    </Text>
+                  )}
                 </View>
                 <Text style={styles.summaryPriceText}>₹{totalAmount}</Text>
               </View>
 
-              {/* ✅ NEW: Delivery Type Display for MealBox Flow */}
-              {!!resolvedDeliveryType && deliveryInfo && (
-                <View style={styles.deliveryOptionRowInline}>
-                  <Text style={styles.deliveryOptionEmojiInline}>
-                    {deliveryInfo.emoji}
-                  </Text>
-                  <Text style={styles.deliveryOptionTextInline}>
-                    {resolvedDeliveryType}
-                  </Text>
-                </View>
-              )}
-
-              {/* ✅ NEW: Special Instructions Display for MealBox Flow */}
-              {resolvedSpecialInstruction.hasAny && (
-                <View style={styles.simpleSpecialInstrWrapper}>
-                  <TouchableOpacity
-                    activeOpacity={0.75}
-                    onPress={toggleSpecialInstructions}
-                    style={styles.simpleSpecialInstrTrigger}
-                  >
-                    <Ionicons
-                      name="restaurant-outline"
-                      size={14}
-                      color="#0F382A"
-                    />
-                    <Text style={styles.simpleSpecialInstrTriggerText}>
-                      Special Instructions
-                    </Text>
-                    <Animated.View
-                      style={{
-                        transform: [{ rotate: specialInstructionsChevronRotate }],
-                        marginLeft: 4,
-                      }}
-                    >
-                      <Ionicons
-                        name="chevron-down"
-                        size={14}
-                        color="#0F382A"
-                      />
-                    </Animated.View>
-                  </TouchableOpacity>
-
-                  {specialInstructionsExpanded && (
-                    <Animated.View
-                      style={[
-                        styles.simpleSpecialInstrBody,
-                        {
-                          maxHeight: specialInstructionsContentHeight,
-                          opacity: specialInstructionsContentOpacity,
-                          overflow: "hidden",
-                        },
-                      ]}
-                    >
-                      {!!resolvedSpecialInstruction.label && (
-                        <View style={styles.simpleSpecialInstrRow}>
-                          <Text style={styles.simpleSpecialInstrEmoji}>
-                            {resolvedSpecialInstruction.spiceEmoji}
-                          </Text>
-                          <Text style={styles.simpleSpecialInstrRowText}>
-                            {resolvedSpecialInstruction.label}
-                          </Text>
-                        </View>
-                      )}
-
-                      {!!resolvedSpecialInstruction.text && (
-                        <View style={styles.simpleSpecialInstrNoteBox}>
-                          <Text style={styles.simpleSpecialInstrNoteText}>
-                            {resolvedSpecialInstruction.text}
-                          </Text>
-                        </View>
-                      )}
-                    </Animated.View>
-                  )}
-                </View>
-              )}
-
               {(parsedSelections || parsedItems.length > 0) && (
                 <TouchableOpacity
                   style={styles.viewItemsContainer}
+                  activeOpacity={0.85}
                   onPress={() => {
                     setShowPreviewModal(true);
                     setTimeout(openSheet, 50);
                   }}
-                  activeOpacity={0.85}
                 >
                   <Text style={styles.viewItems}>View Selected Items</Text>
                 </TouchableOpacity>
@@ -1357,62 +1109,53 @@ export default function OrderConfirmationScreen() {
                 <Text style={styles.breakdownValueText}>₹{subtotal}</Text>
               </View>
               <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Delivery & Kitchen Charges</Text>
-                <Text style={[styles.breakdownValueText, deliveryPrice === 0 && { color: "#107C41", fontWeight: "800" }]}>
-                  {deliveryPrice === 0 ? "FREE" : `₹${deliveryPrice}`}
-                </Text>
+                <Text style={styles.breakdownLabelText}>Delivery</Text>
+                <Text style={styles.breakdownValueText}>₹{deliveryPrice}</Text>
               </View>
               {discount > 0 && (
                 <View style={styles.priceBreakdownRow}>
-                  <Text style={styles.breakdownLabelText}>Coupon Discount</Text>
-                  <Text style={[styles.breakdownValueText, { color: "#0F382A", fontWeight: "800" }]}>
-                    -₹{discount}
-                  </Text>
+                  <Text style={styles.breakdownLabelText}>Discount</Text>
+                  <Text style={[styles.breakdownValueText, { color: "#166534" }]}>-₹{discount}</Text>
                 </View>
               )}
 
               <View style={styles.solidDivider} />
-
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Advance Paid (40%)</Text>
-                <Text style={[styles.breakdownValueText, { color: "#166538" }]}>₹{advancePaidAmount}</Text>
-              </View>
-              <View style={styles.priceBreakdownRow}>
-                <Text style={styles.breakdownLabelText}>Balance to Collect on Delivery (60%)</Text>
-                <Text style={styles.breakdownValueText}>₹{balanceAmountToCollect}</Text>
-              </View>
-
-              <View style={styles.solidDivider} />
-
               <View style={styles.totalPaidRow}>
-                <Text style={styles.totalPaidLabelText}>Total Amount</Text>
+                <Text style={styles.totalPaidLabelText}>Total Paid</Text>
                 <Text style={styles.totalPaidValueText}>₹{totalAmount}</Text>
               </View>
             </View>
           )}
 
-          {/* 2. Upcoming Deliveries Section Card (MEALBOX FLOW EXCLUSIVE) */}
+          {/* ========== IMPROVED UPCOMING DELIVERIES (MEALBOX ONLY) ========== */}
           {!isCateringFlow && !isHomemadeFlow && scheduledDatesArray.length > 0 && (
             <View style={styles.refUpcomingContainerCard}>
+              {/* Header */}
               <View style={styles.refUpcomingHeaderRow}>
-                <Text style={styles.refUpcomingTitleText}>Upcoming Deliveries</Text>
-                <TouchableOpacity style={styles.refManageAllBtn} activeOpacity={0.7} onPress={handleNavigateToMyOrders}>
-                  <Text style={styles.refManageAllBtnText}>Manage All</Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <View style={styles.upcomingHeaderIconCircle}>
+                    <Ionicons name="calendar" size={16} color="#166534" />
+                  </View>
+                  <View>
+                    <Text style={styles.refUpcomingTitleText}>Upcoming Deliveries</Text>
+                    <Text style={styles.upcomingSubtitleText}>
+                      {scheduledDatesArray.length} scheduled delivery
+                      {scheduledDatesArray.length > 1 ? "s" : ""}
+                    </Text>
+                  </View>
+                </View>
               </View>
 
+              {/* Delivery Cards */}
               <View style={styles.refDeliveriesListContainer}>
-                {scheduledDatesArray.map((dateItem: string, idx: number) => {
-                  const { dayName, dayNumber, fullString } = parseDateParts(dateItem);
-
-                  // ✅ NEW: Read this specific delivery date's status from
-                  // the order's deliverySchedules array. Falls back to
-                  // "Scheduled" when no schedule exists for this date.
-                  const perDateStatus = resolveScheduleStatusForDate(dateItem);
-                  const statusStyle = resolveScheduleStatusStyle(perDateStatus);
+                {scheduledDatesArray.map((dateStr: string, idx: number) => {
+                  const { dayName, dayNumber } = parseDateParts(dateStr);
+                  const statusText = resolveScheduleStatusForDate(dateStr);
+                  const statusStyle = resolveScheduleStatusStyle(statusText);
 
                   return (
-                    <View key={`conf-upcoming-item-${idx}`} style={styles.refDeliveryCardRow}>
+                    <View key={`conf-upcoming-${idx}`} style={styles.refDeliveryCardRow}>
+                      {/* Date Tile */}
                       <View style={styles.refDateTile}>
                         <View style={styles.refDateTileHeader}>
                           <Text style={styles.refDateTileHeaderText}>{dayName}</Text>
@@ -1422,12 +1165,12 @@ export default function OrderConfirmationScreen() {
                         </View>
                       </View>
 
+                      {/* Info + Status */}
                       <View style={styles.refDeliveryInfoCol}>
-                        <Text style={styles.refDeliveryDateTitle}>{fullString}</Text>
+                        <Text style={styles.refDeliveryDateTitle} numberOfLines={1}>
+                          {dateStr}
+                        </Text>
 
-                        {/* ✅ UPDATED: Dynamically render this delivery's
-                            own status from the persisted deliverySchedules
-                            array, with a color-coded pill. */}
                         <View
                           style={[
                             styles.refDeliveryStatusPill,
@@ -1437,51 +1180,38 @@ export default function OrderConfirmationScreen() {
                             },
                           ]}
                         >
+                          <View
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: 3,
+                              backgroundColor: statusStyle.pillText,
+                              marginRight: 6,
+                            }}
+                          />
                           <Text
                             style={[
                               styles.refDeliveryStatusPillText,
                               { color: statusStyle.pillText },
                             ]}
                           >
-                            {perDateStatus}
+                            {statusText}
                           </Text>
                         </View>
                       </View>
-
-                      <TouchableOpacity style={styles.refPauseBtn} activeOpacity={0.7}>
-                        <Text style={styles.refPauseBtnText}>Pause</Text>
-                      </TouchableOpacity>
                     </View>
                   );
                 })}
               </View>
-
-              <View style={styles.refControlCard}>
-                <View style={styles.refControlIconBox}>
-                  <Ionicons name="leaf-outline" size={20} color="#0F382A" />
-                </View>
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.refControlTitle}>You're in control!</Text>
-                  <Text style={styles.refControlSubtitle}>
-                    Change your schedule anytime. We're here to make healthy eating simple for you.
-                  </Text>
-                </View>
-              </View>
             </View>
           )}
 
-          {/* 3. What's Next Tracker Card */}
+          {/* ========== WHAT'S NEXT TRACKER ========== */}
           <View style={styles.whatsNextCard}>
             <View style={styles.whatsNextHeaderRow}>
               <Text style={styles.cardHeaderTitle}>What's Next?</Text>
-              <View style={[styles.groceryBagIllustration, (isCateringFlow || isHomemadeFlow) && { backgroundColor: "rgba(15, 56, 42, 0.08)" }]}>
-                {isCateringFlow ? (
-                  <Ionicons name="restaurant" size={22} color="#0F382A" />
-                ) : isHomemadeFlow ? (
-                  <Ionicons name="fast-food-outline" size={22} color="#166348" />
-                ) : (
-                  <Ionicons name="bag-handle-outline" size={24} color="#0F382A" />
-                )}
+              <View style={styles.groceryBagIllustration}>
+                <Ionicons name="bag-check-outline" size={20} color="#0F382A" />
               </View>
             </View>
 
@@ -1489,72 +1219,58 @@ export default function OrderConfirmationScreen() {
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.completedStepCircle}>
-                    <Ionicons name="checkmark" size={13} color="#FAF8F5" />
+                    <Ionicons name="checkmark" size={14} color="#FAF8F5" />
                   </View>
                   <View style={styles.activeTimelineLine} />
                 </View>
                 <View style={styles.timelineContentRight}>
-                  <Text style={styles.activeStepTitle}>
-                    {isCateringFlow ? "Booking Confirmed & Advance Paid" : "Order Confirmed & Advance Paid"}
-                  </Text>
-                  <Text style={styles.stepTimestampText}>
-                    {isCateringFlow ? `Event Date: ${confirmedFirstDeliveryDate}` : `1st Delivery: ${confirmedFirstDeliveryDate}`}
-                  </Text>
+                  <Text style={styles.activeStepTitle}>Order Placed</Text>
+                  <Text style={styles.stepTimestampText}>Just now</Text>
                 </View>
               </View>
 
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.currentStepCircle}>
-                    <MaterialCommunityIcons name="chef-hat" size={16} color="#15803D" />
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#15803D" }} />
                   </View>
                   <View style={styles.inactiveTimelineLine} />
                 </View>
                 <View style={styles.timelineContentRight}>
-                  <Text style={styles.currentStepTitle}>
-                    {isCateringFlow
-                      ? "Platter Preparation by Catering Chefs"
-                      : (isHomemadeFlow ? `Cooking by Chef ${chefName}` : "Preparing by Chef")}
-                  </Text>
-                  <Text style={styles.stepSubtitleText}>
-                    {isCateringFlow
-                      ? "Fresh ingredients are sourced and kitchen staff prepares dishes right on schedule."
-                      : (isHomemadeFlow ? "The home chef has received your order and started freshly preparing your meals." : "We will notify you once your meals are being prepared")}
-                  </Text>
+                  <Text style={styles.currentStepTitle}>Advance Verification</Text>
+                  <Text style={styles.stepSubtitleText}>Admin is verifying your payment proof</Text>
                 </View>
               </View>
 
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.inactiveStepCircle}>
-                    <MaterialCommunityIcons name="truck-delivery-outline" size={16} color="#9EA8A3" />
+                    <Ionicons name="restaurant-outline" size={13} color="#5B756C" />
                   </View>
                   <View style={styles.inactiveTimelineLine} />
                 </View>
                 <View style={styles.timelineContentRight}>
-                  <Text style={styles.inactiveStepTitle}>
-                    {isCateringFlow ? "Transport & Venue Buffet Setup" : "Out for Delivery"}
-                  </Text>
-                  <Text style={styles.stepSubtitleText}>
-                    {isCateringFlow
-                      ? `Our delivery crew arrives with warmers & food trays at ${addressDetails}.`
-                      : `A delivery partner will bring your fresh food hot to ${addressDetails}.`}
-                  </Text>
+                  <Text style={styles.inactiveStepTitle}>Chef Preparing</Text>
+                  <Text style={styles.stepSubtitleText}>Your order will be cooked fresh</Text>
                 </View>
               </View>
 
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.inactiveStepCircle}>
-                    <Ionicons name="sparkles-outline" size={16} color="#9EA8A3" />
+                    <Ionicons name="bicycle-outline" size={13} color="#5B756C" />
                   </View>
                 </View>
                 <View style={styles.timelineContentRight}>
-                  <Text style={styles.inactiveStepTitle}>
-                    {isCateringFlow ? "Balance Collection & Feast" : "Balance Collection & Delivery"}
-                  </Text>
+                  <Text style={styles.inactiveStepTitle}>Out for Delivery</Text>
                   <Text style={styles.stepSubtitleText}>
-                    Pay balance ₹{balanceAmountToCollect} upon delivery and enjoy your fresh meal!
+                    {isHomemadeFlow
+                      ? confirmedFirstDeliveryDate
+                      : isCateringFlow
+                      ? `${eventDate} • ${eventTime}`
+                      : scheduledDatesArray.length > 0
+                      ? scheduledDatesArray[0]
+                      : rawDeliveryDate}
                   </Text>
                 </View>
               </View>
@@ -1563,26 +1279,26 @@ export default function OrderConfirmationScreen() {
 
           {/* Action Buttons */}
           <TouchableOpacity
-            activeOpacity={0.88}
             style={styles.viewOrdersButton}
+            activeOpacity={0.9}
             onPress={handleNavigateToMyOrders}
           >
+            <Ionicons name="list-outline" size={18} color="#FAF8F5" style={{ marginRight: 8 }} />
             <Text style={styles.viewOrdersButtonText}>View My Orders</Text>
-            <Feather name="arrow-right" size={18} color="#FAF8F5" style={{ marginLeft: 6 }} />
           </TouchableOpacity>
 
           <TouchableOpacity
-            activeOpacity={0.8}
             style={styles.backHomeButton}
-            onPress={() => router.dismissAll()}
+            activeOpacity={0.9}
+            onPress={() => router.replace("/")}
           >
-            <Ionicons name="home-outline" size={18} color="#0F382A" style={{ marginRight: 6 }} />
+            <Ionicons name="home-outline" size={17} color="#0F382A" style={{ marginRight: 8 }} />
             <Text style={styles.backHomeButtonText}>Back to Home</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
 
-      {/* Dynamic Selections Preview Modal */}
+      {/* ========== SELECTIONS PREVIEW MODAL ========== */}
       <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closeSheet}>
         <BlurView intensity={30} tint="dark" style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closeSheet} />
@@ -1594,7 +1310,7 @@ export default function OrderConfirmationScreen() {
             ]}
           >
             <View style={styles.drawerHandle} />
-            <TouchableOpacity style={styles.previewCloseBtn} onPress={closeSheet} activeOpacity={0.85}>
+            <TouchableOpacity style={styles.previewCloseBtn} onPress={closeSheet}>
               <Ionicons name="close" size={20} color="#FAF8F5" />
             </TouchableOpacity>
 
@@ -1605,13 +1321,14 @@ export default function OrderConfirmationScreen() {
                 </Text>
                 <Text style={{ fontSize: 12.5, color: "#5B756C", marginLeft: 2, fontWeight: "500" }}>
                   {isCateringFlow
-                    ? "Confirmed catering dishes & add-ons"
-                    : (isHomemadeFlow ? "Confirmed homemade items" : "Inspecting confirmed choices")}
+                    ? "Review your platter menu & add-ons"
+                    : isHomemadeFlow
+                    ? "Review your homemade dishes"
+                    : "Tap pills to inspect or confirm choices"}
                 </Text>
               </View>
             </View>
 
-            {/* MealBox Tab Pills Header (Mealbox only) */}
             {isMealBoxFlow && parsedSelections && !Array.isArray(parsedSelections) && (
               <View style={styles.pillTabsWrapperBlock}>
                 {Object.keys(parsedSelections).map((dayKey) => {
@@ -1664,8 +1381,8 @@ export default function OrderConfirmationScreen() {
               </View>
             )}
 
-            <ScrollView 
-              style={{ width: "100%", marginTop: 8 }} 
+            <ScrollView
+              style={{ width: "100%", marginTop: 8 }}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 120 }}
             >
@@ -1690,7 +1407,12 @@ export default function OrderConfirmationScreen() {
                             return (
                               <View key={`conf-cat-item-${i}`} style={styles.previewItemCard}>
                                 <Image
-                                  source={{ uri: item.imageUrl || item.image || "https://images.unsplash.com/photo-1544025162-d76694265947?w=120&auto=format&fit=crop" }}
+                                  source={{
+                                    uri:
+                                      item.imageUrl ||
+                                      item.image ||
+                                      "https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=120&auto=format&fit=crop",
+                                  }}
                                   style={styles.previewItemImage}
                                 />
                                 <Text style={styles.previewItemName}>{item.name}</Text>
@@ -1720,14 +1442,21 @@ export default function OrderConfirmationScreen() {
                       {parsedAddons.map((addon: any, idx: number) => (
                         <View key={`conf-addon-item-${idx}`} style={styles.previewItemCard}>
                           <Image
-                            source={{ uri: addon.imageUrl || addon.image || "https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=120&auto=format&fit=crop" }}
+                            source={{
+                              uri:
+                                addon.imageUrl ||
+                                addon.image ||
+                                "https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=120&auto=format&fit=crop",
+                            }}
                             style={styles.previewItemImage}
                           />
                           <Text style={styles.previewItemName}>
                             {addon.name} × {addon.count}
                           </Text>
                           <View style={styles.extraTag}>
-                            <Text style={styles.extraTagText}>+₹{addon.price * addon.count}/plate</Text>
+                            <Text style={styles.extraTagText}>
+                              +₹{addon.price * addon.count}/plate
+                            </Text>
                           </View>
                           <Ionicons
                             name="checkmark-circle"
@@ -1743,18 +1472,25 @@ export default function OrderConfirmationScreen() {
               ) : isHomemadeFlow ? (
                 <View style={styles.previewCategoryCard}>
                   <View style={styles.previewCategoryHeader}>
-                    <Text style={styles.previewCategoryTitle}>Confirmed Items ({parsedItems.length})</Text>
+                    <Text style={styles.previewCategoryTitle}>
+                      Confirmed Items ({parsedItems.length})
+                    </Text>
                   </View>
                   {parsedItems.map((dishItem: any, idx: number) => (
                     <View key={`conf-homemade-modal-item-${idx}`} style={styles.previewItemCard}>
                       <Image
-                        source={{ uri: dishItem.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
+                        source={{
+                          uri:
+                            dishItem.image ||
+                            "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop",
+                        }}
                         style={styles.previewItemImage}
                       />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.previewItemName}>{dishItem.name}</Text>
                         <Text style={styles.servingPortionPillText}>
-                          {dishItem.selectedQtyConfig || "Standard"} • Qty: {dishItem.quantity || 1}
+                          {dishItem.selectedQtyConfig || "Standard"} • Qty:{" "}
+                          {dishItem.quantity || 1}
                         </Text>
                       </View>
                       <Text style={styles.homemadeDishPriceHighlight}>
@@ -1783,57 +1519,69 @@ export default function OrderConfirmationScreen() {
                       No items configured for this weekday.
                     </Text>
                   ) : (
-                    Object.entries(groupedPreviewDayItemsMap).map(([sectionTitle, dishesGroupArray]) => {
-                      if (!dishesGroupArray || dishesGroupArray.length === 0) return null;
-                      return (
-                        <View key={`conf-preview-section-${sectionTitle}`} style={{ marginTop: 14 }}>
-                          <View style={styles.sectionHeaderLabelContainerTag}>
-                            <Text style={styles.sectionHeaderLabelContainerTagText}>{sectionTitle}</Text>
-                          </View>
+                    Object.entries(groupedPreviewDayItemsMap).map(
+                      ([sectionTitle, dishesGroupArray]) => {
+                        if (!dishesGroupArray || dishesGroupArray.length === 0) return null;
+                        return (
+                          <View
+                            key={`conf-preview-section-${sectionTitle}`}
+                            style={{ marginTop: 14 }}
+                          >
+                            <View style={styles.sectionHeaderLabelContainerTag}>
+                              <Text style={styles.sectionHeaderLabelContainerTagText}>
+                                {sectionTitle}
+                              </Text>
+                            </View>
 
-                          {dishesGroupArray.map((dishItem: any, idx: number) => {
-                            const isExtraItemAddon = sectionTitle === "ADD ON'S" || dishItem.type === "addon";
-                            return (
-                              <View
-                                key={`conf-dish-item-${idx}`}
-                                style={styles.previewSelectionRowItemBlock}
-                              >
-                                <Image
-                                  source={{
-                                    uri: dishItem.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop",
-                                  }}
-                                  style={styles.modalCircularFoodThumbGraphic}
-                                />
-                                <View style={{ flex: 1, paddingLeft: 12 }}>
-                                  <Text style={styles.modalItemNameTextString}>{dishItem.name}</Text>
-                                </View>
+                            {dishesGroupArray.map((dishItem: any, idx: number) => {
+                              const isExtraItemAddon =
+                                sectionTitle === "ADD ON'S" || dishItem.type === "addon";
+                              return (
                                 <View
-                                  style={[
-                                    styles.includedBadgePillBox,
-                                    isExtraItemAddon
-                                      ? styles.includedBadgePillBoxExtra
-                                      : styles.includedBadgePillBoxStandard,
-                                  ]}
+                                  key={`conf-dish-item-${idx}`}
+                                  style={styles.previewSelectionRowItemBlock}
                                 >
-                                  <Text
+                                  <Image
+                                    source={{
+                                      uri:
+                                        dishItem.image ||
+                                        "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop",
+                                    }}
+                                    style={styles.modalCircularFoodThumbGraphic}
+                                  />
+                                  <View style={{ flex: 1, paddingLeft: 12 }}>
+                                    <Text style={styles.modalItemNameTextString}>
+                                      {dishItem.name}
+                                    </Text>
+                                  </View>
+                                  <View
                                     style={[
-                                      styles.includedBadgePillBoxText,
+                                      styles.includedBadgePillBox,
                                       isExtraItemAddon
-                                        ? styles.includedBadgePillBoxTextExtra
-                                        : styles.includedBadgePillBoxTextStandard,
+                                        ? styles.includedBadgePillBoxExtra
+                                        : styles.includedBadgePillBoxStandard,
                                     ]}
                                   >
-                                    {isExtraItemAddon
-                                      ? `Extra ×${dishItem.qty || dishItem.quantity || 1}`
-                                      : "Included"}
-                                  </Text>
+                                    <Text
+                                      style={[
+                                        styles.includedBadgePillBoxText,
+                                        isExtraItemAddon
+                                          ? styles.includedBadgePillBoxTextExtra
+                                          : styles.includedBadgePillBoxTextStandard,
+                                      ]}
+                                    >
+                                      {isExtraItemAddon
+                                        ? `Extra ×${dishItem.qty || dishItem.quantity || 1}`
+                                        : "Included"}
+                                    </Text>
+                                  </View>
                                 </View>
-                              </View>
-                            );
-                          })}
-                        </View>
-                      );
-                    })
+                              );
+                            })}
+                          </View>
+                        );
+                      }
+                    )
                   )}
                 </View>
               ) : (
@@ -1841,7 +1589,9 @@ export default function OrderConfirmationScreen() {
                   <View key={`conf-item-${idx}`} style={styles.previewSelectionRowItemBlock}>
                     <Image
                       source={{
-                        uri: item.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop",
+                        uri:
+                          item.image ||
+                          "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop",
                       }}
                       style={styles.modalCircularFoodThumbGraphic}
                     />
@@ -1864,9 +1614,7 @@ export default function OrderConfirmationScreen() {
                 onPress={closeSheet}
                 style={styles.modalAbsoluteFooterCTAButtonSolid}
               >
-                <Text style={styles.modalAbsoluteFooterCTAButtonSolidText}>
-                  Close Summary
-                </Text>
+                <Text style={styles.modalAbsoluteFooterCTAButtonSolidText}>Close Summary</Text>
               </TouchableOpacity>
             </View>
           </Animated.View>
@@ -2388,20 +2136,20 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#0B261D",
   },
-  viewItemsContainer: { 
-    marginTop: 12, 
-    overflow: "hidden", 
+  viewItemsContainer: {
+    marginTop: 12,
+    overflow: "hidden",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.1)",
   },
-  viewItems: { 
-    color: "#0F382A", 
-    fontWeight: "800", 
-    textAlign: "center", 
-    backgroundColor: "rgba(15, 56, 42, 0.06)", 
-    paddingVertical: 12, 
-    fontSize: 13 
+  viewItems: {
+    color: "#0F382A",
+    fontWeight: "800",
+    textAlign: "center",
+    backgroundColor: "rgba(15, 56, 42, 0.06)",
+    paddingVertical: 12,
+    fontSize: 13,
   },
   dashedDivider: {
     height: 1,
@@ -2447,7 +2195,21 @@ const styles = StyleSheet.create({
     color: "#0F382A",
   },
 
-  /* Reference Image Style Upcoming Deliveries Container */
+  /* ========== IMPROVED UPCOMING DELIVERIES STYLES ========== */
+  upcomingHeaderIconCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: "rgba(22, 101, 52, 0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  upcomingSubtitleText: {
+    fontSize: 12,
+    color: "#5B756C",
+    fontWeight: "500",
+    marginTop: 1,
+  },
   refUpcomingContainerCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
@@ -2457,50 +2219,39 @@ const styles = StyleSheet.create({
     borderColor: "rgba(15, 56, 42, 0.08)",
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.03,
-    shadowRadius: 10,
-    elevation: 2,
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 3,
   },
   refUpcomingHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
+    marginBottom: 16,
   },
   refUpcomingTitleText: {
-    fontSize: 17,
+    fontSize: 16.5,
     fontWeight: "800",
     color: "#0B261D",
     letterSpacing: -0.2,
   },
-  refManageAllBtn: {
-    backgroundColor: "#166534",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-  },
-  refManageAllBtnText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#FAF8F5",
-  },
   refDeliveriesListContainer: {
-    gap: 10,
+    gap: 12,
   },
   refDeliveryCardRow: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "rgba(15, 56, 42, 0.08)",
+    backgroundColor: "#FAF8F5",
     borderRadius: 16,
-    padding: 10,
-    backgroundColor: "#FFFFFF",
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.07)",
   },
   refDateTile: {
     width: 48,
-    height: 48,
+    height: 52,
     borderRadius: 12,
-    backgroundColor: "#FAF8F5",
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.12)",
     overflow: "hidden",
@@ -2509,13 +2260,14 @@ const styles = StyleSheet.create({
   refDateTileHeader: {
     width: "100%",
     backgroundColor: "#0F382A",
-    paddingVertical: 2,
+    paddingVertical: 3,
     alignItems: "center",
   },
   refDateTileHeaderText: {
-    fontSize: 9,
+    fontSize: 9.5,
     fontWeight: "900",
     color: "#FAF8F5",
+    letterSpacing: 0.3,
   },
   refDateTileBody: {
     flex: 1,
@@ -2523,40 +2275,34 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   refDateTileNumberText: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "800",
     color: "#0B261D",
   },
   refDeliveryInfoCol: {
     flex: 1,
-    marginLeft: 12,
+    marginLeft: 14,
   },
   refDeliveryDateTitle: {
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: "700",
     color: "#0B261D",
+    marginBottom: 6,
   },
-  /* ✅ NEW: dynamic per-date status pill (replaces the previous
-     static "Scheduled" text subtext). The pill's background, border
-     and text colors are set inline based on the schedule status so
-     each upcoming delivery card reflects its own current state. */
   refDeliveryStatusPill: {
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
-    marginTop: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
     borderWidth: 1,
   },
   refDeliveryStatusPillText: {
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: "800",
     letterSpacing: 0.2,
   },
-  /* Legacy style retained for backward compatibility (no longer used
-     by the Upcoming Deliveries card, kept in case other code references it). */
   refDeliveryStatusSubtext: {
     fontSize: 12,
     color: "#5B756C",
@@ -2774,7 +2520,14 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 20,
   },
-  drawerHandle: { width: 40, height: 4.5, backgroundColor: "rgba(15, 56, 42, 0.15)", borderRadius: 2.5, alignSelf: "center", marginBottom: 16 },
+  drawerHandle: {
+    width: 40,
+    height: 4.5,
+    backgroundColor: "rgba(15, 56, 42, 0.15)",
+    borderRadius: 2.5,
+    alignSelf: "center",
+    marginBottom: 16,
+  },
   previewCloseBtn: {
     position: "absolute",
     top: -22,
@@ -2794,7 +2547,12 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 5,
   },
-  previewHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
+  previewHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
   previewTitle: {
     fontSize: 19,
     fontWeight: "900",
@@ -2972,7 +2730,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 10,
   },
-  previewCategoryTitle: { fontSize: 14.5, fontWeight: "800", color: "#0B261D", letterSpacing: -0.2 },
+  previewCategoryTitle: {
+    fontSize: 14.5,
+    fontWeight: "800",
+    color: "#0B261D",
+    letterSpacing: -0.2,
+  },
   previewItemCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -2984,10 +2747,33 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.06)",
   },
-  previewItemImage: { width: 40, height: 40, borderRadius: 10, marginRight: 12, backgroundColor: "#E5ECE8" },
-  previewItemName: { fontSize: 13.5, fontWeight: "700", color: "#0B261D", flex: 1 },
-  extraTag: { backgroundColor: "rgba(15, 56, 42, 0.08)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginLeft: 8, borderWidth: 1, borderColor: "rgba(15, 56, 42, 0.12)" },
-  extraTagText: { fontSize: 10.5, fontWeight: "800", color: "#0F382A" },
+  previewItemImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    marginRight: 12,
+    backgroundColor: "#E5ECE8",
+  },
+  previewItemName: {
+    fontSize: 13.5,
+    fontWeight: "700",
+    color: "#0B261D",
+    flex: 1,
+  },
+  extraTag: {
+    backgroundColor: "rgba(15, 56, 42, 0.08)",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.12)",
+  },
+  extraTagText: {
+    fontSize: 10.5,
+    fontWeight: "800",
+    color: "#0F382A",
+  },
   modalAbsoluteFooterCTAWrapper: {
     position: "absolute",
     bottom: 0,

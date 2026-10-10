@@ -607,9 +607,10 @@ setInterval(async () => {
  *    ✅ MEALBOX FLOW — UPCOMING DELIVERIES PERSISTENCE:
  *       For serviceType === "mealbox", the incoming `upcomingDeliveries`
  *       array (from the checkout screen) is:
- *         1) Sorted ascending by month/day.
- *         2) Saved on the order as `order.upcomingDeliveries`.
- *         3) Turned into per-date `deliverySchedules` entries — each with
+ *         1) Parsed (handles JSON string from multipart FormData).
+ *         2) Sorted ascending by month/day.
+ *         3) Saved on the order as `order.upcomingDeliveries`.
+ *         4) Turned into per-date `deliverySchedules` entries — each with
  *            its own `date`, `status: "Scheduled"`, `timeSlot`, `address`,
  *            optional lat/lng, and a seeded `statusTimeline`.
  *       These per-date schedules are what OrderConfirmationScreen,
@@ -831,7 +832,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     }
 
     const generatedOrderId = "KB" + Date.now().toString().slice(-8);
-    const sortedDeliveries = Array.isArray(upcomingDeliveries) ? sortDatesAscending(upcomingDeliveries) : [];
+
+    // ✅ CRITICAL FIX: Parse upcomingDeliveries when it arrives as a JSON string
+    //    from multipart/form-data (CheckoutScreen always does JSON.stringify).
+    //    Without this, Array.isArray(upcomingDeliveries) is false and the list
+    //    is lost → empty upcomingDeliveries on the order document.
+    const parsedUpcomingDeliveries = parseIfJsonString(upcomingDeliveries, []);
+    const sortedDeliveries = Array.isArray(parsedUpcomingDeliveries)
+      ? sortDatesAscending(parsedUpcomingDeliveries)
+      : [];
+
     const effectiveChefId = coerceToString(chefId);
     const effectiveChefName = coerceToString(chefName) || safeRestaurantName || "";
     const effectiveRestaurantName = safeRestaurantName || coerceToString(chefName) || "";
@@ -1108,9 +1118,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         eventTime: safeEventTime || safeDeliveryTimeSlot || "",
         deliveryType: safeDeliveryType || "Standard",
         pricePerPlate: Number(pricePerPlate) || 0,
-        addons: Array.isArray(addons) ? addons : [],
-        selections: selections || null,
-        items: items || [],
+        addons: Array.isArray(addons) ? addons : parseIfJsonString(addons, []),
+        selections: parseIfJsonString(selections, null),
+        items: parseIfJsonString(items, []),
         // ✅ Timestamps for downstream UIs
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
@@ -1219,8 +1229,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         upcomingDeliveries: effectiveUpcomingDeliveries,
         deliverySchedules: initialSchedules,
         pausedDates: [],
-        selections: selections || null,
-        items: items || [],
+        selections: parseIfJsonString(selections, null),
+        items: parseIfJsonString(items, []),
         // ✅ Timestamps for downstream UIs
         orderPlacedAt,
         estimatedDeliveryAt: resolvedEstimatedDeliveryAt,
