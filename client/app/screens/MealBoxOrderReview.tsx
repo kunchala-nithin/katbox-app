@@ -1350,7 +1350,7 @@ const MealBoxOrderReview = () => {
 
               <ScrollView 
                 style={styles.modalScrollView} 
-                contentContainerStyle={styles.modalScrollContent}
+                contentContainerStyle={[styles.modalScrollContent, { paddingBottom: 120 }]}
                 showsVerticalScrollIndicator={false}
               >
                 <View style={styles.modalDaySectionBox}>

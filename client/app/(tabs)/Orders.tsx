@@ -359,10 +359,13 @@ const resolveHomemadeHeroImage = (order: any): string => {
 };
 
 /* ─────────────────────────────────────────────────────────────────
-   ✅ HELPER — Cancellation badge label.
-   Returns the exact display text for a cancelled order based on
-   `cancellationSource`. Returns `null` when the order is not
-   cancelled, so callers can decide whether to render a badge at all.
+   ✅ HELPER — Cancellation badge label (CUSTOMER SCREEN).
+
+   Note: On the CUSTOMER screen we show "Cancelled (You)" for the
+   customer's own cancellations, so it reads naturally in first
+   person. The admin and chef screens have their OWN copies of this
+   helper and continue to show "Cancelled by Customer" — the label
+   change here is intentionally customer-screen only.
    ───────────────────────────────────────────────────────────────── */
 const getCancellationBadgeLabel = (order: any): string | null => {
   if (!order) return null;
@@ -370,7 +373,7 @@ const getCancellationBadgeLabel = (order: any): string | null => {
   if (statusLower !== "cancelled" && statusLower !== "canceled") return null;
 
   const sourceLower = String(order.cancellationSource || "").trim().toLowerCase();
-  if (sourceLower === "cancelled by customer") return "Cancelled by Customer";
+  if (sourceLower === "cancelled by customer") return "Cancelled (You)";
   if (sourceLower === "cancelled by chef") return "Cancelled by Chef";
   return "Cancelled";
 };
@@ -1491,7 +1494,7 @@ export default function MyOrdersScreen() {
     handleDisabledCancelTap(order);
   };
 
-  // ✅ NEW — Explicitly call the backend cancel endpoint.
+  // ✅ Explicitly call the backend cancel endpoint.
   const confirmCancelOrder = async (orderId: string) => {
     if (!orderId) return;
 
@@ -1557,7 +1560,7 @@ export default function MyOrdersScreen() {
     }
   };
 
-  // ✅ NEW — Combined message for any disabled-status tap.
+  // ✅ Combined message for any disabled-status tap.
   const handleDisabledCancelTap = (order: any) => {
     if (!order) return;
     Alert.alert(
@@ -4178,7 +4181,11 @@ export default function MyOrdersScreen() {
               </View>
             )}
 
-            <ScrollView style={{ width: "100%", marginTop: 8 }} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              style={{ width: "100%", marginTop: 8 }} 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 120 }}
+            >
               {isPreviewHomemade ? (
                 <View style={styles.previewCategoryCard}>
                   <View style={styles.previewCategoryHeader}>

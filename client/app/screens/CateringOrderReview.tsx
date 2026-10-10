@@ -2016,7 +2016,10 @@ export default function ChefOrderReviewScreen() {
 
               <Text style={styles.previewTitle}>Selected Banquet Items</Text>
 
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              <ScrollView 
+                showsVerticalScrollIndicator={false} 
+                contentContainerStyle={{ paddingBottom: 120 }}
+              >
                 {selections?.map((cat: any, index: number) => {
                   if (!cat.selected?.length) return null;
                   let count = 0;

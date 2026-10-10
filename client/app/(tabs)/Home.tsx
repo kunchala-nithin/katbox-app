@@ -288,6 +288,10 @@ export default function HomeScreen() {
   const lastBannersFetchedAtRef = useRef<number>(0);
 
   // ─── Cart Count State ───
+  // ✅ UPDATED: Now represents the number of DISTINCT SERVICE TYPES present
+  //    in the cart (mealbox / catering / homemade / quickbites) rather than
+  //    the raw sum of totalItems. This gives the customer a clean "how many
+  //    active cart types do I have" indicator above the cart icon.
   const [cartItemCount, setCartItemCount] = useState<number>(0);
 
   // ─── Location / Address States ───
@@ -587,16 +591,38 @@ export default function HomeScreen() {
     [chefsData.length]
   );
 
-  // Fetch Cart Item Count
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ UPDATED: fetchCartCount
+  //
+  //    BEFORE: summed `totalItems` across all cart documents.
+  //    AFTER:  counts the number of DISTINCT SERVICE TYPES present in the
+  //            cart (e.g. "mealbox", "catering", "homemade", "quickbites").
+  //
+  //    Rationale: The customer may have multiple cart documents — one per
+  //    service type. Showing the count of distinct service types gives them
+  //    a clean, meaningful indicator above the cart icon (e.g. "2" means
+  //    they have 2 active cart categories). This is what was requested.
+  //
+  //    - Case-insensitive normalization guards against "MealBox" vs "mealbox".
+  //    - Blank / missing serviceType values are silently dropped so they
+  //      don't inflate the count.
+  //    - Fully defensive against non-array `cart` payloads.
+  // ─────────────────────────────────────────────────────────────────────────
   const fetchCartCount = useCallback(async () => {
     try {
       const res = await api.get('/api/cart');
-      if (res.data.success && res.data.cart) {
-        const totalCount = res.data.cart.reduce(
-          (acc: number, item: any) => acc + (item.totalItems || 1),
-          0
-        );
-        setCartItemCount(totalCount);
+      if (res.data && res.data.success && Array.isArray(res.data.cart)) {
+        const distinctServiceTypes = new Set<string>();
+
+        res.data.cart.forEach((cartDoc: any) => {
+          if (!cartDoc) return;
+          const rawType = String(cartDoc.serviceType || '').trim().toLowerCase();
+          if (rawType.length > 0) {
+            distinctServiceTypes.add(rawType);
+          }
+        });
+
+        setCartItemCount(distinctServiceTypes.size);
       } else {
         setCartItemCount(0);
       }

@@ -14,6 +14,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  StatusBar,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -1945,86 +1946,162 @@ export default function CheckOutScreen() {
         </View>
       </Modal>
 
-      {/* ================= SCANNER & VERIFICATION PROOF MODAL ================= */}
+      {/* ================= SCANNER & VERIFICATION PROOF MODAL =================
+          ✅ FULL SCREEN MODAL — occupies the ENTIRE device viewport edge-to-edge.
+          - `presentationStyle="fullScreen"` makes the modal render as a true
+            full-screen overlay (no rounded sheet corners, no bottom-sheet gap).
+          - `statusBarTranslucent` allows the modal content to extend behind the
+            status bar so the top green header truly touches the top edge.
+          - `animationType="slide"` keeps the original slide-up transition.
+          - Inside, the container is `flex: 1` with `backgroundColor: "#FAF8F5"`
+            so it fills every pixel of the screen.
+          - Padding uses `insets.top` and `insets.bottom` so content respects
+            device notches, home indicators, and safe areas without leaving any
+            uncovered strip of background. */}
       <Modal
         visible={showScannerModal}
-        transparent
+        transparent={false}
         animationType="slide"
+        presentationStyle="fullScreen"
+        statusBarTranslucent
         onRequestClose={handleRequestCloseScannerModal}
       >
-        <View style={styles.modalOverlay}>
-          <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFillObject} />
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => {}} />
-
+        <StatusBar barStyle="dark-content" backgroundColor="#FAF8F5" translucent />
+        <View style={styles.fullScreenScannerContainer}>
           <KeyboardAvoidingView
             behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={styles.scannerModalContainer}
+            style={styles.fullScreenScannerKeyboardView}
           >
-            <View style={styles.drawerHandle} />
-            <TouchableOpacity 
-              style={styles.previewCloseBtn} 
-              onPress={handleRequestCloseScannerModal}
-              activeOpacity={0.85}
+            {/* Full-screen top header (respects safe-area top) */}
+            <View
+              style={[
+                styles.fullScreenScannerHeader,
+                { paddingTop: Math.max(insets.top, 12) },
+              ]}
             >
-              <Ionicons name="close" size={20} color="#FAF8F5" />
-            </TouchableOpacity>
-
-            <View style={styles.scannerHeaderRow}>
-              <Text style={styles.scannerModalTitle}>Scan & Pay Advance (₹{advanceAmount})</Text>
-            </View>
-            <Text style={styles.scannerModalSubtitle}>Choose how you want to submit your payment proof</Text>
-
-            {/* Toggle Switch between UTR and Screenshot */}
-            <View style={styles.verificationModeToggleRow}>
               <TouchableOpacity
-                style={[styles.verificationModeTab, verificationMode === "utr" && styles.verificationModeTabActive]}
-                onPress={() => setVerificationMode("utr")}
-                activeOpacity={0.8}
+                style={styles.fullScreenScannerCloseBtn}
+                onPress={handleRequestCloseScannerModal}
+                activeOpacity={0.85}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Text style={[styles.verificationModeTabText, verificationMode === "utr" && styles.verificationModeTabTextActive]}>
-                  Enter UTR Number
-                </Text>
+                <Ionicons name="close" size={22} color="#0B261D" />
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[styles.verificationModeTab, verificationMode === "screenshot" && styles.verificationModeTabActive]}
-                onPress={() => setVerificationMode("screenshot")}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.verificationModeTabText, verificationMode === "screenshot" && styles.verificationModeTabTextActive]}>
-                  Upload Screenshot
-                </Text>
-              </TouchableOpacity>
+              <Text style={styles.fullScreenScannerHeaderTitle}>
+                Scan & Pay Advance
+              </Text>
+
+              {/* Placeholder so the title is perfectly centered */}
+              <View style={{ width: 40 }} />
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ alignItems: "center", paddingBottom: 20 }}>
-              <View style={styles.scannerFrameContainer}>
-                <Image
-                  source={require("@/assets/images/scanner.png")}
-                  style={styles.scannerImageStyle}
-                  resizeMode="contain"
-                />
+            {/* Full-screen scrollable body */}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={[
+                styles.fullScreenScannerScrollContent,
+                { paddingBottom: Math.max(insets.bottom, 24) + 24 },
+              ]}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.fullScreenScannerAmountLabel}>
+                Advance amount due now
+              </Text>
+              <Text style={styles.fullScreenScannerAmountValue}>
+                ₹{advanceAmount}
+              </Text>
+              <Text style={styles.fullScreenScannerAmountHint}>
+                Balance ₹{balanceAmount} (60%) will be collected upon delivery.
+              </Text>
+
+              <View style={styles.fullScreenScannerSubtitleRow}>
+                <Text style={styles.fullScreenScannerSubtitle}>
+                  Choose how you want to submit your payment proof
+                </Text>
               </View>
 
-              {/* ✅ Simple, real-timer pill below the image card */}
-              <View style={styles.realTimerPill}>
-                <Ionicons name="time-outline" size={14} color="#166534" />
-                <Text style={styles.realTimerText}>{formatTimer(timeLeft)}</Text>
-                <Text style={styles.realTimerLabel}>left</Text>
+              {/* Toggle Switch between UTR and Screenshot */}
+              <View style={styles.verificationModeToggleRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.verificationModeTab,
+                    verificationMode === "utr" && styles.verificationModeTabActive,
+                  ]}
+                  onPress={() => setVerificationMode("utr")}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.verificationModeTabText,
+                      verificationMode === "utr" &&
+                        styles.verificationModeTabTextActive,
+                    ]}
+                  >
+                    Enter UTR Number
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.verificationModeTab,
+                    verificationMode === "screenshot" &&
+                      styles.verificationModeTabActive,
+                  ]}
+                  onPress={() => setVerificationMode("screenshot")}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.verificationModeTabText,
+                      verificationMode === "screenshot" &&
+                        styles.verificationModeTabTextActive,
+                    ]}
+                  >
+                    Upload Screenshot
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.fullScreenScannerCenterBlock}>
+                <View style={styles.scannerFrameContainer}>
+                  <Image
+                    source={require("@/assets/images/scanner.png")}
+                    style={styles.scannerImageStyle}
+                    resizeMode="contain"
+                  />
+                </View>
+
+                {/* ✅ Simple, real-timer pill below the image card */}
+                <View style={styles.realTimerPill}>
+                  <Ionicons name="time-outline" size={14} color="#166534" />
+                  <Text style={styles.realTimerText}>
+                    {formatTimer(timeLeft)}
+                  </Text>
+                  <Text style={styles.realTimerLabel}>left</Text>
+                </View>
               </View>
 
               {verificationMode === "utr" ? (
                 <>
                   <View style={styles.scannerUtrNoticeBox}>
-                    <Ionicons name="information-circle-outline" size={16} color="#166538" style={{ marginRight: 6 }} />
+                    <Ionicons
+                      name="information-circle-outline"
+                      size={16}
+                      color="#166538"
+                      style={{ marginRight: 6 }}
+                    />
                     <Text style={styles.scannerUtrNoticeText}>
-                      After paying via your UPI app, enter the 12-digit UTR / UPI reference number below for verification.
+                      After paying via your UPI app, enter the 12-digit UTR /
+                      UPI reference number below for verification.
                     </Text>
                   </View>
 
                   <View style={styles.addressInputGroup}>
                     <View style={styles.utrLabelRow}>
-                      <Text style={styles.addressInputLabel}>UTR / Transaction Reference No.</Text>
+                      <Text style={styles.addressInputLabel}>
+                        UTR / Transaction Reference No.
+                      </Text>
                       <Text style={styles.utrCounterText}>
                         {utrNumber.length}/12
                       </Text>
@@ -2032,7 +2109,8 @@ export default function CheckOutScreen() {
                     <TextInput
                       style={[
                         styles.addressTextInput,
-                        utrNumber.length === UTR_MAX_DIGITS && styles.utrInputComplete,
+                        utrNumber.length === UTR_MAX_DIGITS &&
+                          styles.utrInputComplete,
                       ]}
                       placeholder="e.g. 435261789012"
                       placeholderTextColor="#9EA8A3"
@@ -2048,7 +2126,9 @@ export default function CheckOutScreen() {
                     />
                     {utrNumber.length > 0 && utrNumber.length < UTR_MAX_DIGITS && (
                       <Text style={styles.utrHelperText}>
-                        Enter the remaining {UTR_MAX_DIGITS - utrNumber.length} digit{UTR_MAX_DIGITS - utrNumber.length === 1 ? "" : "s"}.
+                        Enter the remaining {UTR_MAX_DIGITS - utrNumber.length}{" "}
+                        digit
+                        {UTR_MAX_DIGITS - utrNumber.length === 1 ? "" : "s"}.
                       </Text>
                     )}
                     {utrNumber.length === UTR_MAX_DIGITS && (
@@ -2065,42 +2145,86 @@ export default function CheckOutScreen() {
                     ]}
                     activeOpacity={0.88}
                     disabled={utrNumber.length !== UTR_MAX_DIGITS}
-                    onPress={() => submitAdvanceProofAndPlaceOrder("utr", utrNumber)}
+                    onPress={() =>
+                      submitAdvanceProofAndPlaceOrder("utr", utrNumber)
+                    }
                   >
-                    <Text style={styles.addAddressSolidCTAText}>Submit UTR & Place Order</Text>
-                    <Ionicons name="checkmark-circle" size={18} color="#FAF8F5" style={{ marginLeft: 6 }} />
+                    <Text style={styles.addAddressSolidCTAText}>
+                      Submit UTR & Place Order
+                    </Text>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={18}
+                      color="#FAF8F5"
+                      style={{ marginLeft: 6 }}
+                    />
                   </TouchableOpacity>
                 </>
               ) : (
                 <>
                   <View style={styles.scannerUtrNoticeBox}>
-                    <Ionicons name="information-circle-outline" size={16} color="#166538" style={{ marginRight: 6 }} />
+                    <Ionicons
+                      name="information-circle-outline"
+                      size={16}
+                      color="#166538"
+                      style={{ marginRight: 6 }}
+                    />
                     <Text style={styles.scannerUtrNoticeText}>
-                      Upload a screenshot of your successful UPI payment receipt for admin verification.
+                      Upload a screenshot of your successful UPI payment receipt
+                      for admin verification.
                     </Text>
                   </View>
 
-                  <TouchableOpacity style={styles.uploadScreenshotBtn} onPress={pickPaymentScreenshot} activeOpacity={0.8}>
-                    <Ionicons name="cloud-upload-outline" size={22} color="#166538" style={{ marginRight: 8 }} />
+                  <TouchableOpacity
+                    style={styles.uploadScreenshotBtn}
+                    onPress={pickPaymentScreenshot}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name="cloud-upload-outline"
+                      size={22}
+                      color="#166538"
+                      style={{ marginRight: 8 }}
+                    />
                     <Text style={styles.uploadScreenshotBtnText}>
-                      {paymentScreenshotUri ? "Change Payment Screenshot" : "Choose Screenshot from Gallery"}
+                      {paymentScreenshotUri
+                        ? "Change Payment Screenshot"
+                        : "Choose Screenshot from Gallery"}
                     </Text>
                   </TouchableOpacity>
 
                   {paymentScreenshotUri && (
                     <View style={styles.screenshotPreviewContainer}>
-                      <Image source={{ uri: paymentScreenshotUri }} style={styles.screenshotPreviewImage} />
+                      <Image
+                        source={{ uri: paymentScreenshotUri }}
+                        style={styles.screenshotPreviewImage}
+                      />
                     </View>
                   )}
 
                   <TouchableOpacity
-                    style={[styles.addAddressSolidCTA, !paymentScreenshotUri && { opacity: 0.6 }]}
+                    style={[
+                      styles.addAddressSolidCTA,
+                      !paymentScreenshotUri && { opacity: 0.6 },
+                    ]}
                     activeOpacity={0.88}
                     disabled={!paymentScreenshotUri}
-                    onPress={() => submitAdvanceProofAndPlaceOrder("screenshot", paymentScreenshotUri)}
+                    onPress={() =>
+                      submitAdvanceProofAndPlaceOrder(
+                        "screenshot",
+                        paymentScreenshotUri
+                      )
+                    }
                   >
-                    <Text style={styles.addAddressSolidCTAText}>Submit Screenshot & Place Order</Text>
-                    <Ionicons name="checkmark-circle" size={18} color="#FAF8F5" style={{ marginLeft: 6 }} />
+                    <Text style={styles.addAddressSolidCTAText}>
+                      Submit Screenshot & Place Order
+                    </Text>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={18}
+                      color="#FAF8F5"
+                      style={{ marginLeft: 6 }}
+                    />
                   </TouchableOpacity>
                 </>
               )}
@@ -2363,7 +2487,11 @@ export default function CheckOutScreen() {
               </View>
             )}
 
-            <ScrollView style={{ width: "100%", marginTop: 8 }} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              style={{ width: "100%", marginTop: 8 }} 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 120 }}
+            >
               {isCateringFlow ? (
                 <>
                   {Array.isArray(parsedSelections) &&
@@ -3317,30 +3445,121 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(11, 38, 29, 0.45)",
     justifyContent: "flex-end",
   },
-  scannerModalContainer: {
-    width: "100%",
+
+  /* ─────────────────────────────────────────────────────────
+     ✅ FULL SCREEN SCANNER MODAL STYLES
+     These replace the old bottom-sheet styles for the scanner
+     modal. The container fills the entire screen and the header
+     respects the device safe area via dynamic insets padding.
+     ───────────────────────────────────────────────────────── */
+  fullScreenScannerContainer: {
+    flex: 1,
     backgroundColor: "#FAF8F5",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: Platform.OS === "ios" ? 34 : 24,
-    borderWidth: 1,
-    borderColor: "rgba(15, 56, 42, 0.08)",
-    maxHeight: SCREEN_HEIGHT * 0.88,
+    width: "100%",
+    height: "100%",
   },
-  scannerHeaderRow: {
+  fullScreenScannerKeyboardView: {
+    flex: 1,
+    backgroundColor: "#FAF8F5",
+  },
+  fullScreenScannerHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    width: "100%",
-    marginBottom: 4,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    backgroundColor: "#FAF8F5",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(15, 56, 42, 0.08)",
   },
-  scannerModalTitle: {
-    fontSize: 17,
+  fullScreenScannerCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.12)",
+    shadowColor: "#0F382A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  fullScreenScannerHeaderTitle: {
+    fontSize: 18,
     fontWeight: "900",
     color: "#0B261D",
     letterSpacing: -0.3,
+    flex: 1,
+    textAlign: "center",
+  },
+  fullScreenScannerScrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    alignItems: "stretch",
+  },
+  fullScreenScannerAmountLabel: {
+    fontSize: 11.5,
+    fontWeight: "800",
+    color: "#5B756C",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    textAlign: "center",
+  },
+  fullScreenScannerAmountValue: {
+    fontSize: 36,
+    fontWeight: "900",
+    color: "#0B261D",
+    textAlign: "center",
+    letterSpacing: -1,
+    marginTop: 4,
+  },
+  fullScreenScannerAmountHint: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#5B756C",
+    textAlign: "center",
+    marginTop: 6,
+  },
+  fullScreenScannerSubtitleRow: {
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  fullScreenScannerSubtitle: {
+    fontSize: 13,
+    color: "#5B756C",
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  fullScreenScannerCenterBlock: {
+    alignItems: "center",
+    marginTop: 16,
+    marginBottom: 12,
+  },
+
+  // ✅ Legacy scanner frame + timer pill styles (kept as-is, still used)
+  scannerFrameContainer: {
+    width: 240,
+    height: 240,
+    borderRadius: 24,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1.5,
+    borderColor: "rgba(15, 56, 42, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+    padding: 12,
+    shadowColor: "#0F382A",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+  scannerImageStyle: {
+    width: "100%",
+    height: "100%",
   },
 
   // ✅ Simple, real-timer pill below the image card
@@ -3371,6 +3590,33 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#5B756C",
     marginLeft: 5,
+  },
+
+  // ✅ Legacy scanner modal styles (still used by other modals that share name space)
+  scannerModalContainer: {
+    width: "100%",
+    backgroundColor: "#FAF8F5",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: Platform.OS === "ios" ? 34 : 24,
+    borderWidth: 1,
+    borderColor: "rgba(15, 56, 42, 0.08)",
+    maxHeight: SCREEN_HEIGHT * 0.88,
+  },
+  scannerHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    marginBottom: 4,
+  },
+  scannerModalTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: "#0B261D",
+    letterSpacing: -0.3,
   },
   timerBadgeContainer: {
     flexDirection: "row",
@@ -3419,27 +3665,6 @@ const styles = StyleSheet.create({
   verificationModeTabTextActive: {
     color: "#FAF8F5",
     fontWeight: "800",
-  },
-  scannerFrameContainer: {
-    width: 260,
-    height: 260,
-    borderRadius: 24,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1.5,
-    borderColor: "rgba(15, 56, 42, 0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 8,
-    padding: 12,
-    shadowColor: "#0F382A",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.12,
-    shadowRadius: 14,
-    elevation: 4,
-  },
-  scannerImageStyle: {
-    width: "100%",
-    height: "100%",
   },
   scannerUtrNoticeBox: {
     flexDirection: "row",
@@ -3830,6 +4055,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 6,
     elevation: 4,
+  },
+  modalAbsoluteFooterButtonSolidText: {
+    color: "#FAF8F5",
+    fontSize: 14.5,
+    fontWeight: "800",
+    letterSpacing: 0.2,
   },
   modalAbsoluteFooterCTAButtonSolidText: {
     color: "#FAF8F5",

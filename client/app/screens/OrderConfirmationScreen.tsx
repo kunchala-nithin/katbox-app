@@ -1550,7 +1550,11 @@ export default function OrderConfirmationScreen() {
               </View>
             )}
 
-            <ScrollView style={{ width: "100%", marginTop: 8 }} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              style={{ width: "100%", marginTop: 8 }} 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 120 }}
+            >
               {isCateringFlow ? (
                 <>
                   {Array.isArray(parsedSelections) &&

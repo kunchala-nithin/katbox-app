@@ -18,6 +18,7 @@ import {
   LayoutAnimation,
   UIManager,
   Easing,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -826,6 +827,9 @@ export default function AllOrdersScreen() {
   //    cancellation block of the currently selected order).
   const [refundNoteExpandedByOrder, setRefundNoteExpandedByOrder] = useState<{ [orderId: string]: boolean }>({});
 
+  // ✅ NEW: Search query state for the search bar
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   // ✅ Alarm snooze-cycle interval ref.
   //    Sound + vibration + 10s auto-stop are now fully owned by the
   //    shared singleton `client/src/lib/orderAlarm.ts`.
@@ -1055,7 +1059,40 @@ export default function AllOrdersScreen() {
     fetchChefOrders();
   }, []);
 
-  const activeOrder = orders[selectedOrderIndex] || null;
+  // ✅ NEW: Filter orders based on search query
+  const filteredOrders = useMemo(() => {
+    if (!searchQuery.trim()) return orders;
+    
+    const q = searchQuery.trim().toLowerCase();
+    return orders.filter((order: any) => {
+      // Search by Order ID
+      const orderIdMatch = String(order.orderId || '').toLowerCase().includes(q);
+      
+      // Search by Customer Name
+      const customerNameMatch = String(order.userName || '').toLowerCase().includes(q);
+      
+      // Search by Menu Name
+      const menuNameMatch = String(order.menuName || '').toLowerCase().includes(q);
+      
+      // Search by Customer Phone
+      const customerPhoneMatch = String(order.userPhone || order.phone || '').toLowerCase().includes(q);
+      
+      // Search by Status
+      const statusMatch = String(order.orderStatus || '').toLowerCase().includes(q);
+      
+      // Search by Service Type
+      const serviceTypeMatch = String(order.serviceType || '').toLowerCase().includes(q);
+      
+      return orderIdMatch || customerNameMatch || menuNameMatch || customerPhoneMatch || statusMatch || serviceTypeMatch;
+    });
+  }, [orders, searchQuery]);
+
+  // ✅ NEW: Reset selected order index when filtered orders change
+  useEffect(() => {
+    setSelectedOrderIndex(0);
+  }, [searchQuery]);
+
+  const activeOrder = filteredOrders[selectedOrderIndex] || null;
 
   const orderTimeFormatted = activeOrder?.createdAt
     ? new Date(activeOrder.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -1704,6 +1741,21 @@ export default function AllOrdersScreen() {
     ]);
   };
 
+  /* ─────────────────────────────────────────────────────────────────
+     ✅ NEW — When the Decline button is visually disabled (because the
+     order is a fresh `Placed` order), tapping it must NOT trigger the
+     decline flow. Instead, we surface a clear informational alert.
+     This matches the "disabled but still pressable" pattern used on
+     the customer's Cancel Order button.
+     ───────────────────────────────────────────────────────────────── */
+  const handleDisabledDeclineTap = () => {
+    Alert.alert(
+      'Cancellation Unavailable',
+      'Declining this order is not available once it has been assigned to you.\n\n' +
+        'Please accept the order, or contact the admin/support for help with cancellation.'
+    );
+  };
+
   const handleAcceptOrder = async () => {
     if (!activeOrder) return;
     try {
@@ -1863,23 +1915,50 @@ export default function AllOrdersScreen() {
                 </View>
                 <Text style={styles.headerTitle}>Incoming Orders</Text>
                 <Text style={styles.headerSubtitle}>
-                  You have <Text style={styles.headerSubtitleBold}>{orders.length}</Text> active {orders.length === 1 ? 'order' : 'orders'}
+                  You have <Text style={styles.headerSubtitleBold}>{filteredOrders.length}</Text> active {filteredOrders.length === 1 ? 'order' : 'orders'}
+                  {searchQuery.trim() ? ` (filtered from ${orders.length})` : ''}
                 </Text>
               </View>
 
               <TouchableOpacity style={styles.headerIconButton} activeOpacity={0.8} onPress={fetchChefOrders}>
                 <Ionicons name="refresh-outline" size={20} color="#FFFFFF" />
-                {orders.length > 0 && (
+                {filteredOrders.length > 0 && (
                   <View style={styles.notificationBadge}>
-                    <Text style={styles.notificationBadgeText}>{orders.length}</Text>
+                    <Text style={styles.notificationBadgeText}>{filteredOrders.length}</Text>
                   </View>
                 )}
               </TouchableOpacity>
             </View>
 
-            {orders.length > 1 && (
+            {/* ─── SEARCH BAR ─── */}
+            <View style={styles.searchBarContainer}>
+              <View style={styles.searchBarWrapper}>
+                <Ionicons name="search" size={18} color="#94A3B8" style={styles.searchBarIcon} />
+                <TextInput
+                  style={styles.searchBarInput}
+                  placeholder="Search by order ID, customer, menu..."
+                  placeholderTextColor="#64748B"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.searchBarClearButton}
+                    onPress={() => setSearchQuery('')}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="close-circle" size={18} color="#94A3B8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {filteredOrders.length > 1 && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabStripScroll} contentContainerStyle={{ gap: 8 }}>
-                {orders.map((o: any, idx: number) => {
+                {filteredOrders.map((o: any, idx: number) => {
                   const isSelected = selectedOrderIndex === idx;
                   const status = (o.orderStatus || 'Placed').toLowerCase();
                   const pStatus = (o.paymentStatus || '').toLowerCase();
@@ -1967,6 +2046,23 @@ export default function AllOrdersScreen() {
                 })}
               </ScrollView>
             )}
+
+            {/* ─── NO RESULTS MESSAGE ─── */}
+            {searchQuery.trim() && filteredOrders.length === 0 && (
+              <View style={styles.noResultsContainer}>
+                <Ionicons name="search-outline" size={24} color="#64748B" />
+                <Text style={styles.noResultsText}>
+                  No orders found for "{searchQuery}"
+                </Text>
+                <TouchableOpacity
+                  style={styles.noResultsClearButton}
+                  onPress={() => setSearchQuery('')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.noResultsClearButtonText}>Clear Search</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </SafeAreaView>
       </LinearGradient>
@@ -1987,10 +2083,23 @@ export default function AllOrdersScreen() {
               <View style={styles.emptyIconCircle}>
                 <Ionicons name="receipt-outline" size={40} color="#166348" />
               </View>
-              <Text style={styles.emptyTitle}>No Orders Found</Text>
-              <Text style={styles.emptySubtitle}>
-                New verified customer bookings will appear here instantly once advance payment is confirmed.
+              <Text style={styles.emptyTitle}>
+                {searchQuery.trim() ? 'No Matching Orders' : 'No Orders Found'}
               </Text>
+              <Text style={styles.emptySubtitle}>
+                {searchQuery.trim()
+                  ? `No orders match "${searchQuery}". Try a different search term.`
+                  : 'New verified customer bookings will appear here instantly once advance payment is confirmed.'}
+              </Text>
+              {searchQuery.trim() && (
+                <TouchableOpacity
+                  style={styles.emptyClearButton}
+                  onPress={() => setSearchQuery('')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.emptyClearButtonText}>Clear Search</Text>
+                </TouchableOpacity>
+              )}
             </View>
           ) : (
             <>
@@ -2729,7 +2838,7 @@ export default function AllOrdersScreen() {
                                       <Text
                                         style={[
                                           styles.individualDropdownOptionText,
-                                          scheduleItem.status === statusOption && styles.individualDropdownOptionTextActive,
+                                          scheduleItem.status === statusOption && styles.individualDropdownOptionTextSelected,
                                         ]}
                                       >
                                         {statusOption}
@@ -2786,107 +2895,137 @@ export default function AllOrdersScreen() {
                 </View>
               </View>
 
-              {/* ✅ CLEAN & USER-FRIENDLY COMMISSION CARD — always shown at the bottom of every order */}
-              <View style={styles.commissionCleanCard}>
-                {/* Header row with icon + status pill */}
-                <View style={styles.commissionCleanHeaderRow}>
-                  <View
-                    style={[
-                      styles.commissionCleanIconCircle,
-                      isCommissionFree
-                        ? styles.commissionCleanIconCircleFree
-                        : styles.commissionCleanIconCirclePaid,
-                    ]}
-                  >
-                    <Ionicons
-                      name={isCommissionFree ? 'shield-checkmark' : 'cash-outline'}
-                      size={18}
-                      color={isCommissionFree ? '#16A34A' : '#DC2626'}
-                    />
-                  </View>
-
-                  <View style={{ flex: 1, paddingLeft: 10 }}>
-                    <Text style={styles.commissionCleanTitle}>Earnings Summary</Text>
-                    <Text style={styles.commissionCleanSubtitle}>
-                      {isCommissionFree
-                        ? `Order #${chefOrderIndexNum} • Commission Free`
-                        : `Order #${chefOrderIndexNum} • 18% Commission Applied`}
-                    </Text>
-                  </View>
-
-                  <View
-                    style={[
-                      styles.commissionCleanStatusPill,
-                      isCommissionFree
-                        ? styles.commissionCleanStatusPillFree
-                        : styles.commissionCleanStatusPillPaid,
-                    ]}
-                  >
-                    <Text
+              {/* ✅ CLEAN & USER-FRIENDLY COMMISSION CARD
+                  — Now HIDDEN for cancelled orders (any cancellation
+                  source: customer, chef, or admin). */}
+              {!activeIsCancelled && (
+                <View style={styles.commissionCleanCard}>
+                  {/* Header row with icon + status pill */}
+                  <View style={styles.commissionCleanHeaderRow}>
+                    <View
                       style={[
-                        styles.commissionCleanStatusPillText,
+                        styles.commissionCleanIconCircle,
                         isCommissionFree
-                          ? styles.commissionCleanStatusPillTextFree
-                          : styles.commissionCleanStatusPillTextPaid,
+                          ? styles.commissionCleanIconCircleFree
+                          : styles.commissionCleanIconCirclePaid,
                       ]}
                     >
-                      {isCommissionFree ? 'FREE' : '18%'}
+                      <Ionicons
+                        name={isCommissionFree ? 'shield-checkmark' : 'cash-outline'}
+                        size={18}
+                        color={isCommissionFree ? '#16A34A' : '#DC2626'}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1, paddingLeft: 10 }}>
+                      <Text style={styles.commissionCleanTitle}>Earnings Summary</Text>
+                      <Text style={styles.commissionCleanSubtitle}>
+                        {isCommissionFree
+                          ? `Order #${chefOrderIndexNum} • Commission Free`
+                          : `Order #${chefOrderIndexNum} • 18% Commission Applied`}
+                      </Text>
+                    </View>
+
+                    <View
+                      style={[
+                        styles.commissionCleanStatusPill,
+                        isCommissionFree
+                          ? styles.commissionCleanStatusPillFree
+                          : styles.commissionCleanStatusPillPaid,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.commissionCleanStatusPillText,
+                          isCommissionFree
+                            ? styles.commissionCleanStatusPillTextFree
+                            : styles.commissionCleanStatusPillTextPaid,
+                        ]}
+                      >
+                        {isCommissionFree ? 'FREE' : '18%'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Divider */}
+                  <View style={styles.commissionCleanDivider} />
+
+                  {/* Amount breakdown — clean, two rows */}
+                  <View style={styles.commissionCleanRow}>
+                    <Text style={styles.commissionCleanRowLabel}>Order Total</Text>
+                    <Text style={styles.commissionCleanRowValue}>
+                      ₹{totalAmountNum.toFixed(2)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.commissionCleanRow}>
+                    <Text style={styles.commissionCleanRowLabel}>
+                      {isCommissionFree ? 'Commission' : `Commission (${Math.round(commissionRateNum * 100)}%)`}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.commissionCleanRowValue,
+                        isCommissionFree
+                          ? styles.commissionCleanRowValueFree
+                          : styles.commissionCleanRowValuePaid,
+                      ]}
+                    >
+                      {isCommissionFree ? '₹0.00' : `-₹${commissionAmountNum.toFixed(2)}`}
+                    </Text>
+                  </View>
+
+                  {/* Final payable highlight */}
+                  <View style={styles.commissionCleanFinalBox}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.commissionCleanFinalLabel}>You Receive</Text>
+                      <Text style={styles.commissionCleanFinalSublabel}>
+                        After commission deduction
+                      </Text>
+                    </View>
+                    <Text style={styles.commissionCleanFinalValue}>
+                      ₹{netPayableToChefNum.toFixed(2)}
                     </Text>
                   </View>
                 </View>
+              )}
 
-                {/* Divider */}
-                <View style={styles.commissionCleanDivider} />
-
-                {/* Amount breakdown — clean, two rows */}
-                <View style={styles.commissionCleanRow}>
-                  <Text style={styles.commissionCleanRowLabel}>Order Total</Text>
-                  <Text style={styles.commissionCleanRowValue}>
-                    ₹{totalAmountNum.toFixed(2)}
-                  </Text>
-                </View>
-
-                <View style={styles.commissionCleanRow}>
-                  <Text style={styles.commissionCleanRowLabel}>
-                    {isCommissionFree ? 'Commission' : `Commission (${Math.round(commissionRateNum * 100)}%)`}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.commissionCleanRowValue,
-                      isCommissionFree
-                        ? styles.commissionCleanRowValueFree
-                        : styles.commissionCleanRowValuePaid,
-                    ]}
-                  >
-                    {isCommissionFree ? '₹0.00' : `-₹${commissionAmountNum.toFixed(2)}`}
-                  </Text>
-                </View>
-
-                {/* Final payable highlight */}
-                <View style={styles.commissionCleanFinalBox}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.commissionCleanFinalLabel}>You Receive</Text>
-                    <Text style={styles.commissionCleanFinalSublabel}>
-                      After commission deduction
-                    </Text>
-                  </View>
-                  <Text style={styles.commissionCleanFinalValue}>
-                    ₹{netPayableToChefNum.toFixed(2)}
-                  </Text>
-                </View>
-              </View>
-
-              {/* 6. BOTTOM ACTIONS */}
-              {!isCurrentOrderAccepted && (
+              {/* 6. BOTTOM ACTIONS
+                  — HIDDEN entirely for cancelled orders.
+                  — Decline button is DISABLED (greyed) when the order is
+                    `Placed` (fresh order awaiting chef acceptance) but
+                    still pressable, so tapping surfaces the
+                    "Cancellation Unavailable" alert.
+                  — Accept Order stays fully functional. */}
+              {!isCurrentOrderAccepted && !activeIsCancelled && (
                 <View style={styles.bottomButtonsRow}>
                   <TouchableOpacity
-                    style={[styles.rejectBtn, actionLoading && { opacity: 0.6 }]}
-                    onPress={handleRejectOrder}
+                    style={[
+                      styles.rejectBtn,
+                      currentStatus.toLowerCase() === 'placed' && styles.rejectBtnDisabled,
+                      actionLoading && { opacity: 0.6 },
+                    ]}
+                    onPress={
+                      currentStatus.toLowerCase() === 'placed'
+                        ? handleDisabledDeclineTap
+                        : handleRejectOrder
+                    }
                     disabled={actionLoading}
                     activeOpacity={0.85}
                   >
-                    <Feather name="x" size={16} color="#DC2626" style={{ marginRight: 6 }} />
-                    <Text style={styles.rejectBtnText}>Decline</Text>
+                    <Feather
+                      name="x"
+                      size={16}
+                      color={currentStatus.toLowerCase() === 'placed' ? '#94A3B8' : '#DC2626'}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.rejectBtnText,
+                        currentStatus.toLowerCase() === 'placed' && styles.rejectBtnTextDisabled,
+                      ]}
+                    >
+                      Decline
+                    </Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -2965,7 +3104,11 @@ export default function AllOrdersScreen() {
               </View>
             )}
 
-            <ScrollView style={{ width: '100%', marginTop: 8 }} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              style={{ width: '100%', marginTop: 8 }} 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 120 }}
+            >
               {isHomemadeFlow ? (
                 <View style={styles.previewCategoryCard}>
                   <View style={styles.previewCategoryHeader}>
@@ -3241,6 +3384,67 @@ const styles = StyleSheet.create({
     fontSize: 8.5,
     fontWeight: '900',
   },
+
+  /* ✅ NEW: Search bar styles */
+  searchBarContainer: {
+    marginTop: 14,
+    marginBottom: 4,
+  },
+  searchBarWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  searchBarIcon: {
+    marginRight: 8,
+  },
+  searchBarInput: {
+    flex: 1,
+    color: '#F9FAFB',
+    fontSize: 14,
+    fontWeight: '500',
+    paddingVertical: 0,
+    height: '100%',
+  },
+  searchBarClearButton: {
+    padding: 4,
+    marginLeft: 4,
+  },
+
+  /* ✅ NEW: No results styles */
+  noResultsContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+  },
+  noResultsText: {
+    fontSize: 13,
+    color: '#94A3B8',
+    fontWeight: '600',
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  noResultsClearButton: {
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  noResultsClearButtonText: {
+    fontSize: 12,
+    color: '#86EFAC',
+    fontWeight: '700',
+  },
+
   tabStripScroll: {
     marginTop: 14,
   },
@@ -3896,7 +4100,7 @@ const styles = StyleSheet.create({
     color: '#334155',
     fontWeight: '600',
   },
-  individualDropdownOptionTextActive: {
+  individualDropdownOptionTextSelected: {
     color: '#166348',
     fontWeight: '800',
   },
@@ -3943,6 +4147,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18,
     fontWeight: '500',
+  },
+  emptyClearButton: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: '#166348',
+    shadowColor: '#166348',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  emptyClearButtonText: {
+    fontSize: 13,
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   card: {
     backgroundColor: '#FFFFFF',
@@ -4686,10 +4907,19 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 1,
   },
+  rejectBtnDisabled: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
   rejectBtnText: {
     color: '#DC2626',
     fontSize: 14,
     fontWeight: '800',
+  },
+  rejectBtnTextDisabled: {
+    color: '#94A3B8',
   },
   acceptBtn: {
     flex: 1,

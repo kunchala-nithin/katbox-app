@@ -2555,97 +2555,101 @@ export default function AdminAllOrdersScreen() {
                 ) : null}
               </View>
 
-              {/* ─── SINGLE COMMISSION SECTION (admin) ─── */}
-              <View style={styles.card}>
-                <View style={styles.commissionHeaderRow}>
-                  <View
-                    style={[
-                      styles.commissionIconCircle,
-                      isCommissionFree
-                        ? styles.commissionIconCircleFree
-                        : styles.commissionIconCirclePaid,
-                    ]}
-                  >
-                    <Ionicons
-                      name={isCommissionFree ? 'shield-checkmark' : 'cash-outline'}
-                      size={18}
-                      color={isCommissionFree ? '#16A34A' : '#DC2626'}
-                    />
-                  </View>
-
-                  <View style={{ flex: 1, paddingLeft: 10 }}>
-                    <Text style={styles.commissionTitle}>Commission Summary</Text>
-                    <Text style={styles.commissionSubtitle}>
-                      {isCommissionFree
-                        ? `Chef Order #${chefOrderIndexNum} • Commission Free`
-                        : `Chef Order #${chefOrderIndexNum} • ${Math.round(commissionRateNum * 100)}% Commission`}
-                    </Text>
-                  </View>
-
-                  <View
-                    style={[
-                      styles.commissionStatusPill,
-                      isCommissionFree
-                        ? styles.commissionStatusPillFree
-                        : styles.commissionStatusPillPaid,
-                    ]}
-                  >
-                    <Text
+              {/* ─── SINGLE COMMISSION SECTION (admin) ───
+                  — Now HIDDEN for cancelled orders (any cancellation
+                  source: customer, chef, or admin). */}
+              {!activeIsCancelled && (
+                <View style={styles.card}>
+                  <View style={styles.commissionHeaderRow}>
+                    <View
                       style={[
-                        styles.commissionStatusPillText,
+                        styles.commissionIconCircle,
                         isCommissionFree
-                          ? styles.commissionStatusPillTextFree
-                          : styles.commissionStatusPillTextPaid,
+                          ? styles.commissionIconCircleFree
+                          : styles.commissionIconCirclePaid,
                       ]}
                     >
-                      {isCommissionFree ? 'FREE' : '18%'}
+                      <Ionicons
+                        name={isCommissionFree ? 'shield-checkmark' : 'cash-outline'}
+                        size={18}
+                        color={isCommissionFree ? '#16A34A' : '#DC2626'}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1, paddingLeft: 10 }}>
+                      <Text style={styles.commissionTitle}>Commission Summary</Text>
+                      <Text style={styles.commissionSubtitle}>
+                        {isCommissionFree
+                          ? `Chef Order #${chefOrderIndexNum} • Commission Free`
+                          : `Chef Order #${chefOrderIndexNum} • ${Math.round(commissionRateNum * 100)}% Commission`}
+                      </Text>
+                    </View>
+
+                    <View
+                      style={[
+                        styles.commissionStatusPill,
+                        isCommissionFree
+                          ? styles.commissionStatusPillFree
+                          : styles.commissionStatusPillPaid,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.commissionStatusPillText,
+                          isCommissionFree
+                            ? styles.commissionStatusPillTextFree
+                            : styles.commissionStatusPillTextPaid,
+                        ]}
+                      >
+                        {isCommissionFree ? 'FREE' : '18%'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.commissionDivider} />
+
+                  <View style={styles.commissionBreakdownRow}>
+                    <Text style={styles.commissionBreakdownLabel}>Order Total</Text>
+                    <Text style={styles.commissionBreakdownValue}>
+                      ₹{totalAmountNum.toFixed(2)}
                     </Text>
                   </View>
-                </View>
 
-                <View style={styles.commissionDivider} />
-
-                <View style={styles.commissionBreakdownRow}>
-                  <Text style={styles.commissionBreakdownLabel}>Order Total</Text>
-                  <Text style={styles.commissionBreakdownValue}>
-                    ₹{totalAmountNum.toFixed(2)}
-                  </Text>
-                </View>
-
-                <View style={styles.commissionBreakdownRow}>
-                  <Text style={styles.commissionBreakdownLabel}>
-                    {isCommissionFree
-                      ? 'Commission'
-                      : `Commission (${Math.round(commissionRateNum * 100)}%)`}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.commissionBreakdownValue,
-                      isCommissionFree
-                        ? styles.commissionBreakdownValueFree
-                        : styles.commissionBreakdownValuePaid,
-                    ]}
-                  >
-                    {isCommissionFree ? '₹0.00' : `-₹${commissionAmountNum.toFixed(2)}`}
-                  </Text>
-                </View>
-
-                <View style={styles.commissionNetBox}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.commissionNetLabel}>Amount After Commission</Text>
-                    <Text style={styles.commissionNetSublabel}>
-                      Net payable to chef
+                  <View style={styles.commissionBreakdownRow}>
+                    <Text style={styles.commissionBreakdownLabel}>
+                      {isCommissionFree
+                        ? 'Commission'
+                        : `Commission (${Math.round(commissionRateNum * 100)}%)`}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.commissionBreakdownValue,
+                        isCommissionFree
+                          ? styles.commissionBreakdownValueFree
+                          : styles.commissionBreakdownValuePaid,
+                      ]}
+                    >
+                      {isCommissionFree ? '₹0.00' : `-₹${commissionAmountNum.toFixed(2)}`}
                     </Text>
                   </View>
-                  <Text style={styles.commissionNetValue}>
-                    ₹{netSettlementToChefNum.toFixed(2)}
-                  </Text>
-                </View>
 
-                {commissionNoteText ? (
-                  <Text style={styles.commissionNoteSubtext}>{commissionNoteText}</Text>
-                ) : null}
-              </View>
+                  <View style={styles.commissionNetBox}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.commissionNetLabel}>Amount After Commission</Text>
+                      <Text style={styles.commissionNetSublabel}>
+                        Net payable to chef
+                      </Text>
+                    </View>
+                    <Text style={styles.commissionNetValue}>
+                      ₹{netSettlementToChefNum.toFixed(2)}
+                    </Text>
+                  </View>
+
+                  {commissionNoteText ? (
+                    <Text style={styles.commissionNoteSubtext}>{commissionNoteText}</Text>
+                  ) : null}
+                </View>
+              )}
 
               {/* ─── MEALBOX SCHEDULES ─── */}
               {isMealBoxFlow && allMealboxSchedules.length > 0 && (
@@ -2924,7 +2928,11 @@ export default function AdminAllOrdersScreen() {
               </View>
             )}
 
-            <ScrollView style={{ width: '100%', marginTop: 8 }} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              style={{ width: '100%', marginTop: 8 }} 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 120 }}
+            >
               {isHomemadeFlow ? (
                 <View style={styles.previewCategoryCard}>
                   <View style={styles.previewCategoryHeader}>
@@ -3749,7 +3757,7 @@ const styles = StyleSheet.create({
   modalAbsoluteFooterButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
   modalAbsoluteFooterCTAButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 
-  /* ✅ NEW — SINGLE COMMISSION CARD (admin screen) */
+  /* ✅ SINGLE COMMISSION CARD (admin screen) */
   commissionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',

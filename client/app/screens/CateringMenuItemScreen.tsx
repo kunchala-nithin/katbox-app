@@ -313,7 +313,7 @@ export default function CateringMenuItemScreen() {
   const totalSelectedItems = Object.values(selections)
     .reduce((sum: number, set: any) => sum + set.size, 0);
 
-  // ✅ Gate the "Preview Items" action behind full completion of every course.
+  // ✅ Gate the "Continue" action behind full completion of every course.
   //    A category is considered "complete" once its base max selection count is reached.
   const requiredCategoryCount = daawathCategories.length;
   const completedCategoryCount = daawathCategories.reduce((count: number, _cat: any, index: number) => {
@@ -1511,7 +1511,10 @@ export default function CateringMenuItemScreen() {
             )}
 
             <Text style={styles.previewTitle}>Selected Courses</Text>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+            <ScrollView 
+              showsVerticalScrollIndicator={false} 
+              contentContainerStyle={{ paddingBottom: 120 }}
+            >
               {getSelectionSummary().map((cat: any, index: number) => {
                 if (cat.selected?.length === 0) return null;
                 let count = 0;
@@ -1561,8 +1564,7 @@ export default function CateringMenuItemScreen() {
                     </View>
                     {addonSummary.map((addon: any, idx: number) => (
                       <View key={idx} style={styles.previewItemCard}>
-                        <Image
-                          source={{ uri: addon.imageUrl }}
+                        <Image                          source={{ uri: addon.imageUrl }}
                           style={styles.previewItemImage}
                         />
                         <Text style={styles.previewItemName}>{addon.name} × {addon.count}</Text>
@@ -1740,7 +1742,7 @@ export default function CateringMenuItemScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ✅ UPDATED: When all categories are complete → "Preview Items"
+        {/* ✅ UPDATED: When all categories are complete → "Continue"
             (opens preview). When incomplete → "Select all (X/Y)" which now
             auto-navigates to the first incomplete category and pulses its
             "Choose any N" pill so the customer instantly sees what's missing. */}
@@ -1758,7 +1760,7 @@ export default function CateringMenuItemScreen() {
           }}
           activeOpacity={0.88}
           accessibilityRole="button"
-          accessibilityLabel={allCategoriesAtMax ? "Preview Items" : "Select all courses to preview"}
+          accessibilityLabel={allCategoriesAtMax ? "Continue" : "Select all courses to preview"}
         >
           <Text
             style={[
@@ -1767,7 +1769,7 @@ export default function CateringMenuItemScreen() {
             ]}
           >
             {allCategoriesAtMax
-              ? "Preview Items"
+              ? "Continue"
               : `Select all (${completedCategoryCount}/${requiredCategoryCount})`}
           </Text>
           <Feather
@@ -2499,7 +2501,7 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
-  // ✅ Disabled visual state for the gated "Preview Items" button.
+  // ✅ Disabled visual state for the gated "Continue" button.
   //    NOTE: The button is still tappable — tapping it navigates to the
   //    first incomplete category instead of opening the preview.
   footerActionSubmitBtnDisabled: {
@@ -2514,7 +2516,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.2,
   },
-  // ✅ Disabled text state for the gated "Preview Items" button
+  // ✅ Disabled text state for the gated "Continue" button
   footerSubmitBtnTextDisabled: {
     color: "#7A8F86",
   },

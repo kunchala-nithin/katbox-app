@@ -2117,7 +2117,11 @@ export default function CartScreen() {
               </View>
             )}
 
-            <ScrollView style={{ width: "100%", marginTop: 8 }} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              style={{ width: "100%", marginTop: 8 }} 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 120 }}
+            >
               {isMealBoxFlow && cartData?.selections && !Array.isArray(cartData.selections) ? (
                 <View style={styles.premiumMealBoxContentCardFrame}>
                   <View style={styles.subCardHeaderStripLabel}>
