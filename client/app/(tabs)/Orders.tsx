@@ -403,6 +403,53 @@ const formatRefundStatusShort = (order: any): string => {
   return raw;
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Per-date schedule status resolver (CUSTOMER SCREEN).
+
+   Given an order and a specific scheduled delivery date, returns the
+   per-date status that MUST be shown on that delivery's card.
+
+   Lookup priority:
+     1. If the customer has locally paused this date (pausedDates map)
+        OR the order's `pausedDates` array includes this date → "Paused".
+     2. Otherwise, look up the matching entry in `order.deliverySchedules`
+        by exact `date` string and use ITS `status` field — this is the
+        authoritative per-date status written by the backend endpoints
+        `updateScheduleStatus` / `pauseOrderDelivery` / `unpauseOrderDelivery`.
+     3. Fall back to "Scheduled" when no matching schedule exists.
+
+   ✅ IMPORTANT: We deliberately do NOT fall back to `order.orderStatus`.
+      The whole-order status (e.g. "Placed", "Completed") must never leak
+      onto an individual delivery card — each delivery card shows ONLY its
+      own respective delivery status. This keeps every card's state
+      independent and correct.
+   ───────────────────────────────────────────────────────────────── */
+const resolveIndividualScheduleStatus = (
+  order: any,
+  itemDate: string,
+  pausedDatesMap: { [key: string]: boolean }
+): string => {
+  if (!order || !itemDate) return "Scheduled";
+  const orderId = order.orderId;
+
+  // 1. Local pause state (immediate UI feedback) OR server-persisted pause list.
+  const isLocallyPaused = !!pausedDatesMap[`${orderId}-${itemDate}`];
+  const isServerPaused =
+    Array.isArray(order.pausedDates) && order.pausedDates.includes(itemDate);
+  if (isLocallyPaused || isServerPaused) return "Paused";
+
+  // 2. Authoritative per-date schedule entry (matching by exact date string).
+  const schedules = Array.isArray(order.deliverySchedules) ? order.deliverySchedules : [];
+  const match = schedules.find((s: any) => s && s.date === itemDate);
+  if (match && typeof match.status === "string" && match.status.trim().length > 0) {
+    return match.status.trim();
+  }
+
+  // 3. Default — no schedule recorded yet (fresh mealbox order before any
+  //    per-date updates have been applied, or legacy records).
+  return "Scheduled";
+};
+
 function DeliverySlotCountdownWidget({
   deliveryDate,
   timeSlot,
@@ -3832,7 +3879,21 @@ export default function MyOrdersScreen() {
                         const isCardStepperOpen = !!expandedSteppers[cardKey];
 
                         const matchedSchedule = (order.deliverySchedules || []).find((s: any) => s.date === itemDate);
-                        const individualStatus = isPaused ? "Paused" : (matchedSchedule?.status || order.orderStatus || "Scheduled");
+
+                        // ✅ UPDATED: Per-date status resolution.
+                        //    Each delivery card shows its OWN respective status,
+                        //    never the whole-order status. The order:
+                        //      1. Local / server pause state → "Paused"
+                        //      2. deliverySchedules[date].status (authoritative)
+                        //      3. Fallback to "Scheduled"
+                        //    This guarantees every upcoming delivery card is
+                        //    independent and always reflects its own state.
+                        const individualStatus = resolveIndividualScheduleStatus(
+                          order,
+                          itemDate,
+                          pausedDates
+                        );
+
                         const individualAddress = matchedSchedule?.address || order.addressDetails || order.deliveryAddress || "";
 
                         return (

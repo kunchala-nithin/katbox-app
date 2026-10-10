@@ -603,6 +603,20 @@ setInterval(async () => {
  *       receives an Expo push with the bundled alarm.mp3 sound +
  *       admin_orders_alarm channel + data.role = "admin". This makes
  *       the admin's phone ring even when the app is fully closed.
+ *
+ *    ✅ MEALBOX FLOW — UPCOMING DELIVERIES PERSISTENCE:
+ *       For serviceType === "mealbox", the incoming `upcomingDeliveries`
+ *       array (from the checkout screen) is:
+ *         1) Sorted ascending by month/day.
+ *         2) Saved on the order as `order.upcomingDeliveries`.
+ *         3) Turned into per-date `deliverySchedules` entries — each with
+ *            its own `date`, `status: "Scheduled"`, `timeSlot`, `address`,
+ *            optional lat/lng, and a seeded `statusTimeline`.
+ *       These per-date schedules are what OrderConfirmationScreen,
+ *       Orders tab, admin/all-orders.tsx and chef/all-orders.tsx read
+ *       dynamically to render one card per delivery with its own status.
+ *       The `updateScheduleStatus` endpoint updates an individual
+ *       schedule's status without touching the others.
  */
 export const createOrder = async (req: AuthRequest, res: Response) => {
   try {
@@ -1137,6 +1151,27 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       savedOrder = await newCateringOrder.save();
     }
     else {
+      // ✅ MEALBOX FLOW — this is the ONLY branch that persists per-date
+      //    upcoming deliveries and the deliverySchedules array.
+      //
+      //    ✅ Defensive fallback: if the client didn't send any
+      //    `upcomingDeliveries` but a single `deliveryDate` string IS
+      //    present, seed a one-element list so the order always has at
+      //    least one delivery schedule. This guarantees the confirmation
+      //    screen, Orders tab, admin and chef screens always render at
+      //    least one upcoming delivery card.
+      let effectiveUpcomingDeliveries: string[] = Array.isArray(sortedDeliveries)
+        ? sortedDeliveries.slice()
+        : [];
+
+      if (
+        effectiveUpcomingDeliveries.length === 0 &&
+        typeof safeDeliveryDate === "string" &&
+        safeDeliveryDate.trim().length > 0
+      ) {
+        effectiveUpcomingDeliveries = [safeDeliveryDate.trim()];
+      }
+
       // ✅ Copy coordinates onto each schedule as well so per-schedule
       // map actions can pin the exact drop location.
       const safeLat = Number.isFinite(resolvedLatitude as number) ? (resolvedLatitude as number) : undefined;
@@ -1146,7 +1181,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       const includeMealboxQuickDeliverySlot = !!safeQuickDeliverySlot;
       const includeMealboxQuickSpecialInstructions = !!resolvedQuickSpecialInstructions;
 
-      const initialSchedules = sortedDeliveries.map((dateItem: string) => ({
+      // ✅ Build per-date delivery schedules. Every upcoming date gets its
+      //    OWN schedule entry with status "Scheduled" and its own
+      //    seeded timeline. Downstream screens read `deliverySchedules[n].status`
+      //    to render the current status on the corresponding card.
+      const initialSchedules = effectiveUpcomingDeliveries.map((dateItem: string) => ({
         date: dateItem,
         status: "Scheduled",
         timeSlot: safeDeliveryTimeSlot || "7:00 PM - 9:00 PM",
@@ -1174,7 +1213,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         deliveryTimeSlot: safeDeliveryTimeSlot || "7:00 PM - 9:00 PM",
         addressDetails: resolvedAddress,
         deliveryDate: safeDeliveryDate || "",
-        upcomingDeliveries: sortedDeliveries,
+        // ✅ Persist the sorted list of upcoming delivery dates.
+        //    Each entry corresponds 1-to-1 with a `deliverySchedules`
+        //    entry (which carries the per-date status).
+        upcomingDeliveries: effectiveUpcomingDeliveries,
         deliverySchedules: initialSchedules,
         pausedDates: [],
         selections: selections || null,
@@ -2148,6 +2190,15 @@ export const processRefund = async (req: AuthRequest, res: Response) => {
  *    whenever an individual scheduled delivery (meal-box orders)
  *    changes status (chef or admin). Works whether the customer's
  *    app is open, backgrounded, or killed.
+ *
+ * ✅ THIS IS THE ENDPOINT that updates a SINGLE upcoming delivery's
+ *    status (per-date), leaving all other delivery schedules for the
+ *    same order untouched. The updated `deliverySchedules` array is
+ *    returned in the response and broadcast via socket, so:
+ *      • The Orders tab re-renders only the affected delivery card.
+ *      • admin/all-orders.tsx and chef/all-orders.tsx re-render the
+ *        affected delivery card with its new status, without
+ *        disturbing the other cards.
  */
 export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
   try {

@@ -129,6 +129,8 @@ export default function CheckOutScreen() {
   const isQuickBitesFlow = serviceType === "quickbites";
   const isCateringFlow = serviceType === "catering";
   const isHomemadeFlow = serviceType === "homemade" || isQuickBitesFlow;
+  // ✅ NEW: Explicit mealbox flow flag — used to gate upcomingDeliveries logic.
+  const isMealBoxFlowExplicit = serviceType === "mealbox";
 
   const totalAmount = (params.totalAmount as string) || "687";
   const numericTotal = Number(totalAmount) || 0;
@@ -478,8 +480,13 @@ export default function CheckOutScreen() {
     });
   };
 
+  // ✅ upcomingDeliveriesList is computed ONLY for the mealbox flow.
+  //    For catering / homemade / quickbites it intentionally returns [].
+  //    This is the single source of upcoming dates that gets persisted on
+  //    the order document via the `upcomingDeliveries` formData field.
   const upcomingDeliveriesList: string[] = useMemo(() => {
     if (isCateringFlow || isHomemadeFlow) return [];
+    // ✅ Only the mealbox flow reaches here.
     const rawFormatted = params.scheduledDatesFormatted;
     if (rawFormatted) {
       if (Array.isArray(rawFormatted)) return rawFormatted;
@@ -698,6 +705,9 @@ export default function CheckOutScreen() {
       return;
     }
 
+    // ✅ Build the initial delivery schedules for the mealbox flow.
+    //    Each upcoming date becomes its own schedule entry with its own
+    //    status + timeline. Only the mealbox flow has a non-empty list.
     const initialDeliverySchedules = upcomingDeliveriesList.map((dDate: string) => ({
       date: dDate,
       status: "Scheduled",
@@ -847,11 +857,19 @@ export default function CheckOutScreen() {
         formData.append("estimatedDeliveryAtMs", String(liveEstimatedDeliveryAt.getTime()));
       }
     } else {
+      // ✅ MEALBOX FLOW — this is the ONLY branch that persists upcoming
+      //    deliveries and the per-date deliverySchedules on the order.
       formData.append("chefId", chefId);
       formData.append("chefName", chefName);
       formData.append("durationType", durationType);
       formData.append("deliveryTimeSlot", deliveryTimeSlot);
       formData.append("deliveryDate", deliveryDate);
+      // ✅ upcomingDeliveriesList is the array of upcoming dates that must
+      //    be persisted on the order so that:
+      //      • OrderConfirmationScreen can render them dynamically.
+      //      • Orders tab can render them as separate delivery cards.
+      //      • Admin & Chef all-orders screens can render them with their
+      //        respective per-date status.
       formData.append("upcomingDeliveries", JSON.stringify(upcomingDeliveriesList));
       formData.append("deliverySchedules", JSON.stringify(initialDeliverySchedules));
       if (parsedSelections) formData.append("selections", JSON.stringify(parsedSelections));

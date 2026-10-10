@@ -280,6 +280,66 @@ const formatRefundStatusShort = (order: any): string => {
   return raw;
 };
 
+/* ─────────────────────────────────────────────────────────────────
+   ✅ NEW HELPER — Per-delivery-date status color triple (ADMIN).
+
+   Returns a color triple (background / border / text) matched to
+   the given schedule status. Each upcoming delivery card uses this
+   to render its OWN status as a distinctly-colored tag.
+
+   Status values written by the backend for each schedule:
+     • "Scheduled"          → default at order placement
+     • "Paused"             → customer paused this date
+     • "Preparing"          → chef started cooking
+     • "Prepared & Packing" → packing in progress
+     • "Out for Delivery"   → dispatched
+     • "Delivered"          → delivered (auto on Cash Collected)
+   ───────────────────────────────────────────────────────────────── */
+const resolveAdminScheduleStatusStyle = (statusText: string) => {
+  const s = String(statusText || '').toLowerCase().trim();
+  if (s === 'delivered' || s === 'completed') {
+    return {
+      bg: '#DCFCE7',
+      border: '#86EFAC',
+      text: '#166534',
+    };
+  }
+  if (s === 'out for delivery' || s === 'dispatched') {
+    return {
+      bg: '#DBEAFE',
+      border: '#93C5FD',
+      text: '#1D4ED8',
+    };
+  }
+  if (s === 'prepared & packing' || s === 'prepared and packing' || s === 'packing' || s === 'packed') {
+    return {
+      bg: '#FEF3C7',
+      border: '#FCD34D',
+      text: '#92400E',
+    };
+  }
+  if (s === 'preparing' || s === 'prep') {
+    return {
+      bg: '#FFE4E6',
+      border: '#FDA4AF',
+      text: '#9F1239',
+    };
+  }
+  if (s === 'paused') {
+    return {
+      bg: '#FEF3C7',
+      border: '#FDE68A',
+      text: '#B45309',
+    };
+  }
+  // Default = Scheduled
+  return {
+    bg: '#F1F5F9',
+    border: '#CBD5E1',
+    text: '#334155',
+  };
+};
+
 /* ─── COUNTDOWN TIMER WIDGET (ADMIN BLUE THEME) ─── */
 function DeliverySlotCountdownWidget({
   deliveryDate,
@@ -2672,6 +2732,11 @@ export default function AdminAllOrdersScreen() {
                       const isItemDelivered = scheduleItem.status.toLowerCase() === 'delivered';
                       const isItemPaused = scheduleItem.isPaused;
 
+                      // ✅ NEW: per-date status color triple. Each card's
+                      // tag is colored according to ITS OWN status, so
+                      // distinct statuses are visually distinct at a glance.
+                      const statusStyle = resolveAdminScheduleStatusStyle(scheduleItem.status);
+
                       return (
                         <View key={`sched-${scheduleItem.date}-${sIdx}`} style={styles.scheduleCardBlock}>
                           <View style={styles.scheduleTopRow}>
@@ -2680,9 +2745,19 @@ export default function AdminAllOrdersScreen() {
                               <Text style={styles.scheduleDateBadgeText}>{scheduleItem.date}</Text>
                             </View>
 
+                            {/* ✅ UPDATED: The status tag is now colored
+                                DYNAMICALLY per date, using the color triple
+                                returned by resolveAdminScheduleStatusStyle.
+                                This keeps the existing tag/paused/delivered/
+                                preparing presets intact while guaranteeing
+                                every status has its own distinct visual. */}
                             <View
                               style={[
                                 styles.scheduleStatusTag,
+                                {
+                                  backgroundColor: statusStyle.bg,
+                                  borderColor: statusStyle.border,
+                                },
                                 isItemPaused && styles.tagPaused,
                                 isItemDelivered && styles.tagDelivered,
                                 scheduleItem.status.toLowerCase().includes('prep') && styles.tagPreparing,
@@ -2691,6 +2766,7 @@ export default function AdminAllOrdersScreen() {
                               <Text
                                 style={[
                                   styles.scheduleStatusTagText,
+                                  { color: statusStyle.text },
                                   isItemPaused && styles.tagTextPaused,
                                   isItemDelivered && styles.tagTextDelivered,
                                   scheduleItem.status.toLowerCase().includes('prep') && styles.tagTextPreparing,

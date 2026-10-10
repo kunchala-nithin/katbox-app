@@ -525,6 +525,92 @@ export default function OrderConfirmationScreen() {
     return [rawDeliveryDate];
   }, [dbOrder, params.scheduledDatesList, params.scheduledDatesFormatted, rawDeliveryDate, isCateringFlow, isHomemadeFlow]);
 
+  /* ─────────────────────────────────────────────────────────
+     ✅ NEW: Build a date → per-delivery status lookup from the
+     order's `deliverySchedules` array. Each schedule entry has
+     its own `date` + `status`. This lets every "Upcoming
+     Deliveries" card in the confirmation screen render its OWN
+     current status instead of the hardcoded "Scheduled" text.
+
+     Status values written by the backend for each schedule:
+       • "Scheduled"          → default at order placement
+       • "Paused"             → customer paused this date
+       • "Preparing"          → chef started cooking
+       • "Prepared & Packing" → packing in progress
+       • "Out for Delivery"   → dispatched
+       • "Delivered"          → delivered (auto on Cash Collected)
+
+     Falls back to "Scheduled" for any date that has no matching
+     schedule entry yet (e.g. legacy orders or race conditions).
+     ───────────────────────────────────────────────────────── */
+  const scheduleStatusByDate: Record<string, string> = useMemo(() => {
+    const map: Record<string, string> = {};
+    const schedules = Array.isArray(dbOrder?.deliverySchedules) ? dbOrder.deliverySchedules : [];
+    schedules.forEach((s: any) => {
+      if (s && typeof s.date === "string" && s.date.trim().length > 0) {
+        map[s.date.trim()] = String(s.status || "Scheduled");
+      }
+    });
+    return map;
+  }, [dbOrder]);
+
+  // ✅ NEW: Resolve the per-date display status for a given upcoming
+  // delivery. Looks up the schedule by exact date string; if not found,
+  // falls back to "Scheduled" (the value assigned at order placement).
+  const resolveScheduleStatusForDate = (dateStr: string): string => {
+    const key = String(dateStr || "").trim();
+    if (!key) return "Scheduled";
+    return scheduleStatusByDate[key] || "Scheduled";
+  };
+
+  // ✅ NEW: Return a style triple (pill bg, pill text color, dot/border
+  // color) that matches the status text. Kept as plain objects so they
+  // can be spread straight into the render without any extra helpers.
+  const resolveScheduleStatusStyle = (statusText: string) => {
+    const s = String(statusText || "").toLowerCase().trim();
+    if (s === "delivered" || s === "completed") {
+      return {
+        pillBg: "#DCFCE7",
+        pillBorder: "#86EFAC",
+        pillText: "#166534",
+      };
+    }
+    if (s === "out for delivery" || s === "dispatched") {
+      return {
+        pillBg: "#DBEAFE",
+        pillBorder: "#93C5FD",
+        pillText: "#1D4ED8",
+      };
+    }
+    if (s === "prepared & packing" || s === "prepared and packing" || s === "packing" || s === "packed") {
+      return {
+        pillBg: "#FEF3C7",
+        pillBorder: "#FCD34D",
+        pillText: "#92400E",
+      };
+    }
+    if (s === "preparing" || s === "prep") {
+      return {
+        pillBg: "#FFE4E6",
+        pillBorder: "#FDA4AF",
+        pillText: "#9F1239",
+      };
+    }
+    if (s === "paused") {
+      return {
+        pillBg: "#FEF3C7",
+        pillBorder: "#FDE68A",
+        pillText: "#B45309",
+      };
+    }
+    // Default = Scheduled
+    return {
+      pillBg: "#F1F5F9",
+      pillBorder: "#CBD5E1",
+      pillText: "#334155",
+    };
+  };
+
   const isCod = String(paymentMethod).toLowerCase() === "cod";
 
   // Dynamic Date Display Resolvers
@@ -1318,6 +1404,13 @@ export default function OrderConfirmationScreen() {
               <View style={styles.refDeliveriesListContainer}>
                 {scheduledDatesArray.map((dateItem: string, idx: number) => {
                   const { dayName, dayNumber, fullString } = parseDateParts(dateItem);
+
+                  // ✅ NEW: Read this specific delivery date's status from
+                  // the order's deliverySchedules array. Falls back to
+                  // "Scheduled" when no schedule exists for this date.
+                  const perDateStatus = resolveScheduleStatusForDate(dateItem);
+                  const statusStyle = resolveScheduleStatusStyle(perDateStatus);
+
                   return (
                     <View key={`conf-upcoming-item-${idx}`} style={styles.refDeliveryCardRow}>
                       <View style={styles.refDateTile}>
@@ -1331,7 +1424,28 @@ export default function OrderConfirmationScreen() {
 
                       <View style={styles.refDeliveryInfoCol}>
                         <Text style={styles.refDeliveryDateTitle}>{fullString}</Text>
-                        <Text style={styles.refDeliveryStatusSubtext}>Scheduled</Text>
+
+                        {/* ✅ UPDATED: Dynamically render this delivery's
+                            own status from the persisted deliverySchedules
+                            array, with a color-coded pill. */}
+                        <View
+                          style={[
+                            styles.refDeliveryStatusPill,
+                            {
+                              backgroundColor: statusStyle.pillBg,
+                              borderColor: statusStyle.pillBorder,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.refDeliveryStatusPillText,
+                              { color: statusStyle.pillText },
+                            ]}
+                          >
+                            {perDateStatus}
+                          </Text>
+                        </View>
                       </View>
 
                       <TouchableOpacity style={styles.refPauseBtn} activeOpacity={0.7}>
@@ -2422,6 +2536,27 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0B261D",
   },
+  /* ✅ NEW: dynamic per-date status pill (replaces the previous
+     static "Scheduled" text subtext). The pill's background, border
+     and text colors are set inline based on the schedule status so
+     each upcoming delivery card reflects its own current state. */
+  refDeliveryStatusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    marginTop: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  refDeliveryStatusPillText: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  /* Legacy style retained for backward compatibility (no longer used
+     by the Upcoming Deliveries card, kept in case other code references it). */
   refDeliveryStatusSubtext: {
     fontSize: 12,
     color: "#5B756C",

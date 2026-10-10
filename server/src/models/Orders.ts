@@ -3,6 +3,17 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 // Subdocument interface for tracking individual scheduled deliveries
 export interface IDeliverySchedule {
   date: string;
+  // ✅ Per-delivery-date status. This is the authoritative status for a
+  //    single upcoming delivery card. Values written by the backend:
+  //      • "Scheduled"             → default at order placement (mealbox flow)
+  //      • "Paused"                → customer paused this date
+  //      • "Preparing"             → chef/admin started cooking
+  //      • "Prepared & Packing"    → packing in progress
+  //      • "Out for Delivery"      → dispatched
+  //      • "Delivered"             → delivered (auto-set on cash collected)
+  //    The OrderConfirmationScreen, Orders tab, admin/all-orders.tsx and
+  //    chef/all-orders.tsx all read this value DYNAMICALLY per date, so
+  //    each upcoming delivery card shows its own current status.
   status: string;
   timeSlot: string;
   address: string;
@@ -211,6 +222,10 @@ export interface IMealBoxOrCateringOrder extends IBaseOrder {
   deliveryTimeSlot?: string;
   addressDetails?: string;
   deliveryDate?: string;
+  // ✅ Array of upcoming delivery dates (mealbox flow). One entry per
+  //    scheduled delivery. Each entry also has a corresponding entry in
+  //    `deliverySchedules` with its own per-date `status` — that is the
+  //    authoritative source for each delivery card's status on every screen.
   upcomingDeliveries?: string[];
   pausedDates?: string[];
   // ✅ UPDATED: `selections` is persisted differently per service type:
@@ -237,6 +252,8 @@ export type IOrder = IHomemadeOrder | IMealBoxOrCateringOrder;
 const DeliveryScheduleSchema = new Schema(
   {
     date: { type: String, required: true },
+    // ✅ Per-delivery-date status. See IDeliverySchedule.status above for
+    //    the full list of values and where they are written from.
     status: { type: String, required: true, default: "Scheduled" },
     timeSlot: { type: String, default: "7:00 PM - 9:00 PM" },
     address: { type: String, default: "" },
@@ -468,6 +485,10 @@ const MealBoxOrCateringSchema = new Schema({
   deliveryTimeSlot: { type: String, default: "" },
   addressDetails: { type: String, default: "" },
   deliveryDate: { type: String, default: "" },
+  // ✅ Array of upcoming delivery dates for the mealbox flow. Each entry
+  //    corresponds 1-to-1 with an entry in `deliverySchedules` (which
+  //    carries the per-date `status`). This is what OrderConfirmationScreen
+  //    and the Orders tab iterate over to render one card per delivery date.
   upcomingDeliveries: { type: [String], default: [] },
   pausedDates: { type: [String], default: [] },
   selections: { type: Schema.Types.Mixed, default: null },
