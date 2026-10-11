@@ -645,6 +645,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       deliveryAddress,
       deliveryDate,
       upcomingDeliveries,
+      // Defensive aliases for older/newer clients that send the cart's
+      // scheduled-date field names instead of `upcomingDeliveries`.
+      scheduledDatesFormatted,
+      scheduledDatesList,
       subtotal,
       deliveryPrice,
       discount,
@@ -838,9 +842,38 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     //    Without this, Array.isArray(upcomingDeliveries) is false and the list
     //    is lost → empty upcomingDeliveries on the order document.
     const parsedUpcomingDeliveries = parseIfJsonString(upcomingDeliveries, []);
-    const sortedDeliveries = Array.isArray(parsedUpcomingDeliveries)
-      ? sortDatesAscending(parsedUpcomingDeliveries)
+    const parsedScheduledDatesFormatted = parseIfJsonString(scheduledDatesFormatted, []);
+    const parsedScheduledDatesList = parseIfJsonString(scheduledDatesList, []);
+
+    // `upcomingDeliveries` is the canonical checkout field. If a client
+    // version sends an empty/missing canonical field, recover the same dates
+    // from the cart's existing scheduled-date aliases before falling back to
+    // a single deliveryDate. This prevents a valid multi-day MealBox plan
+    // from being reduced to one date during order creation.
+    let deliveryDateCandidates: any[] = Array.isArray(parsedUpcomingDeliveries)
+      ? parsedUpcomingDeliveries
       : [];
+
+    if (deliveryDateCandidates.length === 0 && Array.isArray(parsedScheduledDatesFormatted)) {
+      deliveryDateCandidates = parsedScheduledDatesFormatted;
+    }
+
+    if (deliveryDateCandidates.length === 0 && Array.isArray(parsedScheduledDatesList)) {
+      deliveryDateCandidates = parsedScheduledDatesList.map((item: any) => {
+        if (typeof item === "string") return item;
+        if (item?.dayName && item?.dayNumber && item?.monthName) {
+          return `${item.dayName}, ${item.dayNumber} ${item.monthName}`;
+        }
+        if (item?.fullDateString) return String(item.fullDateString);
+        return String(item ?? "");
+      }).filter((item: string) => item.trim().length > 0);
+    }
+
+    const sortedDeliveries = sortDatesAscending(
+      deliveryDateCandidates
+        .map((item: any) => typeof item === "string" ? item.trim() : String(item ?? "").trim())
+        .filter((item: string) => item.length > 0)
+    );
 
     const effectiveChefId = coerceToString(chefId);
     const effectiveChefName = coerceToString(chefName) || safeRestaurantName || "";

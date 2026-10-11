@@ -486,31 +486,45 @@ export default function CheckOutScreen() {
   //    the order document via the `upcomingDeliveries` formData field.
   const upcomingDeliveriesList: string[] = useMemo(() => {
     if (isCateringFlow || isHomemadeFlow) return [];
-    // ✅ Only the mealbox flow reaches here.
-    const rawFormatted = params.scheduledDatesFormatted;
-    if (rawFormatted) {
-      if (Array.isArray(rawFormatted)) return rawFormatted;
-      try {
-        const parsed = JSON.parse(rawFormatted as string);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) {}
-    }
-    const rawList = params.scheduledDatesList;
-    if (rawList) {
-      try {
-        const parsed = typeof rawList === "string" ? JSON.parse(rawList) : rawList;
-        if (Array.isArray(parsed)) {
-          return parsed.map((item: any) => {
-            if (typeof item === "string") return item;
-            if (item?.dayName && item?.dayNumber && item?.monthName) {
-              return `${item.dayName}, ${item.dayNumber} ${item.monthName}`;
-            }
-            return String(item);
-          });
+
+    // Expo Router params may arrive as strings, while older cart documents
+    // can contain JSON-stringified values inside the Mixed orderDetails field.
+    // Parse safely, including a second encoding layer from older app versions.
+    const parseArray = (value: any): any[] | null => {
+      let parsed = value;
+      for (let attempt = 0; attempt < 3 && typeof parsed === "string"; attempt += 1) {
+        const trimmed = parsed.trim();
+        if (!trimmed) return null;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          return null;
         }
-      } catch (e) {}
-    }
-    if (deliveryDate) return [deliveryDate];
+      }
+      return Array.isArray(parsed) ? parsed : null;
+    };
+
+    const formatDateItems = (items: any[]): string[] =>
+      items
+        .map((item: any) => {
+          if (typeof item === "string") return item.trim();
+          if (item?.dayName && item?.dayNumber && item?.monthName) {
+            return `${item.dayName}, ${item.dayNumber} ${item.monthName}`;
+          }
+          if (item?.fullDateString) return String(item.fullDateString);
+          return "";
+        })
+        .filter((item: string) => item.length > 0);
+
+    const formattedDates = formatDateItems(parseArray(params.scheduledDatesFormatted) || []);
+    if (formattedDates.length > 0) return formattedDates;
+
+    // Do not return an empty formatted array early: the detailed list can
+    // still contain the user's selected dates and must be used as fallback.
+    const listedDates = formatDateItems(parseArray(params.scheduledDatesList) || []);
+    if (listedDates.length > 0) return listedDates;
+
+    if (deliveryDate) return [String(deliveryDate)];
     return [];
   }, [params.scheduledDatesFormatted, params.scheduledDatesList, deliveryDate, isCateringFlow, isHomemadeFlow]);
 
@@ -871,6 +885,10 @@ export default function CheckOutScreen() {
       //      • Admin & Chef all-orders screens can render them with their
       //        respective per-date status.
       formData.append("upcomingDeliveries", JSON.stringify(upcomingDeliveriesList));
+      // Backward-compatible aliases let the controller recover the same dates
+      // if an older backend build still reads the cart field names.
+      formData.append("scheduledDatesFormatted", JSON.stringify(upcomingDeliveriesList));
+      formData.append("scheduledDatesList", JSON.stringify(upcomingDeliveriesList));
       formData.append("deliverySchedules", JSON.stringify(initialDeliverySchedules));
       if (parsedSelections) formData.append("selections", JSON.stringify(parsedSelections));
       if (parsedItems) formData.append("items", JSON.stringify(parsedItems));

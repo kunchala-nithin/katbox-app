@@ -419,15 +419,44 @@ export default function CartScreen() {
     : null;
 
   const upcomingDeliveriesList: string[] = React.useMemo(() => {
-    if (orderDetails?.scheduledDatesFormatted && Array.isArray(orderDetails.scheduledDatesFormatted)) {
-      return orderDetails.scheduledDatesFormatted;
-    }
-    if (orderDetails?.scheduledDatesList && Array.isArray(orderDetails.scheduledDatesList)) {
-      return orderDetails.scheduledDatesList.map((item: any) => `${item.dayName}, ${item.dayNumber} ${item.monthName}`);
-    }
-    if (orderDetails?.deliveryDate) {
-      return [orderDetails.deliveryDate];
-    }
+    // Cart.orderDetails is Mixed, so these fields can be arrays OR JSON strings
+    // depending on which client/version originally created the cart. Normalize
+    // both forms here so the selected dates are not silently lost before checkout.
+    const parseArray = (value: any): any[] | null => {
+      let parsed = value;
+      for (let attempt = 0; attempt < 3 && typeof parsed === "string"; attempt += 1) {
+        const trimmed = parsed.trim();
+        if (!trimmed) return null;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          return null;
+        }
+      }
+      return Array.isArray(parsed) ? parsed : null;
+    };
+
+    const formatDateItems = (items: any[]): string[] =>
+      items
+        .map((item: any) => {
+          if (typeof item === "string") return item.trim();
+          if (item?.dayName && item?.dayNumber && item?.monthName) {
+            return `${item.dayName}, ${item.dayNumber} ${item.monthName}`;
+          }
+          if (item?.fullDateString) return String(item.fullDateString);
+          return "";
+        })
+        .filter((item: string) => item.length > 0);
+
+    const formattedDates = formatDateItems(parseArray(orderDetails?.scheduledDatesFormatted) || []);
+    if (formattedDates.length > 0) return formattedDates;
+
+    // Important: an empty scheduledDatesFormatted array must NOT prevent
+    // falling back to scheduledDatesList, which may still contain all dates.
+    const listedDates = formatDateItems(parseArray(orderDetails?.scheduledDatesList) || []);
+    if (listedDates.length > 0) return listedDates;
+
+    if (orderDetails?.deliveryDate) return [String(orderDetails.deliveryDate)];
     return [];
   }, [orderDetails]);
 
@@ -962,11 +991,21 @@ export default function CartScreen() {
           ? (homemadeDeliverySlot || orderDetails?.deliverySlot || "")
           : "",
         addressDetails: orderDetails?.addressDetails || orderDetails?.address || "2-91/32, Sai Enclave, Hyderabad",
-        scheduledDatesFormatted: orderDetails?.scheduledDatesFormatted
-          ? JSON.stringify(orderDetails.scheduledDatesFormatted)
+        // Forward a normalized array (not a potentially double-encoded Mixed value).
+        // Checkout converts this to the backend's `upcomingDeliveries` field.
+        scheduledDatesFormatted: upcomingDeliveriesList.length > 0
+          ? JSON.stringify(upcomingDeliveriesList)
           : undefined,
         scheduledDatesList: orderDetails?.scheduledDatesList
-          ? JSON.stringify(orderDetails.scheduledDatesList)
+          ? JSON.stringify(
+              (() => {
+                let value: any = orderDetails.scheduledDatesList;
+                for (let attempt = 0; attempt < 3 && typeof value === "string"; attempt += 1) {
+                  try { value = JSON.parse(value); } catch { return []; }
+                }
+                return Array.isArray(value) ? value : [];
+              })()
+            )
           : undefined,
         selections: cartData?.selections ? JSON.stringify(cartData.selections) : undefined,
         items: cartData?.items ? JSON.stringify(cartData.items) : undefined,
