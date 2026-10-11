@@ -3,6 +3,30 @@ import mongoose, { Schema, Document } from "mongoose";
 // ==========================================
 // 1. CHEF CATEGORY SCHEMAS & INTERFACES
 // ==========================================
+
+// ✅ NEW: Combo sub-document — represents an "Add X + Y for ₹Z" offer
+// (Swiggy-style "Frequently bought together / Add a combo" card).
+// Stored per-item so it can be offered contextually for the dish it
+// belongs to. The two source items are referenced by their name + image
+// snapshot (denormalised) so the combo renders even if the source item
+// is later edited or removed.
+interface IComboSource {
+  name: string;
+  imageUrl: string;
+  cloudinaryId: string;
+  price: number;
+  quantity: string;
+}
+
+interface IItemCombo {
+  comboName: string;
+  sourceItem: IComboSource;   // "Add this" (the anchor dish the combo is attached to)
+  pairedItem: IComboSource;   // "with this" (the second item in the bundle)
+  comboPrice: number;         // combined offer price (must be < source + paired)
+  savings: number;            // derived: (sourcePrice + pairedPrice) - comboPrice
+  isAvailable: boolean;
+}
+
 interface ICategoryItem {
   name: string;
   description?: string;
@@ -16,6 +40,7 @@ interface ICategoryItem {
     quantity: string;
     price: number;
   }>;
+  combos: IItemCombo[]; // ✅ NEW
 }
 
 interface ISubCategory {
@@ -32,6 +57,25 @@ export interface IChefCategory extends Document {
   subCategories: ISubCategory[];
 }
 
+// ✅ NEW: Combo source schema (used inside IItemCombo)
+const ComboSourceSchema = new Schema({
+  name: { type: String, required: true },
+  imageUrl: { type: String, default: "" },
+  cloudinaryId: { type: String, default: "" },
+  price: { type: Number, required: true },
+  quantity: { type: String, default: "" },
+}, { _id: false });
+
+// ✅ NEW: Combo schema — a Swiggy-style "Add A + B for ₹C" offer.
+const ItemComboSchema = new Schema({
+  comboName: { type: String, default: "" },
+  sourceItem: { type: ComboSourceSchema, required: true },
+  pairedItem: { type: ComboSourceSchema, required: true },
+  comboPrice: { type: Number, required: true },
+  savings: { type: Number, default: 0 },
+  isAvailable: { type: Boolean, default: true },
+}, { _id: false });
+
 const CategoryItemSchema = new Schema({
   name: { type: String, required: true },
   description: { type: String, default: "" },
@@ -44,7 +88,8 @@ const CategoryItemSchema = new Schema({
   variants: [{
     quantity: String,
     price: Number
-  }]
+  }],
+  combos: { type: [ItemComboSchema], default: [] }, // ✅ NEW
 }, { _id: false });
 
 const SubCategorySchema = new Schema({

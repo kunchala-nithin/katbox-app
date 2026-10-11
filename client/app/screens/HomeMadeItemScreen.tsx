@@ -58,6 +58,21 @@ const normalizeCategoryKey = (val: any): string =>
 
 const QUICK_BITES_KEY = "quickbites";
 
+// ─── Helper: stable string key for a combo (used for cart lookups) ───
+// Combos from the API carry `_id` when they've been persisted, otherwise
+// we fall back to a deterministic composite so React keys stay stable.
+const getComboKey = (combo: any, itemId: string, index: number): string =>
+  combo?._id || combo?.id || `${itemId}::combo-${index}`;
+
+// ─── Helper: total savings for a combo ───
+const getComboSavings = (combo: any): number => {
+  const src = Number(combo?.sourceItem?.price);
+  const pair = Number(combo?.pairedItem?.price);
+  const offer = Number(combo?.comboPrice);
+  if (!Number.isFinite(src) || !Number.isFinite(pair) || !Number.isFinite(offer)) return 0;
+  return Math.max(0, (src + pair) - offer);
+};
+
 const HomeMadeItemScreen = () => {
   const params = useLocalSearchParams();
   // Route Params
@@ -111,6 +126,16 @@ const HomeMadeItemScreen = () => {
   // Numeric Cart Quantity State
   const [itemQuantities, setItemQuantities] = useState<{ [key: string]: number }>({});
 
+  // ─── ✅ NEW: COMBO CART STATE ─────────────────────────────────────────
+  // Combos are stored separately from regular items so their pricing stays
+  // atomic: the whole combo has a single quantity and the bundled price is
+  // split across the two constituent dishes when building the final cart
+  // payload (so CartScreen / HomeMadeOrderReview remain agnostic).
+  //   Shape: { [comboKey]: { combo, qty, itemId } }
+  const [comboCart, setComboCart] = useState<{
+    [key: string]: { combo: any; qty: number; itemId: string };
+  }>({});
+
   // Expanded Descriptions State
   const [expandedDescriptions, setExpandedDescriptions] = useState<{ [key: string]: boolean }>({});
 
@@ -143,6 +168,21 @@ const HomeMadeItemScreen = () => {
       }
       return { ...prev, [itemId]: newQty };
     });
+  };
+
+  // ✅ NEW: Combo cart helpers
+  const updateComboQuantity = (comboKey: string, combo: any, itemId: string, newQty: number) => {
+    if (newQty <= 0) {
+      setComboCart((prev) => {
+        const { [comboKey]: _, ...rest } = prev;
+        return rest;
+      });
+      return;
+    }
+    setComboCart((prev) => ({
+      ...prev,
+      [comboKey]: { combo, qty: newQty, itemId },
+    }));
   };
 
   // Fetch Data from MongoDB strictly scoped to this Chef & Category
@@ -199,6 +239,23 @@ const HomeMadeItemScreen = () => {
                   // Defaults to true only when the field is genuinely absent
                   // (legacy docs) so old data continues to render as available.
                   const resolvedIsAvailable = item.isAvailable !== false;
+
+                  // ✅ NEW: normalise combos coming from the server. We only
+                  // keep combos whose paired item still exists and are marked
+                  // available, so dead offers never surface to customers.
+                  const normalizedCombos = (item.combos || [])
+                    .filter((c: any) => c && c.isAvailable !== false)
+                    .map((c: any) => ({
+                      _id: c._id,
+                      id: c.id,
+                      comboName: c.comboName || "",
+                      comboPrice: Number(c.comboPrice) || 0,
+                      savings: Number(c.savings) || getComboSavings(c),
+                      sourceItem: c.sourceItem || null,
+                      pairedItem: c.pairedItem || null,
+                    }))
+                    .filter((c: any) => c.sourceItem?.name && c.pairedItem?.name && c.comboPrice > 0);
+
                   return {
                     id: item._id || Math.random().toString(),
                     name: item.name,
@@ -212,6 +269,7 @@ const HomeMadeItemScreen = () => {
                     isBestSeller: false,
                     isVeg: resolvedIsVeg,
                     isAvailable: resolvedIsAvailable,
+                    combos: normalizedCombos, // ✅ NEW
                   };
                 }),
               };
@@ -363,7 +421,8 @@ const HomeMadeItemScreen = () => {
   const getCartTotals = () => {
     let count = 0;
     let price = 0;
-    
+
+    // Regular items
     Object.entries(itemQuantities).forEach(([itemId, qty]) => {
       count += qty;
       const flatItem = menuSections.flatMap(s => s.data).find(i => i.id === itemId);
@@ -372,6 +431,14 @@ const HomeMadeItemScreen = () => {
         const basePrice = flatItem.prices[currentQtyConfig] || 0;
         price += basePrice * qty;
       }
+    });
+
+    // ✅ NEW: Combos — count 2 dishes per combo unit but only add the
+    // combo's offer price (not the sum of individual pieces).
+    Object.values(comboCart).forEach(({ combo, qty }) => {
+      if (!combo || qty <= 0) return;
+      count += qty * 2; // two dishes per combo
+      price += (Number(combo.comboPrice) || 0) * qty;
     });
 
     return { totalCartCount: count, totalCartPrice: price };
@@ -389,6 +456,97 @@ const HomeMadeItemScreen = () => {
   const currentModalItemCount = selectedItemId ? (itemQuantities[selectedItemId] || 1) : 1;
   const dynamicModalTotalPrice = getModalSelectedOptionPrice() * currentModalItemCount;
 
+  // ✅ NEW: Renders a single Swiggy-style combo card for a given dish.
+  // Layout: [img] + [img]  "Add A + B"   ₹gross ₹offer  [Save ₹X]  [ADD COMBO]
+  // Purely additive — if a dish has no combos, nothing renders for it.
+  const renderComboCard = (item: any, combo: any, comboIndex: number) => {
+    const comboKey = getComboKey(combo, item.id, comboIndex);
+    const cartEntry = comboCart[comboKey];
+    const comboQty = cartEntry?.qty || 0;
+    const src = combo.sourceItem || {};
+    const pair = combo.pairedItem || {};
+    const gross = (Number(src.price) || 0) + (Number(pair.price) || 0);
+    const savings = combo.savings || getComboSavings(combo);
+    const offer = Number(combo.comboPrice) || 0;
+
+    return (
+      <View style={styles.comboCard} key={comboKey}>
+        <View style={styles.comboCardLeft}>
+          <View style={styles.comboImageStack}>
+            <View style={styles.comboImageWrap}>
+              {src.imageUrl ? (
+                <Image source={{ uri: src.imageUrl }} style={styles.comboImage} />
+              ) : (
+                <View style={[styles.comboImage, styles.comboImagePlaceholder]}>
+                  <Ionicons name="fast-food-outline" size={18} color={KATBOX.primary} />
+                </View>
+              )}
+            </View>
+            <View style={styles.comboPlusBadge}>
+              <Ionicons name="add" size={11} color="#FFFFFF" />
+            </View>
+            <View style={styles.comboImageWrap}>
+              {pair.imageUrl ? (
+                <Image source={{ uri: pair.imageUrl }} style={styles.comboImage} />
+              ) : (
+                <View style={[styles.comboImage, styles.comboImagePlaceholder]}>
+                  <Ionicons name="fast-food-outline" size={18} color={KATBOX.primary} />
+                </View>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.comboTextBlock}>
+            <Text style={styles.comboTitle} numberOfLines={1}>
+              Add {src.name || "Item"} + {pair.name || "Item"}
+            </Text>
+            <View style={styles.comboPriceRow}>
+              <Text style={styles.comboStrike}>₹{gross}</Text>
+              <Text style={styles.comboOffer}>₹{offer}</Text>
+            </View>
+            {savings > 0 && (
+              <View style={styles.comboSaveBadge}>
+                <Text style={styles.comboSaveBadgeText}>Save ₹{savings}</Text>
+              </View>
+            )}
+            {!!combo.comboName && (
+              <Text style={styles.comboSubtitle} numberOfLines={1}>{combo.comboName}</Text>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.comboCardRight}>
+          {comboQty === 0 ? (
+            <TouchableOpacity
+              style={styles.comboAddButton}
+              activeOpacity={0.85}
+              onPress={() => updateComboQuantity(comboKey, combo, item.id, 1)}
+            >
+              <Text style={styles.comboAddButtonText}>ADD</Text>
+              <Ionicons name="add" size={14} color={KATBOX.primary} />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.comboCounter}>
+              <TouchableOpacity
+                style={styles.comboCounterBtn}
+                onPress={() => updateComboQuantity(comboKey, combo, item.id, comboQty - 1)}
+              >
+                <Ionicons name="remove" size={14} color="#fff" />
+              </TouchableOpacity>
+              <Text style={styles.comboCounterText}>{comboQty}</Text>
+              <TouchableOpacity
+                style={styles.comboCounterBtn}
+                onPress={() => updateComboQuantity(comboKey, combo, item.id, comboQty + 1)}
+              >
+                <Ionicons name="add" size={14} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </View>
+    );
+  };
+
   // Render Item
   const renderItem = (item: any) => {
     const currentQty = getSelectedQuantity(item.id) || item.defaultQuantity;
@@ -396,6 +554,7 @@ const HomeMadeItemScreen = () => {
     const isExpanded = expandedDescriptions[item.id] || false;
     const cartCount = itemQuantities[item.id] || 0;
     const itemUnavailable = item.isAvailable === false;
+    const itemCombos = Array.isArray(item.combos) ? item.combos : [];
 
     // ─── UNAVAILABLE STATE ────────────────────────────────────────────
     // When the chef has toggled this dish OFF, we render a "dead" card:
@@ -456,103 +615,112 @@ const HomeMadeItemScreen = () => {
 
     // ─── AVAILABLE STATE (unchanged behaviour) ────────────────────────
     return (
-      <View style={styles.menuItemCard}>
-        {/* LEFT: Text Content */}
-        <View style={styles.itemDetails}>
-          <View style={styles.itemNameRow}>
-            <View style={[styles.vegIconWrapper, !item.veg && styles.nonVegIconWrapper]}>
-              <View style={[styles.vegIconDot, !item.veg && styles.nonVegIconDot]} />
+      <View>
+        <View style={styles.menuItemCard}>
+          {/* LEFT: Text Content */}
+          <View style={styles.itemDetails}>
+            <View style={styles.itemNameRow}>
+              <View style={[styles.vegIconWrapper, !item.veg && styles.nonVegIconWrapper]}>
+                <View style={[styles.vegIconDot, !item.veg && styles.nonVegIconDot]} />
+              </View>
+              <Text style={styles.itemName}>{item.name}</Text>
             </View>
-            <Text style={styles.itemName}>{item.name}</Text>
+
+            {item.description && (
+              <Text
+                style={styles.itemDescription}
+                numberOfLines={isExpanded ? undefined : 2}
+              >
+                {item.description}
+              </Text>
+            )}
+
+            {item.description && (
+              <TouchableOpacity onPress={() => toggleDescription(item.id)} style={styles.readMore}>
+                <Text style={styles.readMoreText}>
+                  {isExpanded ? "Read less" : "Read more"}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            <View style={styles.priceRow}>
+              <Text style={styles.itemPrice}>₹{currentPrice}</Text>
+
+              {item.availableQuantities && item.availableQuantities.length > 1 ? (
+                <TouchableOpacity
+                  style={styles.qtyButton}
+                  onPress={() => openQuantitySelector(item)}
+                >
+                  <Text style={styles.qtyText}>{currentQty}</Text>
+                  <Ionicons name="chevron-down" size={14} color={KATBOX.textPrimary} />
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.qtyButton}>
+                  <Text style={styles.qtyText}>{currentQty}</Text>
+                </View>
+              )}
+            </View>
           </View>
 
-          {item.description && (
-            <Text
-              style={styles.itemDescription}
-              numberOfLines={isExpanded ? undefined : 2}
-            >
-              {item.description}
-            </Text>
-          )}
+          {/* RIGHT: Image with ADD / Quantity Counter - Clickable */}
+          <TouchableOpacity 
+            style={styles.itemImageWrapper}
+            onPress={() => openQuantitySelector(item)}
+            activeOpacity={0.85}
+          >
+            <View style={styles.itemImageContainer}>
+              <Image
+                source={{ uri: item.image || "https://via.placeholder.com/150" }}
+                style={styles.menuItemImage}
+              />
+            </View>
 
-          {item.description && (
-            <TouchableOpacity onPress={() => toggleDescription(item.id)} style={styles.readMore}>
-              <Text style={styles.readMoreText}>
-                {isExpanded ? "Read less" : "Read more"}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          <View style={styles.priceRow}>
-            <Text style={styles.itemPrice}>₹{currentPrice}</Text>
-
-            {item.availableQuantities && item.availableQuantities.length > 1 ? (
+            {cartCount === 0 ? (
               <TouchableOpacity
-                style={styles.qtyButton}
-                onPress={() => openQuantitySelector(item)}
+                style={styles.addButtonOnImage}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  updateItemQuantity(item.id, 1);
+                }}
+                activeOpacity={0.9}
               >
-                <Text style={styles.qtyText}>{currentQty}</Text>
-                <Ionicons name="chevron-down" size={14} color={KATBOX.textPrimary} />
+                <Text style={styles.addButtonText}>ADD</Text>
+                <Ionicons name="add" size={15} color={KATBOX.primary} />
               </TouchableOpacity>
             ) : (
-              <View style={styles.qtyButton}>
-                <Text style={styles.qtyText}>{currentQty}</Text>
+              <View style={styles.quantityCounter}>
+                <TouchableOpacity
+                  style={styles.counterButton}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    updateItemQuantity(item.id, cartCount - 1);
+                  }}
+                >
+                  <Ionicons name="remove" size={16} color="#fff" />
+                </TouchableOpacity>
+
+                <Text style={styles.counterText}>{cartCount}</Text>
+
+                <TouchableOpacity
+                  style={styles.counterButton}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    updateItemQuantity(item.id, cartCount + 1);
+                  }}
+                >
+                  <Ionicons name="add" size={16} color="#fff" />
+                </TouchableOpacity>
               </View>
             )}
-          </View>
+          </TouchableOpacity>
         </View>
 
-        {/* RIGHT: Image with ADD / Quantity Counter - Clickable */}
-        <TouchableOpacity 
-          style={styles.itemImageWrapper}
-          onPress={() => openQuantitySelector(item)}
-          activeOpacity={0.85}
-        >
-          <View style={styles.itemImageContainer}>
-            <Image
-              source={{ uri: item.image || "https://via.placeholder.com/150" }}
-              style={styles.menuItemImage}
-            />
+        {/* ✅ NEW: Swiggy-style combo offers rendered directly under the dish */}
+        {itemCombos.length > 0 && (
+          <View style={styles.comboListWrap}>
+            {itemCombos.map((combo: any, cIdx: number) => renderComboCard(item, combo, cIdx))}
           </View>
-
-          {cartCount === 0 ? (
-            <TouchableOpacity
-              style={styles.addButtonOnImage}
-              onPress={(e) => {
-                e.stopPropagation();
-                updateItemQuantity(item.id, 1);
-              }}
-              activeOpacity={0.9}
-            >
-              <Text style={styles.addButtonText}>ADD</Text>
-              <Ionicons name="add" size={15} color={KATBOX.primary} />
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.quantityCounter}>
-              <TouchableOpacity
-                style={styles.counterButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  updateItemQuantity(item.id, cartCount - 1);
-                }}
-              >
-                <Ionicons name="remove" size={16} color="#fff" />
-              </TouchableOpacity>
-
-              <Text style={styles.counterText}>{cartCount}</Text>
-
-              <TouchableOpacity
-                style={styles.counterButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  updateItemQuantity(item.id, cartCount + 1);
-                }}
-              >
-                <Ionicons name="add" size={16} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          )}
-        </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -560,7 +728,8 @@ const HomeMadeItemScreen = () => {
   // Persist Cart context and Navigate to HomeMadeOrderReview
   const handlePlaceOrder = async () => {
     try {
-      const cartItemsPayload = Object.entries(itemQuantities).map(([itemId, qty]) => {
+      // Regular items payload
+      const regularItemsPayload = Object.entries(itemQuantities).map(([itemId, qty]) => {
         const flatItem = menuSections.flatMap(s => s.data).find(i => i.id === itemId);
         const chosenConfig = getSelectedQuantity(itemId) || flatItem?.defaultQuantity || "";
         return {
@@ -573,6 +742,49 @@ const HomeMadeItemScreen = () => {
           isVeg: flatItem?.isVeg ?? true,
         };
       });
+
+      // ✅ NEW: Expand each combo into two line items so the existing
+      // review/cart pipelines understand them without modification.
+      // The combo's total price is split proportionally between the two
+      // dishes so the sum equals the discounted combo price.
+      const comboItemsPayload: any[] = [];
+      Object.values(comboCart).forEach(({ combo, qty }) => {
+        if (!combo || qty <= 0) return;
+        const src = combo.sourceItem || {};
+        const pair = combo.pairedItem || {};
+        const srcPrice = Number(src.price) || 0;
+        const pairPrice = Number(pair.price) || 0;
+        const offer = Number(combo.comboPrice) || 0;
+        const denom = srcPrice + pairPrice;
+
+        const srcShare = denom > 0 ? +(offer * (srcPrice / denom)).toFixed(2) : offer / 2;
+        const pairShare = denom > 0 ? +(offer - srcShare).toFixed(2) : offer / 2;
+
+        comboItemsPayload.push({
+          id: `combo-src-${getComboKey(combo, "", 0)}`,
+          name: `${src.name} (Combo)`,
+          image: src.imageUrl || "",
+          price: srcShare,
+          quantity: qty,
+          selectedQtyConfig: src.quantity || "",
+          isVeg: true,
+          isComboComponent: true,
+          comboName: combo.comboName || "",
+        });
+        comboItemsPayload.push({
+          id: `combo-pair-${getComboKey(combo, "", 0)}`,
+          name: `${pair.name} (Combo)`,
+          image: pair.imageUrl || "",
+          price: pairShare,
+          quantity: qty,
+          selectedQtyConfig: pair.quantity || "",
+          isVeg: true,
+          isComboComponent: true,
+          comboName: combo.comboName || "",
+        });
+      });
+
+      const cartItemsPayload = [...regularItemsPayload, ...comboItemsPayload];
 
       if (cartItemsPayload.length === 0) return;
 
@@ -1910,5 +2122,167 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0.2,
+  },
+
+  // ============================================================
+  // ✅ NEW: SWIGGY-STYLE COMBO CARD STYLES
+  // ============================================================
+  comboListWrap: {
+    marginTop: -6,
+    marginBottom: 16,
+    paddingLeft: 8,
+    paddingRight: 8,
+  },
+  comboCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: KATBOX.primaryTintSoft,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    shadowColor: KATBOX.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  comboCardLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    paddingRight: 8,
+  },
+  comboImageStack: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  comboImageWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(20, 83, 45, 0.18)",
+    backgroundColor: KATBOX.card,
+  },
+  comboImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  comboImagePlaceholder: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: KATBOX.primaryTint,
+  },
+  comboPlusBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: KATBOX.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: -6,
+    zIndex: 2,
+    borderWidth: 2,
+    borderColor: KATBOX.primaryTintSoft,
+  },
+  comboTextBlock: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  comboTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: KATBOX.textPrimary,
+    letterSpacing: -0.1,
+  },
+  comboPriceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 3,
+  },
+  comboStrike: {
+    fontSize: 12,
+    color: KATBOX.textMuted,
+    textDecorationLine: "line-through",
+    fontWeight: "600",
+  },
+  comboOffer: {
+    fontSize: 14,
+    color: KATBOX.primary,
+    fontWeight: "900",
+  },
+  comboSaveBadge: {
+    alignSelf: "flex-start",
+    marginTop: 4,
+    backgroundColor: KATBOX.primaryTint,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+    paddingHorizontal: 7,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+  },
+  comboSaveBadgeText: {
+    color: KATBOX.primary,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+  comboSubtitle: {
+    fontSize: 11,
+    color: KATBOX.textTertiary,
+    marginTop: 3,
+    fontStyle: "italic",
+  },
+  comboCardRight: {
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+  comboAddButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: KATBOX.card,
+    borderWidth: 1.2,
+    borderColor: KATBOX.primary,
+  },
+  comboAddButtonText: {
+    color: KATBOX.primary,
+    fontSize: 12.5,
+    fontWeight: "900",
+    letterSpacing: 0.3,
+  },
+  comboCounter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: KATBOX.primary,
+    borderRadius: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    minWidth: 82,
+  },
+  comboCounterBtn: {
+    width: 22,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  comboCounterText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "900",
+    minWidth: 18,
+    textAlign: "center",
   },
 });

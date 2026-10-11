@@ -10,6 +10,7 @@ import {
   deleteChefCategoryImage,
   deleteSubCategory,
   deleteSingleItem,
+  toggleCategoryItemAvailability,
   // Menu Controllers
   addChefMenu,
   updateChefMenu,
@@ -17,6 +18,7 @@ import {
   getChefMenus,
   saveDaawathCategories,
   deleteChefMenuImage,
+  toggleMenuPlateItemAvailability,
   // Plan Controllers
   addChefPlan,
   updateChefPlan,
@@ -59,6 +61,13 @@ router.put(
     { name: "itemImages", maxCount: 500 },
   ]),
   updateChefMenu
+);
+
+// ✅ NEW: toggle a single plate-item's availability (Catering)
+router.patch(
+  "/menu/:menuId/plate-item/:itemId/toggle-availability",
+  protect,
+  toggleMenuPlateItemAvailability
 );
 
 router.post(
@@ -110,6 +119,13 @@ router.get("/plans/:chefId", getChefPlans);
 router.delete("/image", protect, deleteChefCategoryImage);
 router.delete("/:categoryId/sub-category/:subCategoryId", protect, deleteSubCategory);
 router.delete("/:categoryId/item/:itemId", protect, deleteSingleItem);
+
+// ✅ NEW: toggle a single category item's availability (Quick Bites + Homemade)
+router.patch(
+  "/:categoryId/item/:itemId/toggle-availability",
+  protect,
+  toggleCategoryItemAvailability
+);
 
 router.post(
   "/add",

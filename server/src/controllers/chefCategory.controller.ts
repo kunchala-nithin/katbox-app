@@ -29,6 +29,53 @@ const uploadToCloudinary = (
   });
 };
 
+// ============================================================
+// 🍱 COMBO NORMALIZER (Swiggy-style "Add A + B for ₹C")
+// Accepts a raw combo object coming from the client, sanitises
+// numbers, computes savings, and returns a strictly-shaped object
+// matching `ItemComboSchema`. Returns `null` for malformed combos
+// so the caller can safely filter them out.
+// ============================================================
+const normalizeCombo = (raw: any): any | null => {
+  if (!raw || typeof raw !== "object") return null;
+
+  const source = raw.sourceItem || {};
+  const paired = raw.pairedItem || {};
+
+  const sourcePrice = Number(source.price);
+  const pairedPrice = Number(paired.price);
+  const comboPrice = Number(raw.comboPrice);
+
+  // A combo needs two named items and finite prices
+  if (!source.name || !paired.name) return null;
+  if (!Number.isFinite(sourcePrice) || !Number.isFinite(pairedPrice)) return null;
+  if (!Number.isFinite(comboPrice) || comboPrice <= 0) return null;
+
+  const grossPrice = sourcePrice + pairedPrice;
+  const savings = Math.max(0, grossPrice - comboPrice);
+
+  return {
+    comboName: typeof raw.comboName === "string" ? raw.comboName.trim() : "",
+    sourceItem: {
+      name: String(source.name).trim(),
+      imageUrl: source.imageUrl || "",
+      cloudinaryId: source.cloudinaryId || "",
+      price: sourcePrice,
+      quantity: source.quantity || "",
+    },
+    pairedItem: {
+      name: String(paired.name).trim(),
+      imageUrl: paired.imageUrl || "",
+      cloudinaryId: paired.cloudinaryId || "",
+      price: pairedPrice,
+      quantity: paired.quantity || "",
+    },
+    comboPrice,
+    savings,
+    isAvailable: raw.isAvailable !== undefined ? Boolean(raw.isAvailable) : true,
+  };
+};
+
 // ==========================================
 // CHEF CATEGORY CONTROLLERS
 // ==========================================
@@ -156,6 +203,11 @@ export const deleteChefCategory = async (req: any, res: Response) => {
                 await cloudinary.uploader.destroy(item.cloudinaryId);
               } catch (e) {}
             }
+            // ✅ Combo source/paired images are denormalised snapshots.
+            // They share the same cloudinaryId as their origin item, so
+            // they're already covered by the origin-item delete above.
+            // We deliberately do NOT destroy them again here to avoid
+            // destroying a still-referenced asset twice.
           }
         }
       }
@@ -231,6 +283,10 @@ export const saveCategoryItems = async (req: any, res: Response) => {
     const orphanedIds = [...existingCloudinaryIds].filter(id => !incomingCloudinaryIds.has(id));
 
     // ---- Queue every new-file upload in parallel ----
+    // ✅ Combo sourceItem/pairedItem images are snapshots of existing
+    //    items and are never uploaded as "file://" — they only carry a
+    //    secure URL + cloudinaryId copied from the origin item. So the
+    //    upload queue here stays unchanged.
     type UploadSlot = { subIndex: number; itemIndex: number; promise: Promise<any> };
     const uploadSlots: UploadSlot[] = [];
 
@@ -293,6 +349,16 @@ export const saveCategoryItems = async (req: any, res: Response) => {
           cloudinaryId = upload.public_id;
         }
 
+        // ✅ NEW: Sanitize the incoming combos array. Each combo is
+        // normalised so savings are recomputed server-side (never trust
+        // the client) and malformed entries are silently dropped.
+        const rawCombos = Array.isArray(item.combos) ? item.combos : [];
+        const cleanCombos: any[] = [];
+        for (const rawCombo of rawCombos) {
+          const normalized = normalizeCombo(rawCombo);
+          if (normalized) cleanCombos.push(normalized);
+        }
+
         items.push({
           name: item.name,
           description: item.description || "",
@@ -303,6 +369,7 @@ export const saveCategoryItems = async (req: any, res: Response) => {
           isVeg: item.isVeg !== undefined ? item.isVeg : true,
           isAvailable: item.isAvailable !== undefined ? item.isAvailable : true,
           variants: item.variants || [],
+          combos: cleanCombos, // ✅ NEW
         });
       }
 
