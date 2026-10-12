@@ -18,6 +18,7 @@ import {
 import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import * as LocationServices from "expo-location";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import api from "@/src/lib/api";
@@ -115,6 +116,10 @@ const AddChefs = () => {
   const [phone, setPhone] = useState("");
   const [aadhar, setAadhar] = useState("");
   const [location, setLocation] = useState("");
+  // GPS point for nearby-chef discovery; stored as GeoJSON [longitude, latitude].
+  const [latitude, setLatitude] = useState("");
+  const [longitude, setLongitude] = useState("");
+  const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [specialty, setSpecialty] = useState("");
   const [price, setPrice] = useState("");
   const [foodType, setFoodType] = useState<"VEG" | "NONVEG" | "BOTH">("BOTH");
@@ -168,6 +173,16 @@ const AddChefs = () => {
             setPhone(c.phone || "");
             setAadhar(c.aadhar || "");
             setLocation(c.location || "");
+            setLatitude(
+              c.geoLocation?.coordinates?.[1] != null
+                ? String(c.geoLocation.coordinates[1])
+                : ""
+            );
+            setLongitude(
+              c.geoLocation?.coordinates?.[0] != null
+                ? String(c.geoLocation.coordinates[0])
+                : ""
+            );
             setSpecialty(c.specialty || "");
             setPrice(c.price || "");
             setFoodType(c.foodType || "BOTH");
@@ -234,6 +249,8 @@ const AddChefs = () => {
     setPhone("");
     setAadhar("");
     setLocation("");
+    setLatitude("");
+    setLongitude("");
     setSpecialty("");
     setPrice("");
     setFoodType("BOTH");
@@ -251,6 +268,40 @@ const AddChefs = () => {
     setBankAccountNumber("");
     setBankIfscCode("");
     setUpiMobileNumber("");
+  };
+
+  const captureChefGpsLocation = async () => {
+    if (!isEditable) return;
+
+    setIsCapturingLocation(true);
+    try {
+      const permission = await LocationServices.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        Alert.alert(
+          "Location permission needed",
+          "Allow location access to save the chef's GPS position. Customers can only find this chef within 5 km when coordinates are saved."
+        );
+        return;
+      }
+
+      const position = await LocationServices.getCurrentPositionAsync({
+        accuracy: LocationServices.Accuracy.Balanced,
+      });
+      setLatitude(String(position.coords.latitude));
+      setLongitude(String(position.coords.longitude));
+      Alert.alert(
+        "GPS location saved",
+        "The chef's current GPS position will be saved when you save the profile."
+      );
+    } catch (error: any) {
+      console.log("Capture chef GPS location error:", error);
+      Alert.alert(
+        "Unable to get location",
+        "Check that device location is enabled, then try again."
+      );
+    } finally {
+      setIsCapturingLocation(false);
+    }
   };
 
   const requestPermissions = async () => {
@@ -341,6 +392,8 @@ const AddChefs = () => {
       formData.append("phone", phone);
       formData.append("aadhar", aadhar);
       formData.append("location", location);
+      formData.append("latitude", latitude);
+      formData.append("longitude", longitude);
       formData.append("specialty", specialty);
       formData.append("price", price);
       formData.append("foodType", foodType);
@@ -441,6 +494,8 @@ const AddChefs = () => {
     formData.append("phone", phone);
     formData.append("aadhar", aadhar);
     formData.append("location", location);
+    formData.append("latitude", latitude);
+    formData.append("longitude", longitude);
     formData.append("specialty", specialty);
     formData.append("price", price);
     formData.append("foodType", foodType);
@@ -995,6 +1050,46 @@ const AddChefs = () => {
               }}
               editable={isEditable}
             />
+            <TouchableOpacity
+              onPress={captureChefGpsLocation}
+              disabled={!isEditable || isCapturingLocation}
+              activeOpacity={0.85}
+              style={{
+                marginTop: 9,
+                marginBottom: 4,
+                minHeight: 42,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: "#2D6A4F",
+                backgroundColor: !isEditable ? "#F1F5F9" : "#EAF5EE",
+                paddingHorizontal: 13,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: isCapturingLocation ? 0.7 : 1,
+              }}
+            >
+              <Feather name="map-pin" size={16} color="#2D6A4F" />
+              <Text style={{ marginLeft: 8, color: "#2D6A4F", fontWeight: "700" }}>
+                {isCapturingLocation
+                  ? "Getting GPS location..."
+                  : latitude && longitude
+                    ? "Update chef GPS location"
+                    : "Use current GPS location"}
+              </Text>
+            </TouchableOpacity>
+            <Text
+              style={{
+                color: latitude && longitude ? "#2D6A4F" : "#64748B",
+                fontSize: 12,
+                marginTop: 3,
+                marginBottom: 10,
+              }}
+            >
+              {latitude && longitude
+                ? `GPS saved: ${Number(latitude).toFixed(5)}, ${Number(longitude).toFixed(5)}`
+                : "Required for customers to discover this chef within 5 km. Capture GPS while at the chef's location."}
+            </Text>
 
             <Text style={styles.fieldLabel}>Specialty</Text>
             <TextInput

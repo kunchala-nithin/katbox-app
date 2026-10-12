@@ -31,6 +31,12 @@ export interface IReviewItem {
   createdAt: Date;
 }
 
+export interface IChefGeoLocation {
+  type: "Point";
+  /** GeoJSON coordinates are always [longitude, latitude]. */
+  coordinates: [number, number];
+}
+
 export interface IChef extends Document {
   user: mongoose.Types.ObjectId;
   name: string;
@@ -38,6 +44,8 @@ export interface IChef extends Document {
   phone: string;
   aadhar: string;
   location: string;
+  /** Optional GPS point used to find chefs near a delivery address. */
+  geoLocation?: IChefGeoLocation;
   specialty: string;
   price: string;
   foodType: "VEG" | "NONVEG" | "BOTH";
@@ -45,24 +53,14 @@ export interface IChef extends Document {
   avatar: string;
   avatarCloudinaryId: string;
 
-  // COUPONS
   coupons: ICouponItem[];
-
-  // BANNER IMAGES
   banners: IBannerImage[];
-
-  // REVIEWS & FEEDBACK
   reviews: IReviewItem[];
   averageRating: number;
   totalReviews: number;
-
-  // AVAILABILITY STATUS
   isAvailable: boolean;
-
-  // CHEF ORDER HISTORY
   orderHistory: mongoose.Types.ObjectId[];
 
-  // ✅ NEW: BANK / PAYOUT INFO
   bankAccountHolderName: string;
   bankAccountNumber: string;
   bankIfscCode: string;
@@ -89,7 +87,6 @@ const couponItemSchema = new Schema<ICouponItem>(
     description: { type: String, default: "", trim: true },
     minOrder: { type: Number, default: 0 },
     maxDiscount: { type: Number, default: 500 },
-    // ✅ NEW: which service flow this coupon applies to
     serviceType: {
       type: String,
       enum: ["catering", "mealbox", "homemade", "quickbites"],
@@ -120,6 +117,27 @@ const reviewItemSchema = new Schema<IReviewItem>(
     },
   },
   { _id: true, timestamps: true }
+);
+
+const chefGeoLocationSchema = new Schema<IChefGeoLocation>(
+  {
+    type: { type: String, enum: ["Point"], required: true, default: "Point" },
+    coordinates: {
+      type: [Number],
+      required: true,
+      validate: {
+        validator: function (coordinates: number[]) {
+          return (
+            Array.isArray(coordinates) &&
+            coordinates.length === 2 &&
+            coordinates.every((coordinate) => Number.isFinite(coordinate))
+          );
+        },
+        message: "Chef GPS coordinates must contain longitude and latitude",
+      },
+    },
+  },
+  { _id: false }
 );
 
 const chefSchema = new Schema<IChef>(
@@ -157,6 +175,10 @@ const chefSchema = new Schema<IChef>(
       },
     },
     location: { type: String, required: true },
+    geoLocation: {
+      type: chefGeoLocationSchema,
+      default: undefined,
+    },
     specialty: { type: String, required: true },
     price: { type: String, required: true },
     foodType: {
@@ -168,27 +190,13 @@ const chefSchema = new Schema<IChef>(
     avatar: { type: String, required: true },
     avatarCloudinaryId: { type: String, default: "" },
 
-    coupons: {
-      type: [couponItemSchema],
-      default: [],
-    },
-
-    banners: {
-      type: [bannerImageSchema],
-      default: [],
-    },
-
-    reviews: {
-      type: [reviewItemSchema],
-      default: [],
-    },
+    coupons: { type: [couponItemSchema], default: [] },
+    banners: { type: [bannerImageSchema], default: [] },
+    reviews: { type: [reviewItemSchema], default: [] },
     averageRating: { type: Number, default: 4.8 },
     totalReviews: { type: Number, default: 0 },
-
-    // AVAILABILITY CONTROLS
     isAvailable: { type: Boolean, default: true },
 
-    // CHEF ORDER HISTORY REFERENCE
     orderHistory: [
       {
         type: Schema.Types.ObjectId,
@@ -196,7 +204,6 @@ const chefSchema = new Schema<IChef>(
       },
     ],
 
-    // ✅ NEW: BANK / PAYOUT INFO
     bankAccountHolderName: { type: String, default: "", trim: true },
     bankAccountNumber: { type: String, default: "", trim: true },
     bankIfscCode: { type: String, default: "", trim: true, uppercase: true },
@@ -217,6 +224,10 @@ const chefSchema = new Schema<IChef>(
   },
   { timestamps: true }
 );
+
+// GeoJSON index supports future MongoDB $near queries. Existing documents
+// without geoLocation remain valid and do not need a migration.
+chefSchema.index({ geoLocation: "2dsphere" });
 
 chefSchema.post("deleteOne", { document: true, query: false }, async function () {
   const chef = this as any;

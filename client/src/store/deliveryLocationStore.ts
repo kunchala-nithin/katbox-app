@@ -1,6 +1,6 @@
 // src/store/deliveryLocationStore.ts
-import { create } from 'zustand';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { create } from "zustand";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export interface DeliveryLocation {
   id?: string;
@@ -9,7 +9,7 @@ export interface DeliveryLocation {
   fullAddress: string;
   latitude: number;
   longitude: number;
-  tag?: 'Home' | 'Work' | 'Other';
+  tag?: "Home" | "Work" | "Other";
   updatedAt: string;
 }
 
@@ -26,7 +26,7 @@ interface DeliveryLocationStore {
   hydrateDeliveryLocation: () => Promise<void>;
 }
 
-const STORAGE_KEY = '@katbox_delivery_location_v1';
+const STORAGE_KEY = "@katbox_delivery_location_v1";
 
 export const useDeliveryLocationStore = create<DeliveryLocationStore>((set) => ({
   deliveryLocation: null,
@@ -40,8 +40,8 @@ export const useDeliveryLocationStore = create<DeliveryLocationStore>((set) => (
       } else {
         await AsyncStorage.removeItem(STORAGE_KEY);
       }
-    } catch (e) {
-      console.log('deliveryLocationStore: persist error', e);
+    } catch (error) {
+      console.log("deliveryLocationStore: persist error", error);
     }
   },
 
@@ -49,8 +49,8 @@ export const useDeliveryLocationStore = create<DeliveryLocationStore>((set) => (
     set({ deliveryLocation: null });
     try {
       await AsyncStorage.removeItem(STORAGE_KEY);
-    } catch (e) {
-      console.log('deliveryLocationStore: clear error', e);
+    } catch (error) {
+      console.log("deliveryLocationStore: clear error", error);
     }
   },
 
@@ -63,8 +63,8 @@ export const useDeliveryLocationStore = create<DeliveryLocationStore>((set) => (
       } else {
         set({ hydrated: true });
       }
-    } catch (e) {
-      console.log('deliveryLocationStore: hydrate error', e);
+    } catch (error) {
+      console.log("deliveryLocationStore: hydrate error", error);
       set({ hydrated: true });
     }
   },

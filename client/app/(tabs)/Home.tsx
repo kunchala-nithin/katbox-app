@@ -264,6 +264,8 @@ export default function HomeScreen() {
   const hydrateDeliveryLocation = useDeliveryLocationStore(
     (s) => s.hydrateDeliveryLocation
   );
+  const deliveryLocation = useDeliveryLocationStore((s) => s.deliveryLocation);
+  const deliveryLocationHydrated = useDeliveryLocationStore((s) => s.hydrated);
 
   const [greeting, setGreeting] = useState<
     'Good Morning' | 'Good Afternoon' | 'Good Evening' | 'Welcome'
@@ -526,8 +528,24 @@ export default function HomeScreen() {
         // Reset the error at the start of each attempt
         setChefsFetchError(null);
 
-        const res = await api.get('/api/chefs');
-        if (res.data && res.data.chefs) {
+        const hasDeliveryCoordinates =
+          Number.isFinite(Number(deliveryLocation?.latitude)) &&
+          Number.isFinite(Number(deliveryLocation?.longitude)) &&
+          deliveryLocation?.latitude !== undefined &&
+          deliveryLocation?.longitude !== undefined;
+
+        const requestConfig = hasDeliveryCoordinates
+          ? {
+              params: {
+                latitude: deliveryLocation!.latitude,
+                longitude: deliveryLocation!.longitude,
+                radiusKm: 5,
+              },
+            }
+          : undefined;
+
+        const res = await api.get('/api/chefs', requestConfig);
+        if (res.data && Array.isArray(res.data.chefs)) {
           const formatted = res.data.chefs.map((chef: any, i: number) => {
             const hasBanners = chef.banners && chef.banners.length > 0;
             const resolvedCover = hasBanners
@@ -539,7 +557,10 @@ export default function HomeScreen() {
               id: chef._id,
               name: chef.name || 'Chef',
               expText: chef.exp ? `${chef.exp} yrs experience` : '12 yrs experience',
-              locationText: chef.location || '3.1 km',
+              locationText:
+                typeof chef.distanceKm === 'number'
+                  ? `${Number(chef.distanceKm).toFixed(1)} km away`
+                  : chef.location || 'Location not set',
               specialty:
                 chef.specialty ||
                 'South Indian, North Indian, Andhra Meals, Biryani, Mughlai, Street Food',
@@ -588,8 +609,31 @@ export default function HomeScreen() {
         setChefsLoading(false);
       }
     },
-    [chefsData.length]
+    [
+      chefsData.length,
+      deliveryLocation?.latitude,
+      deliveryLocation?.longitude,
+    ]
   );
+
+  // Once the persisted address is hydrated, refresh the chef list using that
+  // delivery point. The API returns only chefs within 5 km when coordinates
+  // are available; the initial no-location request remains backward-compatible.
+  useEffect(() => {
+    if (!deliveryLocationHydrated) return;
+    if (
+      deliveryLocation &&
+      Number.isFinite(deliveryLocation.latitude) &&
+      Number.isFinite(deliveryLocation.longitude)
+    ) {
+      fetchDynamicChefs(true, true);
+    }
+  }, [
+    deliveryLocationHydrated,
+    deliveryLocation?.latitude,
+    deliveryLocation?.longitude,
+    fetchDynamicChefs,
+  ]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // ✅ UPDATED: fetchCartCount
