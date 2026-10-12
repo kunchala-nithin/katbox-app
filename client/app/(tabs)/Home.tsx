@@ -539,7 +539,7 @@ export default function HomeScreen() {
               params: {
                 latitude: deliveryLocation!.latitude,
                 longitude: deliveryLocation!.longitude,
-                radiusKm: 5,
+                radiusKm: 10,
               },
             }
           : undefined;
@@ -560,7 +560,12 @@ export default function HomeScreen() {
               locationText:
                 typeof chef.distanceKm === 'number'
                   ? `${Number(chef.distanceKm).toFixed(1)} km away`
-                  : chef.location || 'Location not set',
+                  : hasDeliveryCoordinates
+                    ? 'Distance unavailable'
+                    : chef.location || 'Location not set',
+              distanceKm:
+                typeof chef.distanceKm === 'number' ? Number(chef.distanceKm) : null,
+              withinRadius: chef.withinRadius === true,
               specialty:
                 chef.specialty ||
                 'South Indian, North Indian, Andhra Meals, Biryani, Mughlai, Street Food',
@@ -617,7 +622,7 @@ export default function HomeScreen() {
   );
 
   // Once the persisted address is hydrated, refresh the chef list using that
-  // delivery point. The API returns only chefs within 5 km when coordinates
+  // delivery point. The API returns all chefs with those within 10 km first when coordinates
   // are available; the initial no-location request remains backward-compatible.
   useEffect(() => {
     if (!deliveryLocationHydrated) return;

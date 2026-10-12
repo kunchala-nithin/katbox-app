@@ -279,7 +279,7 @@ const AddChefs = () => {
       if (permission.status !== "granted") {
         Alert.alert(
           "Location permission needed",
-          "Allow location access to save the chef's GPS position. Customers can only find this chef within 5 km when coordinates are saved."
+          "Allow location access to save the chef's GPS position. Customers can see this chef's distance from their delivery location when GPS coordinates are saved. Chefs within 10 km appear first."
         );
         return;
       }
@@ -1050,6 +1050,45 @@ const AddChefs = () => {
               }}
               editable={isEditable}
             />
+            {/* Manual GPS coordinates: chefs can type their exact coordinates or use GPS below. */}
+            <Text style={styles.fieldLabel}>Latitude</Text>
+            <TextInput
+              placeholder="Enter latitude (e.g. 17.4948)"
+              placeholderTextColor="#94A3B8"
+              style={[styles.input, !isEditable && styles.disabledInput]}
+              value={latitude}
+              onChangeText={(text) => {
+                // Allow only a valid numeric coordinate format while the chef types.
+                const cleaned = text.replace(/[^0-9.\-]/g, "");
+                setLatitude(cleaned);
+                if (isEditing && !isEditable) setIsEditable(true);
+              }}
+              keyboardType="numbers-and-punctuation"
+              editable={isEditable}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={styles.fieldLabel}>Longitude</Text>
+            <TextInput
+              placeholder="Enter longitude (e.g. 78.3990)"
+              placeholderTextColor="#94A3B8"
+              style={[styles.input, !isEditable && styles.disabledInput]}
+              value={longitude}
+              onChangeText={(text) => {
+                const cleaned = text.replace(/[^0-9.\-]/g, "");
+                setLongitude(cleaned);
+                if (isEditing && !isEditable) setIsEditable(true);
+              }}
+              keyboardType="numbers-and-punctuation"
+              editable={isEditable}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={{ color: "#64748B", fontSize: 12, marginTop: -3, marginBottom: 5 }}>
+              Enter coordinates manually, or use the button below to fill them from the chef's current GPS position.
+            </Text>
+
             <TouchableOpacity
               onPress={captureChefGpsLocation}
               disabled={!isEditable || isCapturingLocation}
@@ -1088,7 +1127,7 @@ const AddChefs = () => {
             >
               {latitude && longitude
                 ? `GPS saved: ${Number(latitude).toFixed(5)}, ${Number(longitude).toFixed(5)}`
-                : "Required for customers to discover this chef within 5 km. Capture GPS while at the chef's location."}
+                : "Required for customers to see this chef's calculated distance. Capture GPS while at the chef's location."}
             </Text>
 
             <Text style={styles.fieldLabel}>Specialty</Text>

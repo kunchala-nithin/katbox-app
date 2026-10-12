@@ -1,4 +1,3 @@
-
 import express from "express";
 import multer from "multer";
 import {
@@ -11,23 +10,15 @@ import {
   applyChefCoupon,
   deleteChefImage,
   protect,
-
-  // Admin-only controller imports
   getAllChefsForAdmin,
   toggleChefBlockStatus,
   updateChefByAdmin,
   deleteChefByAdmin,
-
-  // Coupon management
   addChefCouponByAdmin,
   deleteChefCouponByAdmin,
 } from "../controllers/chef.controller";
 
 const router = express.Router();
-
-// ============================================================
-// MULTER — in-memory storage
-// ============================================================
 
 const storage = multer.memoryStorage();
 
@@ -39,12 +30,7 @@ const upload = multer({
   },
 });
 
-// ============================================================
-// PUBLIC / CHEF-SELF ROUTES
-// ============================================================
-
 // Create or update the authenticated chef's profile.
-// Supports an avatar and multiple banner images.
 router.post(
   "/",
   protect,
@@ -64,70 +50,28 @@ router.delete("/my-chef", protect, deleteChef);
 // Delete a chef image from Cloudinary.
 router.post("/delete-image", protect, deleteChefImage);
 
-// ============================================================
-// CUSTOMER-FACING CHEF LIST
-// ============================================================
-
-// Get chefs.
-//
-// Optional query parameters for nearby-chef discovery:
-// latitude  = customer's selected delivery latitude
-// longitude = customer's selected delivery longitude
-// radiusKm  = search radius in kilometres (default intended: 5)
-//
-// Example:
-// GET /api/chefs?latitude=17.44&longitude=78.39&radiusKm=5
-//
-// Distance filtering and sorting must be implemented in getChefs
-// inside chef.controller.ts.
+// Customer-facing chef list.
+// Pass the selected delivery coordinates to calculate distance:
+// GET /api/chefs?latitude=17.44&longitude=78.39&radiusKm=10
+// getChefs returns every visible chef, with chefs inside 10 km first,
+// farther chefs next, and chefs without GPS coordinates at the end.
 router.get("/", getChefs);
 
-// ============================================================
-// ADMIN ROUTES
-// Declare these before parameterized chef routes.
-// ============================================================
-
-// Fetch all chefs, including blocked chefs.
+// Admin routes are declared before parameterized chef routes.
 router.get("/admin/all", protect, getAllChefsForAdmin);
-
-// Block or unblock a chef.
-router.patch(
-  "/admin/:chefId/toggle-block",
-  protect,
-  toggleChefBlockStatus
-);
-
-// Update a chef profile as an admin.
+router.patch("/admin/:chefId/toggle-block", protect, toggleChefBlockStatus);
 router.patch("/admin/:chefId", protect, updateChefByAdmin);
-
-// Permanently delete a chef as an admin.
 router.delete("/admin/:chefId", protect, deleteChefByAdmin);
-
-// Add a coupon to a chef as an admin.
-router.post(
-  "/admin/:chefId/coupons",
-  protect,
-  addChefCouponByAdmin
-);
-
-// Delete a chef coupon as an admin.
+router.post("/admin/:chefId/coupons", protect, addChefCouponByAdmin);
 router.delete(
   "/admin/:chefId/coupons/:couponId",
   protect,
   deleteChefCouponByAdmin
 );
 
-// ============================================================
-// CHEF-LEVEL PUBLIC DATA
-// ============================================================
-
-// Get a chef's coupons.
+// Chef-level public data.
 router.get("/:chefId/coupons", getChefCoupons);
-
-// Get a chef's reviews.
 router.get("/:chefId/reviews", getChefReviews);
-
-// Apply a chef coupon.
 router.post("/apply-coupon", applyChefCoupon);
 
 export default router;
