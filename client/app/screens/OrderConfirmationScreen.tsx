@@ -79,6 +79,96 @@ const formatDateShortLocal = (d: Date | null): string => {
   }
 };
 
+
+// Render combo components as one customer-facing item while leaving ordinary
+// order items unchanged. Combo metadata is preserved on each source item.
+const getConfirmationDisplayItems = (items: any[]): any[] => {
+  if (!Array.isArray(items)) return [];
+
+  const result: any[] = [];
+  const comboGroups = new Map<string, any>();
+
+  items.forEach((item: any, index: number) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      result.push({ type: "item", key: `item-${index}`, item });
+      return;
+    }
+
+    const isCombo = Boolean(
+      item.isComboComponent ||
+      item.comboId ||
+      item.comboKey ||
+      item.comboName ||
+      item.comboComponent
+    );
+
+    if (!isCombo) {
+      result.push({
+        type: "item",
+        key: String(item._id || item.id || `item-${index}`),
+        item,
+      });
+      return;
+    }
+
+    const itemIdentifier = String(item._id || item.id || item.itemId || "");
+    const idMatch = itemIdentifier.match(/combo-(?:src|pair)-(.+)$/i);
+    const groupIdentity =
+      item.comboKey ||
+      item.comboGroupId ||
+      item.comboId ||
+      (idMatch ? idMatch[1] : "") ||
+      item.comboName ||
+      `unidentified-${index}`;
+    const groupKey = `combo-${String(groupIdentity)}`;
+
+    if (!comboGroups.has(groupKey)) {
+      const group = {
+        type: "combo",
+        key: groupKey,
+        comboName: item.comboName || item.name || "Combo Offer",
+        comboId: item.comboId,
+        comboKey: item.comboKey,
+        comboQuantity: Number(item.comboQuantity || item.quantity) || 1,
+        comboOfferPrice:
+          item.comboOfferPrice ?? item.comboPrice ?? item.offerPrice ?? item.discountedPrice,
+        items: [],
+      };
+      comboGroups.set(groupKey, group);
+      result.push(group);
+    }
+
+    const group = comboGroups.get(groupKey);
+    group.items.push(item);
+    if (item.comboName) group.comboName = item.comboName;
+    if (item.comboOfferPrice !== undefined) group.comboOfferPrice = item.comboOfferPrice;
+    else if (item.comboPrice !== undefined) group.comboOfferPrice = item.comboPrice;
+    else if (item.offerPrice !== undefined) group.comboOfferPrice = item.offerPrice;
+    if (item.comboQuantity !== undefined) group.comboQuantity = Number(item.comboQuantity) || 1;
+  });
+
+  return result.map((entry: any) => {
+    if (entry.type !== "combo") return entry;
+    const quantity = Number(entry.comboQuantity) || 1;
+    const explicitComboPrice = Number(entry.comboOfferPrice);
+    const componentTotal = entry.items.reduce((sum: number, item: any) => {
+      return sum + (Number(item.price) || 0) * (Number(item.quantity) || 1);
+    }, 0);
+    return {
+      ...entry,
+      comboQuantity: quantity,
+      displayPrice: Number.isFinite(explicitComboPrice) && entry.comboOfferPrice !== null &&
+        entry.comboOfferPrice !== undefined && entry.comboOfferPrice !== ""
+        ? explicitComboPrice * quantity
+        : componentTotal,
+      componentNames: entry.items.map((item: any) => String(item.name || item.itemName || "Dish")),
+      componentImages: entry.items.map((item: any) =>
+        String(item.image || item.imageUrl || item.imageURL || "")
+      ),
+    };
+  });
+};
+
 // ✅ NEW: Resolve spice emoji from label
 const resolveSpiceEmoji = (labelStr: string): string => {
   const l = String(labelStr || "").toLowerCase();
@@ -340,6 +430,11 @@ export default function OrderConfirmationScreen() {
       return [];
     }
   }, [dbOrder, params.items]);
+
+  const confirmationDisplayItems = useMemo(
+    () => getConfirmationDisplayItems(Array.isArray(parsedItems) ? parsedItems : []),
+    [parsedItems]
+  );
 
   const parsedAddons = useMemo(() => {
     const raw = dbOrder?.addons ?? params.addons;
@@ -870,7 +965,7 @@ export default function OrderConfirmationScreen() {
                   {isQuickBitesFlow ? "Fresh Quick Bites Dishes" : "Fresh Homemade Dishes"}
                 </Text>
                 <View style={[styles.cateringGuestPill, { backgroundColor: "#166348" }]}>
-                  <Text style={[styles.cateringGuestPillText, { color: "#FAF8F5" }]}>{parsedItems.length} Dishes</Text>
+                  <Text style={[styles.cateringGuestPillText, { color: "#FAF8F5" }]}>{confirmationDisplayItems.length} Dishes</Text>
                 </View>
               </View>
 
@@ -930,36 +1025,106 @@ export default function OrderConfirmationScreen() {
                 </View>
               )}
 
-              {/* Items list */}
+              {/* Items list — combo components are displayed as one combo card */}
               <View style={styles.homemadeDishesContainer}>
-                {parsedItems.map((dishItem: any, idx: number) => (
-                  <View key={`conf-homemade-${idx}`} style={[styles.homemadePremiumCard, { marginBottom: idx === parsedItems.length - 1 ? 0 : 10 }]}>
-                    <View style={styles.homemadeThumbnailWrapper}>
-                      <Image
-                        source={{ uri: dishItem.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
-                        style={styles.homemadeThumbnailImg}
-                      />
-                    </View>
-                    <View style={styles.homemadeCardContentBlock}>
-                      <View style={styles.dishTitlePriceRow}>
-                        <Text style={styles.homemadeDishNameText} numberOfLines={2}>{dishItem.name}</Text>
-                        <Text style={styles.homemadeDishPriceHighlight}>
-                          ₹{(Number(dishItem.price) || 0) * (Number(dishItem.quantity) || 1)}
-                        </Text>
-                      </View>
-                      <View style={styles.dishDetailsPortionRow}>
-                        <View style={styles.servingPortionPill}>
-                          <Ionicons name="layers-outline" size={11} color="#166348" style={{ marginRight: 4 }} />
-                          <Text style={styles.servingPortionPillText}>{dishItem.selectedQtyConfig || "Standard"}</Text>
+                {confirmationDisplayItems.map((displayItem: any, idx: number) => {
+                  const isComboCard = displayItem.type === "combo";
+                  const dishItem = displayItem.item || {};
+                  const cardKey = displayItem.key || `conf-homemade-${idx}`;
+                  const quantity = isComboCard
+                    ? (Number(displayItem.comboQuantity) || 1)
+                    : (Number(dishItem.quantity) || 1);
+                  const price = isComboCard
+                    ? (Number(displayItem.displayPrice) || 0)
+                    : (Number(dishItem.price) || 0) * quantity;
+                  const componentNames = isComboCard
+                    ? (displayItem.componentNames || [])
+                    : [];
+                  const componentImages = isComboCard
+                    ? (displayItem.componentImages || [])
+                    : [];
+
+                  return (
+                    <View
+                      key={cardKey}
+                      style={[
+                        styles.homemadePremiumCard,
+                        { marginBottom: idx === confirmationDisplayItems.length - 1 ? 0 : 10 },
+                      ]}
+                    >
+                      {isComboCard ? (
+                        <View style={styles.homemadeComboThumbRow}>
+                          {[0, 1].map((imageIndex) => (
+                            <Image
+                              key={`${cardKey}-image-${imageIndex}`}
+                              source={{
+                                uri:
+                                  componentImages[imageIndex] ||
+                                  "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop",
+                              }}
+                              style={styles.homemadeComboThumbImg}
+                            />
+                          ))}
                         </View>
-                        <View style={styles.quantityCountBadge}>
-                          <Text style={styles.quantityCountBadgeLabel}>Qty</Text>
-                          <Text style={styles.quantityCountBadgeNumber}>{dishItem.quantity || 1}</Text>
+                      ) : (
+                        <View style={styles.homemadeThumbnailWrapper}>
+                          <Image
+                            source={{
+                              uri:
+                                dishItem.image ||
+                                dishItem.imageUrl ||
+                                "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop",
+                            }}
+                            style={styles.homemadeThumbnailImg}
+                          />
+                        </View>
+                      )}
+
+                      <View style={styles.homemadeCardContentBlock}>
+                        <View style={styles.dishTitlePriceRow}>
+                          <Text style={styles.homemadeDishNameText} numberOfLines={2}>
+                            {isComboCard
+                              ? (displayItem.comboName || "Combo Offer")
+                              : (dishItem.name || dishItem.itemName || "Dish")}
+                          </Text>
+                          <Text style={styles.homemadeDishPriceHighlight}>₹{price}</Text>
+                        </View>
+
+                        {isComboCard ? (
+                          <View style={styles.homemadeComboNamesBlock}>
+                            {componentNames.map((componentName: string, componentIndex: number) => (
+                              <Text
+                                key={`${cardKey}-component-${componentIndex}`}
+                                style={styles.homemadeComboComponentText}
+                                numberOfLines={1}
+                              >
+                                • {componentName}
+                              </Text>
+                            ))}
+                          </View>
+                        ) : null}
+
+                        <View style={styles.dishDetailsPortionRow}>
+                          <View style={styles.servingPortionPill}>
+                            <Ionicons
+                              name={isComboCard ? "pricetag-outline" : "layers-outline"}
+                              size={11}
+                              color="#166348"
+                              style={{ marginRight: 4 }}
+                            />
+                            <Text style={styles.servingPortionPillText}>
+                              {isComboCard ? "Combo Offer" : (dishItem.selectedQtyConfig || "Standard")}
+                            </Text>
+                          </View>
+                          <View style={styles.quantityCountBadge}>
+                            <Text style={styles.quantityCountBadgeLabel}>Qty</Text>
+                            <Text style={styles.quantityCountBadgeNumber}>{quantity}</Text>
+                          </View>
                         </View>
                       </View>
                     </View>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
 
               {/* Special Instructions */}
@@ -2007,6 +2172,28 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 6,
     elevation: 1.5,
+  },
+  homemadeComboThumbRow: {
+    width: 72,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+  },
+  homemadeComboThumbImg: {
+    width: 34,
+    height: 68,
+    borderRadius: 10,
+    backgroundColor: "#E5ECE8",
+  },
+  homemadeComboNamesBlock: {
+    marginTop: 4,
+    gap: 2,
+  },
+  homemadeComboComponentText: {
+    fontSize: 11.5,
+    fontWeight: "600",
+    color: "#5B756C",
   },
   homemadeThumbnailWrapper: {
     position: "relative",

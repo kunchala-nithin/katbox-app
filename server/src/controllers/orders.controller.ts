@@ -1038,6 +1038,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
               it.selectedQtyConfig || it.sizeLabel || it.size || "Standard Serving"
             ),
             isVeg: it.isVeg !== undefined ? Boolean(it.isVeg) : true,
+            // Combo metadata is deliberately preserved on EACH component row.
+            // The client groups these rows for display, while keeping the
+            // original component rows intact for checkout and order history.
+            ...(it.isComboComponent !== undefined
+              ? { isComboComponent: Boolean(it.isComboComponent) }
+              : {}),
+            ...(it.comboName ? { comboName: String(it.comboName) } : {}),
+            ...(it.comboId ? { comboId: String(it.comboId) } : {}),
+            ...(it.comboKey ? { comboKey: String(it.comboKey) } : {}),
+            ...(it.comboComponent ? { comboComponent: String(it.comboComponent) } : {}),
           }))
         : [];
 

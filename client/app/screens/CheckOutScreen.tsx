@@ -447,6 +447,51 @@ export default function CheckOutScreen() {
     }
   }, [rawItems]);
 
+  // Group the two expanded component rows of a combo into one checkout card.
+  // Keep parsedItems unchanged because the order API still receives both
+  // component rows and their combo metadata.
+  const checkoutDisplayItems = useMemo(() => {
+    const sourceItems = Array.isArray(parsedItems) ? parsedItems : [];
+    const displayItems: any[] = [];
+    const comboGroups = new Map<string, any>();
+
+    sourceItems.forEach((item: any, index: number) => {
+      if (!item?.isComboComponent) {
+        displayItems.push({
+          type: "item",
+          key: String(item?.id || `checkout-item-${index}`),
+          item,
+        });
+        return;
+      }
+
+      const id = String(item?.id || "");
+      const idMatch = id.match(/^combo-(?:src|pair)-(.+)$/);
+      const groupKey = idMatch?.[1] ||
+        String(item?.comboId || item?.comboKey || item?.comboName || `checkout-combo-${index}`);
+
+      let group = comboGroups.get(groupKey);
+      if (!group) {
+        group = {
+          type: "combo",
+          key: `checkout-combo-${groupKey}`,
+          comboName: String(item?.comboName || "Combo Offer"),
+          items: [],
+          quantity: Math.max(1, Number(item?.quantity) || 1),
+          unitPrice: 0,
+        };
+        comboGroups.set(groupKey, group);
+        displayItems.push(group);
+      }
+
+      group.items.push(item);
+      group.unitPrice += Number(item?.price) || 0;
+      group.quantity = Math.max(group.quantity, Number(item?.quantity) || 1);
+    });
+
+    return displayItems;
+  }, [parsedItems]);
+
   const parsedAddons = useMemo(() => {
     if (!rawAddons) return [];
     try {
@@ -1085,37 +1130,87 @@ export default function CheckOutScreen() {
 
             <View style={styles.groupedMetaSectionContainer}>
               {parsedItems && parsedItems.length > 0 ? (
-                parsedItems.map((dishItem: any, idx: number) => (
-                  <View key={`dish-${dishItem.id || idx}`}>
-                    <View style={styles.homemadeItemCardRow}>
-                      <Image
-                        source={{ uri: dishItem.image || "https://via.placeholder.com/150" }}
-                        style={styles.homemadeDishThumbnail}
-                      />
-                      <View style={{ flex: 1, marginLeft: 14, justifyContent: "center" }}>
-                        <Text style={styles.homemadeDishName} numberOfLines={2}>{dishItem.name}</Text>
-                        
-                        <View style={styles.portionPillTag}>
-                          <Ionicons name="layers-outline" size={11} color="#0F382A" style={{ marginRight: 4 }} />
-                          <Text style={styles.portionPillText}>{dishItem.selectedQtyConfig || "Standard Serving"}</Text>
-                        </View>
+                checkoutDisplayItems.map((displayItem: any, idx: number) => {
+                  if (displayItem.type === "combo") {
+                    const comboItems = displayItem.items || [];
+                    const first = comboItems[0] || {};
+                    const second = comboItems[1] || {};
+                    const comboTotal = (Number(displayItem.unitPrice) || 0) * (Number(displayItem.quantity) || 1);
+                    const dishNames = comboItems
+                      .map((component: any) => String(component?.name || "").trim())
+                      .filter(Boolean);
 
-                        <View style={styles.homemadePriceQtyRow}>
-                          <Text style={styles.homemadeQtyLabel}>
-                            Qty: <Text style={styles.homemadeQtyValue}>{dishItem.quantity || 1}</Text>
-                          </Text>
-                          <Text style={styles.homemadeDishPrice}>
-                            ₹{(Number(dishItem.price) || 0) * (Number(dishItem.quantity) || 1)}
-                          </Text>
+                    return (
+                      <View key={displayItem.key}>
+                        <View style={styles.homemadeItemCardRow}>
+                          <View style={styles.homemadeComboImagesWrap}>
+                            <Image
+                              source={{ uri: first.image || "https://via.placeholder.com/150" }}
+                              style={styles.homemadeComboThumbnail}
+                            />
+                            <View style={styles.homemadeComboPlus}>
+                              <Ionicons name="add" size={12} color="#FFFFFF" />
+                            </View>
+                            <Image
+                              source={{ uri: second.image || first.image || "https://via.placeholder.com/150" }}
+                              style={[styles.homemadeComboThumbnail, styles.homemadeComboSecondThumbnail]}
+                            />
+                          </View>
+                          <View style={{ flex: 1, marginLeft: 14, justifyContent: "center" }}>
+                            <View style={styles.homemadeComboPill}>
+                              <Text style={styles.homemadeComboPillText}>COMBO OFFER</Text>
+                            </View>
+                            <Text style={styles.homemadeDishName} numberOfLines={2}>
+                              {displayItem.comboName || "Combo Offer"}
+                            </Text>
+                            <Text style={styles.homemadeComboDishNames} numberOfLines={2}>
+                              {dishNames.join(" + ") || "Two selected items"}
+                            </Text>
+                            <View style={styles.homemadePriceQtyRow}>
+                              <Text style={styles.homemadeQtyLabel}>
+                                Qty: <Text style={styles.homemadeQtyValue}>{displayItem.quantity}</Text>
+                              </Text>
+                              <Text style={styles.homemadeDishPrice}>₹{comboTotal}</Text>
+                            </View>
+                          </View>
+                        </View>
+                        {idx !== checkoutDisplayItems.length - 1 && (
+                          <View style={styles.separatorHorizontalDotted} />
+                        )}
+                      </View>
+                    );
+                  }
+
+                  const dishItem = displayItem.item;
+                  return (
+                    <View key={displayItem.key}>
+                      <View style={styles.homemadeItemCardRow}>
+                        <Image
+                          source={{ uri: dishItem.image || "https://via.placeholder.com/150" }}
+                          style={styles.homemadeDishThumbnail}
+                        />
+                        <View style={{ flex: 1, marginLeft: 14, justifyContent: "center" }}>
+                          <Text style={styles.homemadeDishName} numberOfLines={2}>{dishItem.name}</Text>
+                          <View style={styles.portionPillTag}>
+                            <Ionicons name="layers-outline" size={11} color="#0F382A" style={{ marginRight: 4 }} />
+                            <Text style={styles.portionPillText}>{dishItem.selectedQtyConfig || "Standard Serving"}</Text>
+                          </View>
+                          <View style={styles.homemadePriceQtyRow}>
+                            <Text style={styles.homemadeQtyLabel}>
+                              Qty: <Text style={styles.homemadeQtyValue}>{dishItem.quantity || 1}</Text>
+                            </Text>
+                            <Text style={styles.homemadeDishPrice}>
+                              ₹{(Number(dishItem.price) || 0) * (Number(dishItem.quantity) || 1)}
+                            </Text>
+                          </View>
                         </View>
                       </View>
+                      {idx !== checkoutDisplayItems.length - 1 && (
+                        <View style={styles.separatorHorizontalDotted} />
+                      )}
                     </View>
-
-                    {idx !== parsedItems.length - 1 && (
-                      <View style={styles.separatorHorizontalDotted} />
-                    )}
-                  </View>
-                ))
+                  );
+                })
               ) : (
                 <View style={styles.modernHeaderRow}>
                   <Image source={{ uri: menuImage }} style={styles.modernHeroImage} />
@@ -3115,6 +3210,63 @@ const styles = StyleSheet.create({
     backgroundColor: "#E5ECE8",
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
+  },
+  homemadeComboImagesWrap: {
+    width: 78,
+    height: 66,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  homemadeComboThumbnail: {
+    width: 42,
+    height: 58,
+    borderRadius: 11,
+    backgroundColor: "#E5ECE8",
+    borderWidth: 1,
+    borderColor: "#FFFFFF",
+  },
+  homemadeComboSecondThumbnail: {
+    marginLeft: -9,
+  },
+  homemadeComboPlus: {
+    position: "absolute",
+    zIndex: 2,
+    left: 33,
+    top: 24,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "#166538",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#FFFFFF",
+  },
+  homemadeComboPill: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(22, 101, 56, 0.10)",
+    borderColor: "rgba(22, 101, 56, 0.18)",
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    marginBottom: 3,
+  },
+  homemadeComboPillText: {
+    fontSize: 9,
+    fontWeight: "900",
+    color: "#166538",
+    letterSpacing: 0.45,
+  },
+  homemadeComboDishNames: {
+    fontSize: 10.5,
+    lineHeight: 14,
+    color: "#5B756C",
+    fontWeight: "600",
+    marginTop: 2,
+    marginBottom: 4,
   },
   homemadeDishName: {
     fontSize: 14.5,

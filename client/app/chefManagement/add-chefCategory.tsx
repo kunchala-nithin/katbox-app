@@ -630,8 +630,16 @@ export default function AddChefCategory() {
     if (!comboDraft.sourceName.trim() || !comboDraft.pairedName.trim()) {
       return Alert.alert("Validation Error", "Please provide names for both combo items.");
     }
-    if (!Number.isFinite(srcPrice) || !Number.isFinite(pairPrice)) {
-      return Alert.alert("Validation Error", "Please enter valid prices for both items.");
+    if (
+      !Number.isFinite(srcPrice) ||
+      !Number.isFinite(pairPrice) ||
+      srcPrice <= 0 ||
+      pairPrice <= 0
+    ) {
+      return Alert.alert(
+        "Validation Error",
+        "Please enter a price greater than ₹0 for both combo items."
+      );
     }
     if (!Number.isFinite(cPrice) || cPrice <= 0) {
       return Alert.alert("Validation Error", "Please enter a valid combo price.");

@@ -11,12 +11,10 @@ const normalizeSpecialInstructionsFromOrderDetails = (orderDetails: any) => {
     orderDetails?.specialInstruction?.tag ||
     ''
   ).trim().toLowerCase();
-
   const noOnionFlag =
     tagRaw === 'noonion' ||
     !!orderDetails?.noOnionsGarlic ||
     !!orderDetails?.specialInstruction?.noOnion;
-
   // Preserve the spice tag the same way the existing catering branch does.
   // If tag is "noonion", we set spice to "noonion" AND noOnionsGarlic=true
   // (matches existing CartScreen resolveSpiceEmoji + resolveSpecialInstruction logic).
@@ -28,7 +26,6 @@ const normalizeSpecialInstructionsFromOrderDetails = (orderDetails: any) => {
   } else if (tagRaw) {
     spice = tagRaw;
   }
-
   // The free-text description the customer typed.
   const notes = String(
     orderDetails?.chefNotes ||
@@ -37,8 +34,30 @@ const normalizeSpecialInstructionsFromOrderDetails = (orderDetails: any) => {
     orderDetails?.specialInstructionText ||
     ''
   ).trim();
-
   return { spice, noOnionsGarlic: noOnionFlag, notes };
+};
+
+// Parse item payloads safely and preserve all item metadata, including combo
+// identifiers and component flags. Supports JSON arrays and normal arrays.
+const normalizeCartItems = (rawItems: any): any[] => {
+  let parsedItems = rawItems;
+
+  if (typeof parsedItems === 'string') {
+    try {
+      parsedItems = JSON.parse(parsedItems);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(parsedItems)) return [];
+
+  return parsedItems.map((item: any) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+    // Keep the complete object intact; this includes isComboComponent,
+    // comboName, comboId, comboKey, comboComponent, and future metadata.
+    return { ...item };
+  });
 };
 
 export const addToCart = async (req: Request, res: Response) => {
@@ -47,13 +66,10 @@ export const addToCart = async (req: Request, res: Response) => {
       (req as any).user?.userId ||
       (req as any).user?.id ||
       (req as any).user?._id;
-
     if (!userId)
       return res.status(401).json({ success: false, message: "Unauthorized" });
-
     // ✅ Look for explicit serviceType mapping from payload
     const { serviceType, couponCode, discount } = req.body;
-
     // ✅ ITEM-BASED FLOWS: homemade, mealbox and quickbites all share the same
     // item-list-based cart structure. QuickBites is a sibling of homemade and
     // must persist the same delivery timestamps + slot fields.
@@ -61,17 +77,13 @@ export const addToCart = async (req: Request, res: Response) => {
       serviceType === 'homemade' ||
       serviceType === 'mealbox' ||
       serviceType === 'quickbites';
-
     if (isItemBasedFlow) {
       const { chefId, chefName, chefImage, items, totalItems, totalPrice, menu, selections, addons, orderDetails, userPhone, alternatePhone } = req.body;
-
       // Calculate dynamic discount metrics safely
       const appliedDiscount = Number(discount || 0);
       const calculatedFinalTotal = Math.max(0, Number(totalPrice || 0) - appliedDiscount);
-
       const resolvedUserPhone = userPhone || orderDetails?.contactPhone || (req as any).user?.phone || '';
       const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
-
       // ✅ Homemade / QuickBites-only: resolve delivery date & slot from top-level body OR nested orderDetails
       const resolvedDeliveryDate = String(
         req.body.deliveryDate ||
@@ -85,7 +97,6 @@ export const addToCart = async (req: Request, res: Response) => {
         orderDetails?.deliveryTimeSlot ||
         ''
       );
-
       // ✅ NEW: Resolve the absolute estimated delivery timestamp + window + QuickBites flag.
       // The client (HomeMadeOrderReview) sends these for QuickBites so the cart
       // doc carries a fixed Date that the CartScreen can render dynamically.
@@ -100,21 +111,17 @@ export const addToCart = async (req: Request, res: Response) => {
         String(req.body.isQuickBites || '').toLowerCase() === 'true' ||
         String(orderDetails?.isQuickBites || '').toLowerCase() === 'true' ||
         serviceType === 'quickbites';
-
       // ✅ Only homemade / quickbites flows carry the delivery date / slot /
       // estimatedDeliveryAt info. Mealbox carts keep these fields empty.
       const carriesDeliveryMeta =
         serviceType === 'homemade' || serviceType === 'quickbites';
-
       // ✅ NEW: Normalize special instructions from HomeMadeOrderReview's
       // orderDetails.instructionTag / orderDetails.chefNotes into the
       // schema's existing specialInstructions sub-document (no duplicates).
       const normalizedSpecialInstructions =
         normalizeSpecialInstructionsFromOrderDetails(orderDetails);
-
       // Clear out active current instances sitting in standard active workflow session
       await Cart.deleteMany({ user: userId, status: "in-cart" });
-
       const newHomemadeCart = new Cart({
         user: userId,
         userPhone: resolvedUserPhone,
@@ -124,7 +131,7 @@ export const addToCart = async (req: Request, res: Response) => {
         chefName,
         // ✅ NEW: persist chef/vendor image for homemade / quickbites / mealbox
         chefImage: chefImage || '',
-        items: items || [],
+        items: normalizeCartItems(items),
         totalItems,
         totalPrice,
         menu,
@@ -146,14 +153,12 @@ export const addToCart = async (req: Request, res: Response) => {
         deliveryWindowMinutes: carriesDeliveryMeta ? resolvedDeliveryWindowMinutes : 0,
         isQuickBites: carriesDeliveryMeta ? resolvedIsQuickBites : false
       });
-
       const savedHomemade = await newHomemadeCart.save();
       return res.status(201).json({
         success: true,
         cart: [savedHomemade],
       });
     }
-
     const {
       menu,
       restaurant,
@@ -168,28 +173,21 @@ export const addToCart = async (req: Request, res: Response) => {
       userPhone,
       alternatePhone
     } = req.body;
-
     const guests = Number(orderDetails?.guests || 0);
-
     // ✅ CALCULATE BASE PRICE FROM CURRENT SELECTIONS PIPELINE
     const basePlatterTotal = Number(finalPrice || 0) * guests;
-
     // ✅ DYNAMIC COMPILATION OF ADDONS CALCULATED ACCORDING TO USER CONFIG: (Addon Price * Addon Selected Qty) * Selected Guest Count
     const addonsTotal = (addons || []).reduce((sum: number, currentAddon: any) => {
       const addonPrice = Number(currentAddon.price || 0);
       const addonCount = Number(currentAddon.count || 0);
       return sum + (addonPrice * addonCount * guests);
     }, 0);
-
     // ✅ TOTAL PRICE MATCHES EXACT MATHEMATICAL MODEL: (Plate Price * Guests) + (Addon Plate Matrix * Guests) + Delivery Charges
     const totalPrice = basePlatterTotal + addonsTotal + Number(deliveryPrice || 0);
-
     const appliedDiscount = Number(discount || 0);
     const calculatedFinalTotal = Math.max(0, totalPrice - appliedDiscount);
-
     const resolvedUserPhone = userPhone || orderDetails?.contactPhone || (req as any).user?.phone || '';
     const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
-
     console.log("🔥 EXTRA ITEMS FROM FRONTEND:", extraItems);
     // ✅🔥 DELETE OLD CART (PREVENT DUPLICATES)
     await Cart.deleteMany({ user: userId, status: "in-cart" });
@@ -202,19 +200,15 @@ export const addToCart = async (req: Request, res: Response) => {
       selections,
       addons: addons || [],
       orderDetails,
-
       specialInstructions: {
         spice: orderDetails?.selectedSpice || "",
         noOnionsGarlic: !!orderDetails?.noOnionsGarlic,
         notes: orderDetails?.notes || "",
       },
-
       totalItems,
       totalPrice,
-
       // ✅🔥 STORE EXTRA ITEMS
       extraItems: extraItems || 0,
-
       type: type || "veg",
       serviceType: 'catering',
       couponCode: couponCode || null,
@@ -228,9 +222,7 @@ export const addToCart = async (req: Request, res: Response) => {
       deliveryWindowMinutes: 0,
       isQuickBites: false
     });
-
     const saved = await newCart.save();
-
     res.status(201).json({
       success: true,
       cart: [saved],
@@ -246,12 +238,10 @@ export const getUserCart = async (req: Request, res: Response) => {
       (req as any).user?.userId ||
       (req as any).user?.id ||
       (req as any).user?._id;
-
     const cart = await Cart.find({
       user: userId,
       status: 'in-cart'
     }).sort({ createdAt: -1 });
-
     res.json({ success: true, cart });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
@@ -262,22 +252,18 @@ export const updateCart = async (req: Request, res: Response) => {
   try {
     const { cartId } = req.params;
     const { serviceType, couponCode, discount } = req.body;
-
     // ✅ ITEM-BASED FLOWS: homemade, mealbox and quickbites all share the
     // same item-list-based structure. QuickBites is a sibling of homemade.
     const isItemBasedFlow =
       serviceType === 'homemade' ||
       serviceType === 'mealbox' ||
       serviceType === 'quickbites';
-
     if (isItemBasedFlow) {
       const { chefId, chefName, chefImage, items, totalItems, totalPrice, menu, selections, addons, orderDetails, userPhone, alternatePhone } = req.body;
       const appliedDiscount = Number(discount || 0);
       const calculatedFinalTotal = Math.max(0, Number(totalPrice || 0) - appliedDiscount);
-
       const resolvedUserPhone = userPhone || orderDetails?.contactPhone || '';
       const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
-
       // ✅ Homemade / QuickBites-only: resolve delivery date & slot from top-level body OR nested orderDetails
       const resolvedDeliveryDate = String(
         req.body.deliveryDate ||
@@ -291,7 +277,6 @@ export const updateCart = async (req: Request, res: Response) => {
         orderDetails?.deliveryTimeSlot ||
         ''
       );
-
       // ✅ NEW: Same timestamp handling as addToCart
       const estimatedDeliveryAtMsRaw = req.body.estimatedDeliveryAtMs;
       const parsedEstimatedDeliveryAtMs = Number(estimatedDeliveryAtMsRaw);
@@ -304,16 +289,13 @@ export const updateCart = async (req: Request, res: Response) => {
         String(req.body.isQuickBites || '').toLowerCase() === 'true' ||
         String(orderDetails?.isQuickBites || '').toLowerCase() === 'true' ||
         serviceType === 'quickbites';
-
       // ✅ Only homemade / quickbites flows carry the delivery date / slot /
       // estimatedDeliveryAt info. Mealbox carts keep these fields empty.
       const carriesDeliveryMeta =
         serviceType === 'homemade' || serviceType === 'quickbites';
-
       // ✅ NEW: Same special-instructions normalization as addToCart.
       const normalizedSpecialInstructions =
         normalizeSpecialInstructionsFromOrderDetails(orderDetails);
-
       const updatedHomemade = await Cart.findByIdAndUpdate(
         cartId,
         {
@@ -323,7 +305,7 @@ export const updateCart = async (req: Request, res: Response) => {
           chefImage: chefImage || '',
           userPhone: resolvedUserPhone,
           alternatePhone: resolvedAltPhone,
-          items: items || [],
+          items: normalizeCartItems(items),
           totalItems,
           totalPrice,
           menu,
@@ -353,7 +335,6 @@ export const updateCart = async (req: Request, res: Response) => {
         cart: updatedHomemade,
       });
     }
-
     const {
       menu,
       restaurant,
@@ -368,9 +349,7 @@ export const updateCart = async (req: Request, res: Response) => {
       userPhone,
       alternatePhone
     } = req.body;
-
     const guests = Number(orderDetails?.guests || 0);
-
     // ✅ RECOMPUTE IN STRICT ORDER MATCHING ADD INTERPOLATION LAYOUT LAWS
     const basePlatterTotal = Number(finalPrice || 0) * guests;
     const addonsTotal = (addons || []).reduce((sum: number, currentAddon: any) => {
@@ -378,15 +357,11 @@ export const updateCart = async (req: Request, res: Response) => {
       const addonCount = Number(currentAddon.count || 0);
       return sum + (addonPrice * addonCount * guests);
     }, 0);
-
     const totalPrice = basePlatterTotal + addonsTotal + Number(deliveryPrice || 0);
-
     const appliedDiscount = Number(discount || 0);
     const calculatedFinalTotal = Math.max(0, totalPrice - appliedDiscount);
-
     const resolvedUserPhone = userPhone || orderDetails?.contactPhone || '';
     const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
-
     const updated = await Cart.findByIdAndUpdate(
       cartId,
       {
@@ -397,13 +372,11 @@ export const updateCart = async (req: Request, res: Response) => {
         selections,
         addons: addons || [],
         orderDetails,
-
         specialInstructions: {
           spice: orderDetails?.selectedSpice || '',
           noOnionsGarlic: !!orderDetails?.noOnionsGarlic,
           notes: orderDetails?.notes || '',
         },
-
         totalItems: selections?.reduce
           ? selections.reduce(
               (acc: number, cat: any) =>
@@ -413,12 +386,9 @@ export const updateCart = async (req: Request, res: Response) => {
               0
             )
           : 0,
-
         totalPrice,
-
         // ✅🔥 UPDATE EXTRA ITEMS
         extraItems: extraItems || 0,
-
         type: type || 'veg',
         couponCode: couponCode || null,
         discount: appliedDiscount,
@@ -433,7 +403,6 @@ export const updateCart = async (req: Request, res: Response) => {
       },
       { new: true }
     );
-
     res.json({
       success: true,
       message: 'Cart updated',
@@ -447,9 +416,7 @@ export const updateCart = async (req: Request, res: Response) => {
 export const deleteCart = async (req: Request, res: Response) => {
   try {
     const { cartId } = req.params;
-
     await Cart.findByIdAndDelete(cartId);
-
     res.json({
       success: true,
       message: 'Cart permanently deleted',

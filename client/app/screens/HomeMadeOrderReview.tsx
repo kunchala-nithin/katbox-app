@@ -58,6 +58,12 @@ interface HomeMadeCartItem {
   quantity: number;
   selectedQtyConfig: string;
   isVeg?: boolean;
+  // Combo metadata must survive review and be sent to the cart API.
+  isComboComponent?: boolean;
+  comboName?: string;
+  comboId?: string;
+  comboKey?: string;
+  comboComponent?: 'source' | 'paired' | string;
 }
 
 // Static UI-only shape for delivery date cards (no booking logic attached)
@@ -573,6 +579,13 @@ const HomeMadeOrderReview = () => {
           quantity: it.quantity,
           selectedQtyConfig: it.selectedQtyConfig,
           isVeg: it.isVeg,
+          // Keep two-item combo identity attached to each expanded component.
+          // This lets CartScreen/backend group combo components where supported.
+          isComboComponent: Boolean(it.isComboComponent),
+          comboName: it.comboName || '',
+          ...(it.comboId ? { comboId: it.comboId } : {}),
+          ...(it.comboKey ? { comboKey: it.comboKey } : {}),
+          ...(it.comboComponent ? { comboComponent: it.comboComponent } : {}),
         })),
         // ✅ Homemade delivery date & slot sent at TOP-LEVEL so cart.ts can
         // persist them directly. The slot is just "4:30 PM" for QuickBites.
@@ -792,6 +805,11 @@ const HomeMadeOrderReview = () => {
                     {!!item.selectedQtyConfig && (
                       <Text style={styles.orderItemVariantText}>
                         {item.selectedQtyConfig}
+                      </Text>
+                    )}
+                    {item.isComboComponent && (
+                      <Text style={styles.orderItemVariantText}>
+                        {item.comboName ? `${item.comboName} · Combo offer` : 'Combo offer'}
                       </Text>
                     )}
                     <View style={styles.orderItemPriceRow}>

@@ -75,6 +75,87 @@ const parseIfJsonString = (value: any, fallback: any = null) => {
   }
 };
 
+
+
+/*
+ * Groups combo component line items into one customer-facing order item while
+ * leaving ordinary order items untouched. The complete component objects are
+ * retained so image/name/quantity and combo metadata remain available.
+ */
+const groupComboOrderItems = (rawItems: any): any[] => {
+  const parsedItems = parseIfJsonString(rawItems, []);
+  if (!Array.isArray(parsedItems)) return [];
+
+  const output: any[] = [];
+  const keyedGroups = new Map<string, any>();
+  let previousFallbackGroup: any = null;
+
+  parsedItems.forEach((item: any, index: number) => {
+    if (!item || typeof item !== "object" || !item.isComboComponent) {
+      output.push(item);
+      previousFallbackGroup = null;
+      return;
+    }
+
+    const comboName = String(item.comboName || item.name || "Combo Offer").trim();
+    const stableKey = item.comboKey || item.comboId;
+    let groupKey = stableKey ? `combo:${String(stableKey)}` : "";
+
+    if (!groupKey) {
+      if (previousFallbackGroup && previousFallbackGroup.comboName === comboName && previousFallbackGroup.items.length < 2) {
+        groupKey = previousFallbackGroup.__groupKey;
+      } else {
+        groupKey = `combo-fallback:${comboName}:${index}`;
+      }
+    }
+
+    let group = keyedGroups.get(groupKey);
+    if (!group) {
+      group = {
+        isComboGroup: true,
+        __groupKey: groupKey,
+        comboKey: item.comboKey,
+        comboId: item.comboId,
+        comboName,
+        comboComponents: [],
+        name: comboName,
+        quantity: Number(item.quantity) > 0 ? Number(item.quantity) : 1,
+        selectedQtyConfig: item.selectedQtyConfig || "Combo Offer",
+      };
+      keyedGroups.set(groupKey, group);
+      output.push(group);
+    }
+
+    group.comboComponents.push(item);
+    group.quantity = Math.max(group.quantity || 1, Number(item.quantity) > 0 ? Number(item.quantity) : 1);
+    if (!group.comboName || group.comboName === "Combo Offer") group.comboName = comboName;
+    if (!stableKey) previousFallbackGroup = group;
+    else previousFallbackGroup = null;
+  });
+
+  return output.map((entry: any) => {
+    if (!entry?.isComboGroup) return entry;
+    const components = entry.comboComponents || [];
+    const explicitComboPrice = components.find((component: any) =>
+      component.comboPrice !== undefined ||
+      component.comboOfferPrice !== undefined ||
+      component.offerPrice !== undefined ||
+      component.discountedPrice !== undefined
+    );
+    const rawComboPrice = explicitComboPrice
+      ? (explicitComboPrice.comboPrice ?? explicitComboPrice.comboOfferPrice ?? explicitComboPrice.offerPrice ?? explicitComboPrice.discountedPrice)
+      : components.reduce((sum: number, component: any) => sum + (Number(component.price) || 0), 0);
+    const unitPrice = Number(rawComboPrice) || 0;
+    return {
+      ...entry,
+      price: unitPrice,
+      totalPrice: unitPrice * (Number(entry.quantity) || 1),
+      comboComponents: components,
+      image: components[0]?.image || components[0]?.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop",
+    };
+  });
+};
+
 const getOccasionIcon = (occasionName: string): keyof typeof Ionicons.glyphMap => {
   if (!occasionName) return "sparkles-outline";
   const occ = occasionName.toLowerCase();
@@ -1649,6 +1730,10 @@ export default function MyOrdersScreen() {
     return parseIfJsonString(previewOrder?.items, []);
   }, [previewOrder]);
 
+  const groupedPreviewOrderItems = useMemo(() => {
+    return groupComboOrderItems(resolvedPreviewItems);
+  }, [resolvedPreviewItems]);
+
   const currentPreviewDaySelections =
     resolvedPreviewSelections && previewActiveDay && !Array.isArray(resolvedPreviewSelections) && typeof resolvedPreviewSelections === "object"
       ? resolvedPreviewSelections[previewActiveDay] || []
@@ -2049,6 +2134,9 @@ export default function MyOrdersScreen() {
     const detailHasSpecial = !!(detailSpecial.tag || detailSpecial.label || detailSpecial.text);
 
     const detailHeroImage = isHomemade ? resolveHomemadeHeroImage(selectedOrderDetails) : detailMenuImage;
+    const groupedDetailItems = isHomemade
+      ? groupComboOrderItems(selectedOrderDetails.items)
+      : [];
 
     const activeDateTarget = selectedOrderDetails.selectedDeliveryDate || selectedDatesPerOrder[selectedOrderDetails.orderId] || selectedOrderDetails.deliveryDate || "Today";
     const matchedSchedule = isMealBox
@@ -2288,7 +2376,7 @@ export default function MyOrdersScreen() {
             </View>
           )}
 
-          {isHomemade && Array.isArray(selectedOrderDetails.items) && selectedOrderDetails.items.length > 0 && (
+          {isHomemade && groupedDetailItems.length > 0 && (
             <View style={styles.mealSpecCard}>
               <View style={styles.mealSpecMainRow}>
                 <Image source={{ uri: detailHeroImage }} style={styles.mealSpecImage} />
@@ -2313,22 +2401,39 @@ export default function MyOrdersScreen() {
                   </View>
                   <View style={styles.selectedScheduleStatusBadge}>
                     <Text style={styles.selectedScheduleStatusBadgeText}>
-                      {selectedOrderDetails.items.length} items
+                      {groupedDetailItems.length} items
                     </Text>
                   </View>
                 </View>
 
-                {selectedOrderDetails.items.map((item: any, idx: number) => (
-                  <View key={`detail-item-${idx}`} style={styles.detailItemRow}>
-                    <Image 
-                      source={{ uri: item.image || "https://via.placeholder.com/60" }} 
-                      style={styles.detailItemImage} 
-                    />
+                {groupedDetailItems.map((item: any, idx: number) => (
+                  <View key={`detail-item-${item.comboKey || item.comboId || idx}`} style={styles.detailItemRow}>
+                    {item.isComboGroup ? (
+                      <View style={styles.comboDetailImages}>
+                        {item.comboComponents.slice(0, 2).map((component: any, componentIndex: number) => (
+                          <Image
+                            key={`detail-combo-image-${idx}-${componentIndex}`}
+                            source={{ uri: component.image || component.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
+                            style={styles.comboDetailImage}
+                          />
+                        ))}
+                      </View>
+                    ) : (
+                      <Image
+                        source={{ uri: item.image || item.imageUrl || "https://via.placeholder.com/60" }}
+                        style={styles.detailItemImage}
+                      />
+                    )}
                     <View style={styles.detailItemInfo}>
-                      <Text style={styles.detailItemName}>{item.name}</Text>
+                      <Text style={styles.detailItemName}>{item.isComboGroup ? item.comboName : item.name}</Text>
+                      {item.isComboGroup ? (
+                        <Text style={styles.comboComponentNames} numberOfLines={2}>
+                          {item.comboComponents.map((component: any) => component.name).filter(Boolean).join(" + ")}
+                        </Text>
+                      ) : null}
                       <View style={styles.detailItemMetaRow}>
                         <Text style={styles.detailItemServing}>
-                          {item.selectedQtyConfig || "Standard Serving"}
+                          {item.selectedQtyConfig || (item.isComboGroup ? "Combo Offer" : "Standard Serving")}
                         </Text>
                         <View style={styles.detailItemDot} />
                         <Text style={styles.detailItemQty}>Qty: {item.quantity || 1}</Text>
@@ -4255,17 +4360,34 @@ export default function MyOrdersScreen() {
                     </Text>
                   </View>
 
-                  {Array.isArray(resolvedPreviewItems) && resolvedPreviewItems.length > 0 ? (
-                    resolvedPreviewItems.map((dishItem: any, idx: number) => (
-                      <View key={`conf-preview-homemade-${idx}`} style={styles.previewItemCard}>
-                        <Image
-                          source={{ uri: dishItem.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
-                          style={styles.previewItemImage}
-                        />
+                  {Array.isArray(groupedPreviewOrderItems) && groupedPreviewOrderItems.length > 0 ? (
+                    groupedPreviewOrderItems.map((dishItem: any, idx: number) => (
+                      <View key={`conf-preview-homemade-${dishItem.comboKey || dishItem.comboId || idx}`} style={styles.previewItemCard}>
+                        {dishItem.isComboGroup ? (
+                          <View style={styles.comboPreviewImages}>
+                            {dishItem.comboComponents.slice(0, 2).map((component: any, componentIndex: number) => (
+                              <Image
+                                key={`preview-combo-image-${idx}-${componentIndex}`}
+                                source={{ uri: component.image || component.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
+                                style={styles.comboPreviewImage}
+                              />
+                            ))}
+                          </View>
+                        ) : (
+                          <Image
+                            source={{ uri: dishItem.image || dishItem.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
+                            style={styles.previewItemImage}
+                          />
+                        )}
                         <View style={styles.previewItemInfoCol}>
-                          <Text style={styles.previewItemName}>{dishItem.name}</Text>
+                          <Text style={styles.previewItemName}>{dishItem.isComboGroup ? dishItem.comboName : dishItem.name}</Text>
+                          {dishItem.isComboGroup ? (
+                            <Text style={styles.previewItemServingSub} numberOfLines={2}>
+                              {dishItem.comboComponents.map((component: any) => component.name).filter(Boolean).join(" + ")}
+                            </Text>
+                          ) : null}
                           <Text style={styles.previewItemServingSub}>
-                            {dishItem.selectedQtyConfig || "Standard"} • Qty: {dishItem.quantity || 1}
+                            {dishItem.selectedQtyConfig || (dishItem.isComboGroup ? "Combo Offer" : "Standard")} • Qty: {dishItem.quantity || 1}
                           </Text>
                         </View>
                         <Text style={styles.previewItemPriceValue}>
@@ -4854,6 +4976,27 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: 12,
     backgroundColor: "#E5ECE8",
+  },
+  comboDetailImages: {
+    width: 66,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  comboDetailImage: {
+    width: 34,
+    height: 48,
+    borderRadius: 9,
+    backgroundColor: "#E5ECE8",
+    borderWidth: 1,
+    borderColor: "#FFFFFF",
+    marginRight: -5,
+  },
+  comboComponentNames: {
+    fontSize: 11.5,
+    lineHeight: 15,
+    color: "#64748B",
+    fontWeight: "600",
+    marginTop: 3,
   },
   detailItemInfo: {
     flex: 1,
@@ -6743,6 +6886,20 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   previewItemImage: { width: 40, height: 40, borderRadius: 10, marginRight: 10 },
+  comboPreviewImages: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  comboPreviewImage: {
+    width: 28,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: "#E5ECE8",
+    borderWidth: 1,
+    borderColor: "#FFFFFF",
+    marginRight: -4,
+  },
   previewItemName: { fontSize: 13.5, fontWeight: "600", color: "#0f172a" },
   extraTag: { backgroundColor: "#ffedd5", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, marginLeft: 8 },
   extraTagText: { fontSize: 10.5, fontWeight: "700", color: "#9a3412" },

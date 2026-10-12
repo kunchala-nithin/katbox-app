@@ -86,6 +86,69 @@ const parseDateParts = (dateStr: string) => {
   return { dayName: "DAY", dayNumber: "1", month: "JUN", fullString: cleanedStr };
 };
 
+
+// Group combo components for display only. The original order items remain
+// unchanged in state/backend payloads so fulfilment and accounting keep their data.
+const groupComboOrderItems = (rawItems: any[]): any[] => {
+  if (!Array.isArray(rawItems)) return [];
+  const result: any[] = [];
+  const comboGroups = new Map<string, any>();
+
+  rawItems.forEach((item: any, index: number) => {
+    if (!item || typeof item !== 'object') {
+      result.push(item);
+      return;
+    }
+
+    const isComponent = item.isComboComponent === true ||
+      String(item.isComboComponent).toLowerCase() === 'true';
+    if (!isComponent) {
+      result.push(item);
+      return;
+    }
+
+    const comboName = String(item.comboName || item.comboTitle || 'Combo Offer');
+    const identity = String(item.comboKey || item.comboId || `${comboName}:${index}`);
+    const groupKey = `combo:${identity}`;
+    let group = comboGroups.get(groupKey);
+
+    if (!group) {
+      group = {
+        isComboGroup: true,
+        comboKey: identity,
+        comboId: item.comboId,
+        comboName,
+        comboComponents: [],
+        quantity: Number(item.comboQuantity || item.quantity || 1),
+        price: Number(item.comboPrice ?? item.comboOfferPrice ?? item.offerPrice ?? item.discountedPrice ?? 0),
+        totalPrice: 0,
+      };
+      comboGroups.set(groupKey, group);
+      result.push(group);
+    }
+
+    group.comboComponents.push(item);
+    const explicitComboPrice = item.comboPrice ?? item.comboOfferPrice ?? item.offerPrice ?? item.discountedPrice;
+    if (explicitComboPrice !== undefined && explicitComboPrice !== null && Number.isFinite(Number(explicitComboPrice))) {
+      group.price = Number(explicitComboPrice);
+    }
+    group.quantity = Number(item.comboQuantity || group.quantity || item.quantity || 1);
+  });
+
+  result.forEach((entry: any) => {
+    if (!entry?.isComboGroup) return;
+    const componentSum = entry.comboComponents.reduce(
+      (sum: number, component: any) => sum + (Number(component.price || 0) * Number(component.quantity || 1)),
+      0,
+    );
+    entry.price = Number(entry.price) > 0 ? Number(entry.price) : componentSum;
+    entry.totalPrice = entry.price * Number(entry.quantity || 1);
+    entry.image = entry.comboImage || entry.comboComponents[0]?.comboImage || entry.comboComponents[0]?.image || entry.comboComponents[0]?.imageUrl;
+  });
+
+  return result;
+};
+
 // ✅ NEW HELPER — Validate coordinates coming from the order document
 const hasValidCoords = (lat: any, lng: any): boolean => {
   const nLat = Number(lat);
@@ -913,6 +976,11 @@ export default function AdminAllOrdersScreen() {
       return [];
     }
   }, [activeOrder?.items]);
+
+  const groupedParsedItems = useMemo(
+    () => groupComboOrderItems(parsedItems),
+    [parsedItems],
+  );
 
   const parsedAddons = useMemo(() => {
     if (!activeOrder?.addons) return [];
@@ -3012,27 +3080,53 @@ export default function AdminAllOrdersScreen() {
               {isHomemadeFlow ? (
                 <View style={styles.previewCategoryCard}>
                   <View style={styles.previewCategoryHeader}>
-                    <Text style={styles.previewCategoryTitle}>Ordered Homemade Items ({parsedItems.length})</Text>
+                    <Text style={styles.previewCategoryTitle}>Ordered Homemade Items ({groupedParsedItems.length})</Text>
                   </View>
-                  {parsedItems.length > 0 ? (
-                    parsedItems.map((dishItem: any, idx: number) => (
-                      <View key={`admin-preview-home-${idx}`} style={styles.previewItemCard}>
-                        <Image
-                          source={{
-                            uri:
-                              dishItem.image ||
-                              'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100',
-                          }}
-                          style={styles.previewItemImage}
-                        />
+                  {groupedParsedItems.length > 0 ? (
+                    groupedParsedItems.map((dishItem: any, idx: number) => (
+                      <View key={`admin-preview-home-${dishItem.comboKey || dishItem._id || idx}`} style={styles.previewItemCard}>
+                        {dishItem.isComboGroup ? (
+                          <View style={styles.adminComboImagesRow}>
+                            {dishItem.comboComponents.slice(0, 2).map((component: any, componentIndex: number) => (
+                              <Image
+                                key={`admin-combo-image-${idx}-${componentIndex}`}
+                                source={{ uri: component.image || component.imageUrl || dishItem.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100' }}
+                                style={styles.adminComboImage}
+                              />
+                            ))}
+                          </View>
+                        ) : (
+                          <Image
+                            source={{
+                              uri:
+                                dishItem.image ||
+                                dishItem.imageUrl ||
+                                'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100',
+                            }}
+                            style={styles.previewItemImage}
+                          />
+                        )}
                         <View style={{ flex: 1, paddingRight: 8 }}>
-                          <Text style={styles.previewItemName}>{dishItem.name}</Text>
-                          <Text style={{ fontSize: 11.5, color: '#5B756C', marginTop: 2, fontWeight: '600' }}>
-                            {dishItem.selectedQtyConfig || 'Standard Serving'} • Qty: {dishItem.quantity || 1}
+                          <Text style={styles.previewItemName}>
+                            {dishItem.isComboGroup ? dishItem.comboName : dishItem.name}
+                          </Text>
+                          {dishItem.isComboGroup ? (
+                            <Text style={{ fontSize: 11.5, color: '#5B756C', marginTop: 3, fontWeight: '600' }}>
+                              {dishItem.comboComponents.map((component: any) => component.name || component.itemName).filter(Boolean).join(' + ')}
+                            </Text>
+                          ) : (
+                            <Text style={{ fontSize: 11.5, color: '#5B756C', marginTop: 2, fontWeight: '600' }}>
+                              {dishItem.selectedQtyConfig || 'Standard Serving'}
+                            </Text>
+                          )}
+                          <Text style={{ fontSize: 11.5, color: '#64748B', marginTop: 3, fontWeight: '600' }}>
+                            Qty: {dishItem.quantity || 1}
                           </Text>
                         </View>
                         <Text style={{ fontSize: 14.5, fontWeight: '900', color: '#2563EB', marginLeft: 8 }}>
-                          ₹{(Number(dishItem.price) || 0) * (Number(dishItem.quantity) || 1)}
+                          ₹{dishItem.isComboGroup
+                            ? Number(dishItem.totalPrice || 0)
+                            : (Number(dishItem.price) || 0) * (Number(dishItem.quantity) || 1)}
                         </Text>
                       </View>
                     ))
@@ -3824,6 +3918,8 @@ const styles = StyleSheet.create({
   previewCategoryTitle: { fontSize: 15.5, fontWeight: '800', color: '#0F172A' },
   previewItemCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 14, marginBottom: 8, borderWidth: 1, borderColor: '#F1F5F9' },
   previewItemImage: { width: 44, height: 44, borderRadius: 12, marginRight: 12 },
+  adminComboImagesRow: { flexDirection: 'row', alignItems: 'center', marginRight: 12 },
+  adminComboImage: { width: 38, height: 44, borderRadius: 10, borderWidth: 2, borderColor: '#FFFFFF', marginRight: -8 },
   previewItemName: { fontSize: 14, fontWeight: '700', color: '#0F172A', flexShrink: 1 },
   extraTag: { backgroundColor: '#FFEDD5', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 10, marginLeft: 8 },
   extraTagText: { fontSize: 11, fontWeight: '800', color: '#C2410C' },

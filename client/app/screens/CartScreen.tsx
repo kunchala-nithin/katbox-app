@@ -513,6 +513,47 @@ export default function CartScreen() {
       }))
     : [];
 
+  // Render combo components as one atomic offer card in the cart. The review
+  // screen stores each dish as a component line item so existing checkout and
+  // order pipelines remain compatible; their component prices add up to the
+  // single discounted combo price.
+  const homemadeCartDisplayItems = React.useMemo(() => {
+    const sourceItems = Array.isArray(cartData?.items) ? cartData.items : [];
+    const displayItems: any[] = [];
+    const comboGroups = new Map<string, any>();
+
+    sourceItems.forEach((item: any, index: number) => {
+      if (!item?.isComboComponent) {
+        displayItems.push({ type: "item", key: item?.id || `item-${index}`, item });
+        return;
+      }
+
+      const id = String(item?.id || "");
+      const idMatch = id.match(/^combo-(?:src|pair)-(.+)$/);
+      const groupKey = idMatch?.[1] || String(item?.comboId || item?.comboKey || item?.comboName || `combo-${index}`);
+      let group = comboGroups.get(groupKey);
+      if (!group) {
+        group = {
+          type: "combo",
+          key: `combo-${groupKey}`,
+          comboName: String(item?.comboName || "Combo Offer"),
+          items: [],
+          quantity: Number(item?.quantity) || 1,
+          price: 0,
+        };
+        comboGroups.set(groupKey, group);
+        displayItems.push(group);
+      }
+      group.items.push(item);
+      group.price += Number(item?.price) || 0;
+      // Both components belong to the same combo unit. Use the largest stored
+      // quantity defensively if older data contains mismatched component qtys.
+      group.quantity = Math.max(group.quantity, Number(item?.quantity) || 1);
+    });
+
+    return displayItems;
+  }, [cartData?.items]);
+
   const plates = orderDetails?.guests || 50;
   const pricePerPlate = Number(menu?.finalPrice) || Number(menu?.price) || 0;
 
@@ -1161,49 +1202,96 @@ export default function CartScreen() {
                 </View>
               ) : null}
 
-              {cartData?.items &&
-                cartData.items.map((item: any, idx: number) => (
+              {homemadeCartDisplayItems.map((entry: any, idx: number) => {
+                const isCombo = entry.type === "combo";
+                const item = entry.item;
+                const comboItems = isCombo ? entry.items : [];
+                const comboQuantity = Number(entry.quantity) || 1;
+                const comboTotal = Number(entry.price || 0) * comboQuantity;
+                const isLast = idx === homemadeCartDisplayItems.length - 1;
+
+                if (isCombo) {
+                  return (
+                    <View
+                      key={entry.key}
+                      style={{
+                        marginBottom: 16,
+                        borderBottomWidth: isLast ? 0 : 1,
+                        borderBottomColor: "rgba(15, 56, 42, 0.06)",
+                        paddingBottom: 16,
+                      }}
+                    >
+                      <View style={{ flexDirection: "row", alignItems: "center" }}>
+                        <View style={{ flexDirection: "row", width: 104, alignItems: "center" }}>
+                          {comboItems.slice(0, 2).map((comboItem: any, imageIndex: number) => (
+                            <Image
+                              key={`${comboItem.id || imageIndex}-image`}
+                              source={{ uri: comboItem.image || "https://via.placeholder.com/150" }}
+                              style={{
+                                width: 56,
+                                height: 64,
+                                borderRadius: 12,
+                                borderWidth: 2,
+                                borderColor: "#FFFFFF",
+                                marginLeft: imageIndex === 0 ? 0 : -12,
+                                zIndex: 2 - imageIndex,
+                                backgroundColor: "#F4F6F3",
+                              }}
+                            />
+                          ))}
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 10, justifyContent: "center" }}>
+                          <View style={{ alignSelf: "flex-start", backgroundColor: "#E8F3E9", borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3, marginBottom: 5 }}>
+                            <Text style={{ fontSize: 10, fontWeight: "800", color: "#166534", letterSpacing: 0.5 }}>COMBO OFFER</Text>
+                          </View>
+                          <Text style={[styles.itemTitle, { fontSize: 15 }]}>{entry.comboName || "Combo Offer"}</Text>
+                          <Text style={{ fontSize: 12, color: "#5B756C", marginTop: 4, lineHeight: 17 }}>
+                            {comboItems.map((comboItem: any) => String(comboItem.name || "").replace(/\s*\(Combo\)\s*$/i, "")).filter(Boolean).join(" + ")}
+                          </Text>
+                          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                            <Text style={{ fontSize: 13, color: "#5B756C", fontWeight: "500" }}>
+                              Qty: <Text style={{ fontWeight: "800", color: "#0B261D" }}>{comboQuantity}</Text>
+                            </Text>
+                            <Text style={[styles.priceValue, { fontSize: 18 }]}>₹{comboTotal.toFixed(comboTotal % 1 ? 2 : 0)}</Text>
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                }
+
+                return (
                   <View
-                    key={item.id || idx}
+                    key={entry.key}
                     style={{
                       flexDirection: "row",
                       marginBottom: 16,
-                      borderBottomWidth: idx === cartData.items.length - 1 ? 0 : 1,
+                      borderBottomWidth: isLast ? 0 : 1,
                       borderBottomColor: "rgba(15, 56, 42, 0.06)",
                       paddingBottom: 16,
                       alignItems: "center",
                     }}
                   >
                     <Image
-                      source={{ uri: item.image || "https://via.placeholder.com/150" }}
+                      source={{ uri: item?.image || "https://via.placeholder.com/150" }}
                       style={[styles.itemImage, { width: 75, height: 75, borderRadius: 16 }]}
                     />
                     <View style={{ flex: 1, marginLeft: 16, justifyContent: "center" }}>
-                      <Text style={[styles.itemTitle, { fontSize: 16 }]}>{item.name}</Text>
+                      <Text style={[styles.itemTitle, { fontSize: 16 }]}>{item?.name}</Text>
                       <Text style={{ fontSize: 13, color: "#5B756C", marginTop: 4, fontWeight: "500" }}>
                         Size/Qty Option:{" "}
-                        <Text style={{ fontWeight: "700", color: "#0B261D" }}>
-                          {item.selectedQtyConfig}
-                        </Text>
+                        <Text style={{ fontWeight: "700", color: "#0B261D" }}>{item?.selectedQtyConfig}</Text>
                       </Text>
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          marginTop: 8,
-                        }}
-                      >
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
                         <Text style={{ fontSize: 13, color: "#5B756C", fontWeight: "500" }}>
-                          Qty: <Text style={{ fontWeight: "800", color: "#0B261D" }}>{item.quantity}</Text>
+                          Qty: <Text style={{ fontWeight: "800", color: "#0B261D" }}>{item?.quantity}</Text>
                         </Text>
-                        <Text style={[styles.priceValue, { fontSize: 18 }]}>
-                          ₹{item.price * item.quantity}
-                        </Text>
+                        <Text style={[styles.priceValue, { fontSize: 18 }]}>₹{(Number(item?.price) || 0) * (Number(item?.quantity) || 0)}</Text>
                       </View>
                     </View>
                   </View>
-                ))}
+                );
+              })}
 
               {/* ✅ Special Instructions row (same UI concept as the catering branch:
                   plain underlined text + chevron-down, left-aligned, no badge/pill/container).

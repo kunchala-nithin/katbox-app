@@ -456,9 +456,8 @@ const HomeMadeItemScreen = () => {
   const currentModalItemCount = selectedItemId ? (itemQuantities[selectedItemId] || 1) : 1;
   const dynamicModalTotalPrice = getModalSelectedOptionPrice() * currentModalItemCount;
 
-  // ✅ NEW: Renders a single Swiggy-style combo card for a given dish.
-  // Layout: [img] + [img]  "Add A + B"   ₹gross ₹offer  [Save ₹X]  [ADD COMBO]
-  // Purely additive — if a dish has no combos, nothing renders for it.
+  // Renders a combo using the same white card, border, radius, padding,
+  // and shadow treatment as the regular menuItemCard.
   const renderComboCard = (item: any, combo: any, comboIndex: number) => {
     const comboKey = getComboKey(combo, item.id, comboIndex);
     const cartEntry = comboCart[comboKey];
@@ -466,12 +465,32 @@ const HomeMadeItemScreen = () => {
     const src = combo.sourceItem || {};
     const pair = combo.pairedItem || {};
     const gross = (Number(src.price) || 0) + (Number(pair.price) || 0);
-    const savings = combo.savings || getComboSavings(combo);
+    const savings = Number(combo.savings) || getComboSavings(combo);
     const offer = Number(combo.comboPrice) || 0;
 
     return (
       <View style={styles.comboCard} key={comboKey}>
+        {/* LEFT: Combo details, following the regular menu card hierarchy */}
         <View style={styles.comboCardLeft}>
+          <Text style={styles.comboTitle} numberOfLines={2}>
+            {combo.comboName || `${src.name || "Item"} + ${pair.name || "Item"}`}
+          </Text>
+          <Text style={styles.comboItemsText} numberOfLines={2}>
+            {src.name || "Item"} + {pair.name || "Item"}
+          </Text>
+          <View style={styles.comboPriceRow}>
+            <Text style={styles.comboOffer}>₹{offer}</Text>
+            {gross > offer && <Text style={styles.comboStrike}>₹{gross}</Text>}
+          </View>
+          {savings > 0 && (
+            <View style={styles.comboSaveBadge}>
+              <Text style={styles.comboSaveBadgeText}>Save ₹{savings}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* RIGHT: Paired food images and the same compact ADD/counter control */}
+        <View style={styles.comboCardRight}>
           <View style={styles.comboImageStack}>
             <View style={styles.comboImageWrap}>
               {src.imageUrl ? (
@@ -496,26 +515,6 @@ const HomeMadeItemScreen = () => {
             </View>
           </View>
 
-          <View style={styles.comboTextBlock}>
-            <Text style={styles.comboTitle} numberOfLines={1}>
-              Add {src.name || "Item"} + {pair.name || "Item"}
-            </Text>
-            <View style={styles.comboPriceRow}>
-              <Text style={styles.comboStrike}>₹{gross}</Text>
-              <Text style={styles.comboOffer}>₹{offer}</Text>
-            </View>
-            {savings > 0 && (
-              <View style={styles.comboSaveBadge}>
-                <Text style={styles.comboSaveBadgeText}>Save ₹{savings}</Text>
-              </View>
-            )}
-            {!!combo.comboName && (
-              <Text style={styles.comboSubtitle} numberOfLines={1}>{combo.comboName}</Text>
-            )}
-          </View>
-        </View>
-
-        <View style={styles.comboCardRight}>
           {comboQty === 0 ? (
             <TouchableOpacity
               style={styles.comboAddButton}
@@ -523,7 +522,7 @@ const HomeMadeItemScreen = () => {
               onPress={() => updateComboQuantity(comboKey, combo, item.id, 1)}
             >
               <Text style={styles.comboAddButtonText}>ADD</Text>
-              <Ionicons name="add" size={14} color={KATBOX.primary} />
+              <Ionicons name="add" size={15} color={KATBOX.primary} />
             </TouchableOpacity>
           ) : (
             <View style={styles.comboCounter}>
@@ -2125,40 +2124,46 @@ const styles = StyleSheet.create({
   },
 
   // ============================================================
-  // ✅ NEW: SWIGGY-STYLE COMBO CARD STYLES
+  // COMBO CARD — matches the regular menuItemCard visual styling
   // ============================================================
   comboListWrap: {
     marginTop: -6,
     marginBottom: 16,
-    paddingLeft: 8,
-    paddingRight: 8,
+    paddingHorizontal: 0,
   },
   comboCard: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: KATBOX.primaryTintSoft,
+    backgroundColor: KATBOX.card,
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#A7F3D0",
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginBottom: 8,
+    borderColor: KATBOX.border,
     shadowColor: KATBOX.shadow,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
     elevation: 2,
+    position: "relative",
   },
   comboCardLeft: {
-    flexDirection: "row",
-    alignItems: "center",
     flex: 1,
-    paddingRight: 8,
+    paddingRight: 12,
+    justifyContent: "center",
+  },
+  comboItemsText: {
+    color: KATBOX.textSecondary,
+    fontSize: 12,
+    fontWeight: "600",
+    lineHeight: 17,
+    marginTop: 4,
   },
   comboImageStack: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 9,
   },
   comboImageWrap: {
     width: 42,
@@ -2166,7 +2171,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(20, 83, 45, 0.18)",
+    borderColor: KATBOX.border,
     backgroundColor: KATBOX.card,
   },
   comboImage: {
@@ -2177,7 +2182,7 @@ const styles = StyleSheet.create({
   comboImagePlaceholder: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: KATBOX.primaryTint,
+    backgroundColor: KATBOX.cardSoft,
   },
   comboPlusBadge: {
     width: 20,
@@ -2189,23 +2194,19 @@ const styles = StyleSheet.create({
     marginHorizontal: -6,
     zIndex: 2,
     borderWidth: 2,
-    borderColor: KATBOX.primaryTintSoft,
-  },
-  comboTextBlock: {
-    marginLeft: 12,
-    flex: 1,
+    borderColor: KATBOX.card,
   },
   comboTitle: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: "800",
     color: KATBOX.textPrimary,
-    letterSpacing: -0.1,
+    letterSpacing: -0.2,
   },
   comboPriceRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    marginTop: 3,
+    gap: 7,
+    marginTop: 7,
   },
   comboStrike: {
     fontSize: 12,
@@ -2214,18 +2215,18 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   comboOffer: {
-    fontSize: 14,
-    color: KATBOX.primary,
+    fontSize: 17,
+    color: KATBOX.textPrimary,
     fontWeight: "900",
   },
   comboSaveBadge: {
     alignSelf: "flex-start",
-    marginTop: 4,
+    marginTop: 7,
     backgroundColor: KATBOX.primaryTint,
     borderWidth: 1,
     borderColor: "#A7F3D0",
-    paddingHorizontal: 7,
-    paddingVertical: 1.5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 6,
   },
   comboSaveBadgeText: {
@@ -2234,14 +2235,8 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     letterSpacing: 0.2,
   },
-  comboSubtitle: {
-    fontSize: 11,
-    color: KATBOX.textTertiary,
-    marginTop: 3,
-    fontStyle: "italic",
-  },
   comboCardRight: {
-    alignItems: "flex-end",
+    alignItems: "center",
     justifyContent: "center",
   },
   comboAddButton: {
@@ -2249,9 +2244,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
-    paddingHorizontal: 14,
+    minWidth: 82,
+    paddingHorizontal: 12,
     paddingVertical: 7,
-    borderRadius: 10,
+    borderRadius: 9,
     backgroundColor: KATBOX.card,
     borderWidth: 1.2,
     borderColor: KATBOX.primary,

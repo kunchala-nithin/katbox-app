@@ -34,6 +34,12 @@ interface ICart extends Document {
     selectedQtyConfig: string;
     // ✅ NEW: veg / non-veg flag preserved from HomeMadeOrderReview
     isVeg?: boolean;
+    // ✅ Combo offer metadata. These fields are optional so existing cart items remain compatible.
+    isComboComponent?: boolean;
+    comboName?: string;
+    comboId?: string;
+    comboKey?: string;
+    comboComponent?: string;
   }>;
   // ✅ Coupon and Discount Tracking State Fields
   couponCode?: string;
@@ -80,6 +86,7 @@ const CartSchema = new Schema<ICart>(
     chefName: { type: String },
     // ✅ NEW: chef/vendor image persisted for homemade / quickbites / mealbox flows
     chefImage: { type: String, default: '' },
+    // Items intentionally remain Mixed so the exact payload—including combo metadata—is preserved.
     items: { type: [Schema.Types.Mixed], default: [] },
 
     // ✅ Coupon Tracking Field Definitions
