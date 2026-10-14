@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+
 import {
   View,
   Text,
@@ -36,6 +36,7 @@ import { getUser } from "@/src/lib/authStorage";
 import { OrdersListSkeleton } from "@/src/components/skeletons/OrderScreenSkeleton";
 // ✅ NEW: Network status banner (slow / offline) — mounted in every branch
 import NetworkStatusBanner from "@/src/components/NetworkStatusBanner";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ✅ Skeleton for the "Loading orders..." state
 
@@ -1740,6 +1741,10 @@ export default function MyOrdersScreen() {
       : [];
   const groupedPreviewItemsMap = getGroupedMealBoxItemsBySection(currentPreviewDaySelections);
 
+  const isPreviewCatering = (previewOrder?.serviceType || "").toLowerCase() === "catering";
+  const isPreviewHomemade = (previewOrder?.serviceType || "").toLowerCase() === "homemade" || (previewOrder?.serviceType || "").toLowerCase() === "quickbites";
+  const isPreviewQuickBites = isQuickBitesOrder(previewOrder);
+
   const handleCopyOrderId = () => {
     Alert.alert("Copied", "Order ID copied to clipboard.");
   };
@@ -3055,13 +3060,313 @@ export default function MyOrdersScreen() {
             </View>
           </View>
         </Modal>
+
+      <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closePreviewModal}>
+        <BlurView intensity={25} tint="dark" style={styles.modalOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closePreviewModal} />
+
+          <Animated.View
+            style={[
+              styles.previewModalContent,
+              { transform: [{ translateY: previewSheetAnim }], height: "82%" },
+            ]}
+          >
+            <View style={styles.drawerHandle} />
+            <TouchableOpacity style={styles.previewCloseBtn} onPress={closePreviewModal} activeOpacity={0.8}>
+              <Ionicons name="close" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            <View style={styles.previewHeaderCentered}>
+              <Text style={styles.previewTitle}>
+                {isPreviewQuickBites ? "Quick Bites Items" : isPreviewHomemade ? "Ordered Dishes" : "Customer Selected Items"}
+              </Text>
+              <Text style={styles.previewSubtitle}>
+                {isPreviewHomemade
+                  ? (isPreviewQuickBites ? "Fast & fresh quick bites" : "Prepared fresh for this order")
+                  : isPreviewCatering
+                  ? "Confirmed platter dishes & course selections"
+                  : "Customized mealbox items"}
+              </Text>
+            </View>
+
+            {!isPreviewCatering && !isPreviewHomemade && resolvedPreviewSelections && !Array.isArray(resolvedPreviewSelections) && typeof resolvedPreviewSelections === "object" && (
+              <View style={styles.pillTabsWrapperBlock}>
+                {Object.keys(resolvedPreviewSelections)
+                  .filter((k) => k !== "pausedDates")
+                  .map((dayKey) => {
+                    const dayItemsCount = resolvedPreviewSelections[dayKey]?.length || 0;
+                    const isTabPillSelected = previewActiveDay.toLowerCase() === dayKey.toLowerCase();
+                    return (
+                      <TouchableOpacity
+                        key={`preview-tab-pill-${dayKey}`}
+                        activeOpacity={0.8}
+                        onPress={() => setPreviewActiveDay(dayKey)}
+                        style={[
+                          styles.tabPillContainerItem,
+                          isTabPillSelected
+                            ? styles.tabPillContainerItemActive
+                            : styles.tabPillContainerItemInactive,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.tabPillTextString,
+                            isTabPillSelected
+                              ? styles.tabPillTextStringActive
+                              : styles.tabPillTextStringInactive,
+                          ]}
+                        >
+                          {dayKey}
+                        </Text>
+                        <View
+                          style={[
+                            styles.tabPillCounterBadgeGlow,
+                            isTabPillSelected
+                              ? styles.tabPillCounterBadgeGlowActive
+                              : styles.tabPillCounterBadgeGlowInactive,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.tabPillCounterBadgeText,
+                              isTabPillSelected
+                                ? styles.tabPillCounterBadgeTextActive
+                                : styles.tabPillCounterBadgeTextInactive,
+                            ]}
+                          >
+                            {dayItemsCount}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+              </View>
+            )}
+
+            <ScrollView 
+              style={{ width: "100%", marginTop: 8 }} 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 120 }}
+            >
+              {isPreviewHomemade ? (
+                <View style={styles.previewCategoryCard}>
+                  <View style={styles.previewCategoryHeader}>
+                    <Text style={styles.previewCategoryTitle}>
+                      {isPreviewQuickBites ? "Quick Bites Items" : "Ordered Homemade Items"}
+                    </Text>
+                  </View>
+
+                  {Array.isArray(groupedPreviewOrderItems) && groupedPreviewOrderItems.length > 0 ? (
+                    groupedPreviewOrderItems.map((dishItem: any, idx: number) => (
+                      <View key={`conf-preview-homemade-${dishItem.comboKey || dishItem.comboId || idx}`} style={styles.previewItemCard}>
+                        {dishItem.isComboGroup ? (
+                          <View style={styles.comboPreviewImages}>
+                            {dishItem.comboComponents.slice(0, 2).map((component: any, componentIndex: number) => (
+                              <Image
+                                key={`preview-combo-image-${idx}-${componentIndex}`}
+                                source={{ uri: component.image || component.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
+                                style={styles.comboPreviewImage}
+                              />
+                            ))}
+                          </View>
+                        ) : (
+                          <Image
+                            source={{ uri: dishItem.image || dishItem.imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=120&auto=format&fit=crop" }}
+                            style={styles.previewItemImage}
+                          />
+                        )}
+                        <View style={styles.previewItemInfoCol}>
+                          <Text style={styles.previewItemName}>{dishItem.isComboGroup ? dishItem.comboName : dishItem.name}</Text>
+                          {dishItem.isComboGroup ? (
+                            <Text style={styles.previewItemServingSub} numberOfLines={2}>
+                              {dishItem.comboComponents.map((component: any) => component.name).filter(Boolean).join(" + ")}
+                            </Text>
+                          ) : null}
+                          <Text style={styles.previewItemServingSub}>
+                            {dishItem.selectedQtyConfig || (dishItem.isComboGroup ? "Combo Offer" : "Standard")} • Qty: {dishItem.quantity || 1}
+                          </Text>
+                        </View>
+                        <Text style={styles.previewItemPriceValue}>
+                          ₹{(Number(dishItem.price) || 0) * (Number(dishItem.quantity) || 1)}
+                        </Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.previewEmptyListText}>
+                      No items listed.
+                    </Text>
+                  )}
+                </View>
+              ) : isPreviewCatering ? (
+                <View style={{ width: "100%" }}>
+                  {Array.isArray(resolvedPreviewSelections) && resolvedPreviewSelections.length > 0 ? (
+                    resolvedPreviewSelections.map((cat: any, index: number) => {
+                      const allSelected = [...(cat.selected || []), ...(cat.extraSelected || [])];
+                      if (!allSelected.length) return null;
+
+                      return (
+                        <View key={`conf-preview-cat-${index}`} style={styles.previewCategoryCard}>
+                          <View style={styles.previewCategoryHeader}>
+                            <Text style={styles.previewCategoryTitle}>{cat.category}</Text>
+                          </View>
+
+                          {allSelected.map((item: any, i: number) => {
+                            const isExtra = cat.max ? i >= cat.max : false;
+                            return (
+                              <View key={`conf-cat-item-${i}`} style={styles.previewItemCard}>
+                                <Image
+                                  source={{ uri: item.imageUrl || item.image || "https://images.unsplash.com/photo-1544025162-d76694265947?w=120&auto=format&fit=crop" }}
+                                  style={styles.previewItemImage}
+                                />
+                                <Text style={styles.previewItemName}>{item.name}</Text>
+                                {isExtra && (
+                                  <View style={styles.extraTag}>
+                                    <Text style={styles.extraTagText}>+₹{item.price || 0}/plate</Text>
+                                  </View>
+                                )}
+                                <Ionicons
+                                  name="checkmark-circle"
+                                  size={18}
+                                  color={isExtra ? "#f59e0b" : "#16a34a"}
+                                  style={{ marginLeft: "auto" }}
+                                />
+                              </View>
+                            );
+                          })}
+                        </View>
+                      );
+                    })
+                  ) : (
+                    <View style={styles.previewCategoryCard}>
+                      <Text style={styles.previewEmptyListText}>
+                        No platter selections found for this order.
+                      </Text>
+                    </View>
+                  )}
+
+                  {Array.isArray(resolvedPreviewAddons) && resolvedPreviewAddons.length > 0 && (
+                    <View style={styles.previewCategoryCard}>
+                      <View style={styles.previewCategoryHeader}>
+                        <Text style={styles.previewCategoryTitle}>Add-ons</Text>
+                      </View>
+                      {resolvedPreviewAddons.map((addon: any, idx: number) => (
+                        <View key={`conf-addon-preview-${idx}`} style={styles.previewItemCard}>
+                          <Image
+                            source={{ uri: addon.imageUrl || addon.image || "https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=120&auto=format&fit=crop" }}
+                            style={styles.previewItemImage}
+                          />
+                          <Text style={styles.previewItemName}>
+                            {addon.name} × {addon.count || 1}
+                          </Text>
+                          <View style={styles.extraTag}>
+                            <Text style={styles.extraTagText}>+₹{(addon.price || 0) * (addon.count || 1)}/plate</Text>
+                          </View>
+                          <Ionicons
+                            name="checkmark-circle"
+                            size={18}
+                            color="#16a34a"
+                            style={{ marginLeft: "auto" }}
+                          />
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              ) : (
+                <View style={styles.premiumMealBoxContentCardFrame}>
+                  <View style={styles.subCardHeaderStripLabel}>
+                    <Text style={styles.subCardHeaderStripLabelText}>
+                      {previewActiveDay || "SELECTED"} MENU PREFERENCE
+                    </Text>
+                  </View>
+
+                  {currentPreviewDaySelections.length === 0 ? (
+                    <Text style={styles.previewEmptyStateText}>
+                      No items configured for this selection.
+                    </Text>
+                  ) : (
+                    Object.entries(groupedPreviewItemsMap).map(([sectionTitle, dishesGroupArray]) => {
+                      if (!dishesGroupArray || dishesGroupArray.length === 0) return null;
+                      return (
+                        <View key={`preview-section-${sectionTitle}`} style={{ marginTop: 14 }}>
+                          <View style={styles.sectionHeaderLabelContainerTag}>
+                            <Text style={styles.sectionHeaderLabelContainerTagText}>{sectionTitle}</Text>
+                          </View>
+
+                          {dishesGroupArray.map((dishItem: any, idx: number) => {
+                            const isExtraItemAddon = sectionTitle === "ADD ON'S" || dishItem.type === "addon";
+                            return (
+                              <View
+                                key={`preview-dish-item-${idx}`}
+                                style={styles.previewSelectionRowItemBlock}
+                              >
+                                <Image
+                                  source={
+                                    dishItem.image
+                                      ? { uri: dishItem.image }
+                                      : { uri: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100&auto=format&fit=crop" }
+                                  }
+                                  style={styles.modalCircularFoodThumbGraphic}
+                                />
+                                <View style={styles.dishPreviewTextCol}>
+                                  <Text style={styles.modalItemNameTextString}>{dishItem.name}</Text>
+                                  {dishItem.spiceLevel && (
+                                    <Text style={styles.dishPreviewSpiceLevel}>
+                                      Spice: {dishItem.spiceLevel}
+                                    </Text>
+                                  )}
+                                </View>
+                                <View
+                                  style={[
+                                    styles.includedBadgePillBox,
+                                    isExtraItemAddon
+                                      ? styles.includedBadgePillBoxExtra
+                                      : styles.includedBadgePillBoxStandard,
+                                  ]}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.includedBadgePillBoxText,
+                                      isExtraItemAddon
+                                        ? styles.includedBadgePillBoxTextExtra
+                                        : styles.includedBadgePillBoxTextStandard,
+                                    ]}
+                                  >
+                                    {isExtraItemAddon
+                                      ? `Extra ×${dishItem.qty || dishItem.quantity || 1}`
+                                      : "Included"}
+                                  </Text>
+                                </View>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={styles.modalAbsoluteFooterCTAWrapper}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={closePreviewModal}
+                style={styles.modalAbsoluteFooterCTAButtonSolid}
+              >
+                <Text style={styles.modalAbsoluteFooterButtonSolidText}>
+                  Close Summary
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </BlurView>
+      </Modal>
+
       </View>
     );
   }
 
-  const isPreviewCatering = (previewOrder?.serviceType || "").toLowerCase() === "catering";
-  const isPreviewHomemade = (previewOrder?.serviceType || "").toLowerCase() === "homemade" || (previewOrder?.serviceType || "").toLowerCase() === "quickbites";
-  const isPreviewQuickBites = isQuickBitesOrder(previewOrder);
 
   return (
     <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
