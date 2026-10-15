@@ -326,14 +326,6 @@ export default function HomeScreen() {
   const [isNotificationsVisible, setIsNotificationsVisible] =
     useState<boolean>(false);
 
-  // ─── Bottom-of-Scroll Refresh States ───
-  const [isRefreshingScreen, setIsRefreshingScreen] = useState<boolean>(false);
-  const lastRefreshTimeRef = useRef<number>(0);
-  const isRefreshingRef = useRef<boolean>(false);
-
-  // ─── Global "data is refreshing" guard ───
-  const isDataRefreshingRef = useRef<boolean>(false);
-
   // ✅ PERF: Throttle refs (reduced windows for fresher data)
   const lastUserRefreshAtRef = useRef<number>(0);
   const lastChefsFetchedAtRef = useRef<number>(0);
@@ -768,29 +760,6 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // ─── CENTRAL RELOAD ───
-  // ✅ PERF: Location check is fire-and-forget (not awaited)
-  const reloadAllDynamicData = useCallback(async () => {
-    isDataRefreshingRef.current = true;
-    lastChefsFetchedAtRef.current = 0;
-    lastUserRefreshAtRef.current = 0;
-    lastBannersFetchedAtRef.current = 0;
-    try {
-      await Promise.allSettled([
-        loadUserDataAndAddresses(),
-        fetchDynamicChefs(true, true),
-        fetchDynamicBanners(true, true),
-        fetchCartCount(),
-      ]);
-      // Fire and forget — don't block UI reload on GPS/permission
-      checkLocationStatusAndPrompt().catch(() => {});
-    } catch (e) {
-      console.log('Reload all dynamic data error:', e);
-    } finally {
-      isDataRefreshingRef.current = false;
-    }
-  }, [loadUserDataAndAddresses, fetchDynamicChefs, fetchDynamicBanners, fetchCartCount]);
-
   // ─────────────────────────────────────────────────────────────────────────
   // ✅ PERF: BOOTSTRAP — kick everything off in PARALLEL on mount.
   //    Runs once. Non-blocking. Location check deferred.
@@ -840,50 +809,13 @@ export default function HomeScreen() {
     }, [])
   );
 
-  // ─── BOTTOM-OF-SCROLL REFRESH ───
-  const refreshWholeScreen = useCallback(async () => {
-    if (isRefreshingRef.current) return;
-    const now = Date.now();
-    if (now - lastRefreshTimeRef.current < 8000) return;
-
-    lastRefreshTimeRef.current = now;
-    isRefreshingRef.current = true;
-    setIsRefreshingScreen(true);
-
-    try {
-      await Promise.all([
-        reloadAllDynamicData(),
-        new Promise<void>((resolve) => setTimeout(resolve, 600)),
-      ]);
-    } catch (e) {
-      console.log('Screen refresh error:', e);
-    } finally {
-      setIsRefreshingScreen(false);
-      isRefreshingRef.current = false;
-    }
-  }, [reloadAllDynamicData]);
-
-  const handleMainScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
-    const paddingToBottom = 60;
-    const isNearBottom =
-      layoutMeasurement.height + contentOffset.y >=
-      contentSize.height - paddingToBottom;
-
-    if (isNearBottom && !isRefreshingRef.current) {
-      refreshWholeScreen();
-    }
-  };
-
   const checkLocationStatusAndPrompt = useCallback(async () => {
     try {
       const servicesEnabled = await Location.hasServicesEnabledAsync();
       const { status } = await Location.getForegroundPermissionsAsync();
 
       if (!servicesEnabled || status !== 'granted') {
-        if (!isDataRefreshingRef.current) {
-          setIsPermissionPopupVisible(true);
-        }
+        setIsPermissionPopupVisible(true);
       } else {
         setIsPermissionPopupVisible(false);
         if (!hasAppliedGpsOnceRef.current) {
@@ -891,9 +823,7 @@ export default function HomeScreen() {
         }
       }
     } catch (e) {
-      if (!isDataRefreshingRef.current) {
-        setIsPermissionPopupVisible(true);
-      }
+      setIsPermissionPopupVisible(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1606,8 +1536,6 @@ export default function HomeScreen() {
         bounces={true}
         alwaysBounceVertical={true}
         overScrollMode="always"
-        onScroll={handleMainScroll}
-        scrollEventThrottle={200}
         // ✅ PERF: keep mounted & avoid JS-thread stalls during fling
         removeClippedSubviews={Platform.OS === 'android'}
       >
@@ -2326,15 +2254,6 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          {/* ─── BOTTOM-OF-SCROLL REFRESH FOOTER ─── */}
-          {isRefreshingScreen && (
-            <View style={styles.screenRefreshFooter}>
-              <ActivityIndicator size="small" color="#15803D" />
-              <Text style={styles.screenRefreshFooterText}>
-                Refreshing screen…
-              </Text>
-            </View>
-          )}
         </View>
       </ScrollView>
 
@@ -4015,21 +3934,6 @@ const styles = StyleSheet.create({
     width: 1,
     height: 22,
     backgroundColor: '#E5E7EB',
-  },
-
-  screenRefreshFooter: {
-    paddingVertical: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    gap: 8,
-    backgroundColor: '#FFFFFF',
-  },
-  screenRefreshFooterText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#15803D',
-    letterSpacing: 0.2,
   },
 
   notificationBackdrop: {

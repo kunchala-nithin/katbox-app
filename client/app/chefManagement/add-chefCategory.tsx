@@ -14,6 +14,7 @@ import {
   Alert,
   ActivityIndicator,
   Switch,
+  useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -30,6 +31,39 @@ import AddChefCategorySkeleton from "@/src/components/skeletons/AddChefCategoryS
 const cateringCategories = ["Breakfast", "Lunch", "Dinner", "Snacks"];
 const mealboxCategories = ["Breakfast", "Lunch", "Dinner", "Snacks"];
 const mealTypes = ["Breakfast", "Lunch", "Dinner", "Snacks"];
+
+// ============================================================
+//  📐 TABLE LAYOUT HELPERS (Quick Bites / Homemade table)
+//  Fixed minimum table width + horizontal scroll so the columns
+//  can never squeeze into / overlap each other on narrow screens.
+// ============================================================
+const QUICK_TABLE_MIN_WIDTH = 680;
+// Horizontal space consumed around the table: screen container (16*2)
+// + items ScrollView padding (6*2) + sub-category block padding/border (14*2 + 2)
+const QUICK_TABLE_OUTER_SPACING = 74;
+
+const QuickTableScroll = ({
+  enabled,
+  width,
+  children,
+}: {
+  enabled: boolean;
+  width: number;
+  children: React.ReactNode;
+}) => {
+  if (!enabled) return <>{children}</>;
+  return (
+    <ScrollView
+      horizontal
+      nestedScrollEnabled
+      showsHorizontalScrollIndicator
+      keyboardShouldPersistTaps="handled"
+      style={{ marginTop: 0 }}
+    >
+      <View style={{ width }}>{children}</View>
+    </ScrollView>
+  );
+};
 
 // ============================================================
 //  🚀 FAST-IMAGE COMPRESSION HELPER
@@ -95,6 +129,11 @@ export default function AddChefCategory() {
   // ✅ NEW: loading state for skeleton
   // =====
   const [isLoading, setIsLoading] = useState(true);
+
+  // Screen size (used only to size the Quick Bites / Homemade table)
+  const { width: windowWidth } = useWindowDimensions();
+  const quickTableAvailableWidth = Math.max(280, windowWidth - QUICK_TABLE_OUTER_SPACING);
+  const quickTableWidth = Math.max(QUICK_TABLE_MIN_WIDTH, quickTableAvailableWidth);
 
   // =====
   // SHARED STATES
@@ -257,6 +296,10 @@ export default function AddChefCategory() {
   // ============================================================
   const [showComboEditorKey, setShowComboEditorKey] = useState<string | null>(null);
   const [comboDraft, setComboDraft] = useState<any>(makeEmptyCombo());
+  // Quick Bites / Homemade can switch the entire item list between table and card layouts.
+  // All sub-categories follow the same mode so the screen never mixes layouts.
+  const [quickTableMode, setQuickTableMode] = useState(true);
+  const [expandedVariantDropdownKey, setExpandedVariantDropdownKey] = useState<string | null>(null);
 
   // ===
   // FETCH LOGIC COMBINED
@@ -859,6 +902,8 @@ export default function AddChefCategory() {
   };
 
   const openAddItemsScreen = (category: any) => {
+    setQuickTableMode(true);
+    setExpandedVariantDropdownKey(null);
     setSelectedCategoryForItems(category);
     const hasSubCategories = !!(category.subCategories && category.subCategories.length > 0);
     const hasMenus = menus.some((menu: any) => menu.categoryId === category._id || menu.chefCategoryId === category._id);
@@ -954,6 +999,8 @@ export default function AddChefCategory() {
   };
 
   const closeltemsEditor = () => {
+    setQuickTableMode(true);
+    setExpandedVariantDropdownKey(null);
     setShowBottomTabs(false);
     setIsInItemsEditor(false);
     setModalSubCategories([]);
@@ -1726,6 +1773,7 @@ export default function AddChefCategory() {
   });
 
   const sampledCategory = selectedCategoryForItems;
+  const isQuickBitesOrHomemade = /quick\s*bites?|homemade|home[\s-]*made/i.test(String(selectedCategoryForItems?.name || ""));
   const layoutFormSelection = isInItemsEditor
     ? "items"
     : (sampledCategory && menus.some(m => m.categoryId === sampledCategory._id || m.chefCategoryId === sampledCategory._id)
@@ -2438,12 +2486,30 @@ export default function AddChefCategory() {
         ) : (
           <View style={{ flex: 1, backgroundColor: "#0C130E" }}>
             <View style={styles.dHeader}>
-              <Text style={styles.dTitle}>Add Items for {selectedCategoryForItems?.name}</Text>
+              <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={styles.dTitle} numberOfLines={1}>Add Items for {selectedCategoryForItems?.name}</Text>
+                {isQuickBitesOrHomemade && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setQuickTableMode((current) => !current);
+                      setExpandedVariantDropdownKey(null);
+                    }}
+                    style={styles.quickLayoutToggleButton}
+                    accessibilityRole="button"
+                    accessibilityLabel={quickTableMode ? "Switch all sections to vertical cards" : "Switch all sections to horizontal table"}
+                  >
+                    <Ionicons name={quickTableMode ? "options-outline" : "grid-outline"} size={14} color="#FFFFFF" />
+                    <Text style={styles.quickLayoutToggleButtonText}>
+                      {quickTableMode ? "Card View" : "Back to horizontal table"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
               <TouchableOpacity onPress={closeltemsEditor} style={styles.closeRoundBtn}>
                 <Ionicons name="close" size={18} color="#E2E8F0" />
               </TouchableOpacity>
             </View>
-            <ScrollView style={{ flex: 1, paddingHorizontal: 20 }} contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            <ScrollView style={{ flex: 1, paddingHorizontal: isQuickBitesOrHomemade ? 6 : 20 }} contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {modalSubCategories.map((subCat, subIndex) => (
                 <View key={subCat.id || `sub-${subIndex}`} style={[styles.subCategoryBlock, { position: "relative" }]}>
                   {isEditMode && (
@@ -2463,6 +2529,18 @@ export default function AddChefCategory() {
                     style={styles.input}
                     editable={isEditMode}
                   />
+                  <QuickTableScroll enabled={isQuickBitesOrHomemade && quickTableMode} width={quickTableWidth}>
+                  {isQuickBitesOrHomemade && quickTableMode && (
+                    <View style={styles.quickItemTableHeader}>
+                      <Text numberOfLines={1} style={[styles.quickItemTableHeading, { flex: 1.7 }]}>ITEM / DESCRIPTION</Text>
+                      <Text numberOfLines={1} style={[styles.quickItemTableHeading, { flex: 0.5, textAlign: "center" }]}>IMAGE</Text>
+                      <Text numberOfLines={1} style={[styles.quickItemTableHeading, { flex: 0.9, textAlign: "center" }]}>QTY</Text>
+                      <Text numberOfLines={1} style={[styles.quickItemTableHeading, { flex: 0.9, textAlign: "center" }]}>PRICE</Text>
+                      <Text numberOfLines={1} style={[styles.quickItemTableHeading, { flex: 0.95, textAlign: "center" }]}>TYPE</Text>
+                      <Text numberOfLines={1} style={[styles.quickItemTableHeading, { flex: 1.1, textAlign: "center" }]}>AVAILABLE</Text>
+                      <Text numberOfLines={1} style={[styles.quickItemTableHeading, { flex: 1.5, textAlign: "center", borderRightWidth: 0 }]}>ACTIONS</Text>
+                    </View>
+                  )}
                   {subCat.items.map((item: any, itemIndex: number) => {
                     // ✅ NEW: composite key uniquely identifies this item in the editor
                     const compositeKey = `${subIndex}::${itemIndex}`;
@@ -2472,8 +2550,81 @@ export default function AddChefCategory() {
                     const draftGross =
                       (Number(comboDraft.sourcePrice) || 0) + (Number(comboDraft.pairedPrice) || 0);
 
+                    if (isQuickBitesOrHomemade && quickTableMode) {
+                      const variantDropdownOpen = expandedVariantDropdownKey === compositeKey;
+                      return (
+                        <React.Fragment key={item.id || `item-${subIndex}-${itemIndex}`}>
+                          <View style={styles.quickItemTableRow}>
+                            <View style={[styles.quickItemTableCell, { flex: 1.7 }]}>
+                              <TextInput placeholder="Item name" placeholderTextColor="#64748B" value={item.name} onChangeText={(value) => updateltemField(subIndex, itemIndex, "name", value)} style={styles.quickItemTableInput} editable={isEditMode} numberOfLines={1} />
+                              <TextInput placeholder="Description" placeholderTextColor="#64748B" value={item.description || ""} onChangeText={(value) => updateltemField(subIndex, itemIndex, "description", value)} style={[styles.quickItemTableInput, styles.quickItemTableDescription]} editable={isEditMode} multiline />
+                            </View>
+                            <View style={[styles.quickItemTableCell, { flex: 0.5, alignItems: "center" }]}>
+                              <TouchableOpacity style={styles.quickItemTableImagePicker} onPress={() => isEditMode && pickItemImage(subIndex, itemIndex)} disabled={!isEditMode}>
+                                {item.image ? <Image source={{ uri: item.image }} style={styles.quickItemTableThumbnail} /> : <Ionicons name="image-outline" size={16} color="#52B788" />}
+                              </TouchableOpacity>
+                            </View>
+                            <View style={[styles.quickItemTableCell, { flex: 0.9 }]}>
+                              <TextInput placeholder="Qty" placeholderTextColor="#64748B" value={item.quantity} onChangeText={(value) => updateltemField(subIndex, itemIndex, "quantity", value)} style={styles.quickItemTableInput} editable={isEditMode} />
+                              {Array.isArray(item.variants) && item.variants.length > 0 && <Text style={styles.quickVariantCount}>{item.variants.length} extra</Text>}
+                            </View>
+                            <View style={[styles.quickItemTableCell, { flex: 0.9 }]}>
+                              <TextInput placeholder="₹" placeholderTextColor="#64748B" value={item.price} onChangeText={(value) => updateltemField(subIndex, itemIndex, "price", value)} style={styles.quickItemTableInput} editable={isEditMode} keyboardType="numeric" />
+                            </View>
+                            <View style={[styles.quickItemTableCell, { flex: 0.95, alignItems: "center" }]}>
+                              <TouchableOpacity
+                                style={[styles.quickItemTableCompactToggle, { backgroundColor: item.isVeg === false ? "rgba(211, 47, 47, 0.14)" : "rgba(21, 128, 61, 0.16)", borderColor: item.isVeg === false ? "rgba(211, 47, 47, 0.45)" : "rgba(82, 183, 136, 0.35)" }]}
+                                onPress={() => isEditMode && updateltemField(subIndex, itemIndex, "isVeg", item.isVeg === false)}
+                                disabled={!isEditMode}
+                              >
+                                <Text numberOfLines={1} style={[styles.quickItemTableCompactToggleText, { color: item.isVeg === false ? "#FCA5A5" : "#86EFAC" }]}>{item.isVeg === false ? "Non-Veg" : "Veg"}</Text>
+                              </TouchableOpacity>
+                            </View>
+                            <View style={[styles.quickItemTableCell, { flex: 1.1, alignItems: "center" }]}>
+                              <Text numberOfLines={1} style={[styles.quickItemAvailableLabel, { color: item.isAvailable === false ? "#CBD5E1" : "#86EFAC" }]}>{item.isAvailable === false ? "Unavailable" : "Available"}</Text>
+                              <Switch
+                                trackColor={{ false: "#4B5563", true: "#15803D" }}
+                                thumbColor="#FFFFFF"
+                                ios_backgroundColor="#3e3e3e"
+                                onValueChange={() => toggleCategoryItemAvailability(subIndex, itemIndex)}
+                                value={item.isAvailable !== false}
+                                style={styles.quickItemAvailableSwitch}
+                              />
+                            </View>
+                            <View style={[styles.quickItemTableCell, { flex: 1.5, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 4, borderRightWidth: 0 }]}>
+                              <TouchableOpacity style={styles.quickItemTableCompactAction} onPress={() => setExpandedVariantDropdownKey(variantDropdownOpen ? null : compositeKey)} accessibilityLabel="Manage extra quantity and prices">
+                                <Ionicons name={variantDropdownOpen ? "chevron-up-outline" : "chevron-down-outline"} size={15} color="#52B788" />
+                              </TouchableOpacity>
+                              <TouchableOpacity style={styles.quickItemTableCompactAction} onPress={() => { setQuickTableMode(false); setExpandedVariantDropdownKey(null); }} accessibilityLabel="Switch all sections to vertical cards">
+                                <Ionicons name="options-outline" size={15} color="#52B788" />
+                              </TouchableOpacity>
+                              {isEditMode && <TouchableOpacity style={[styles.quickItemTableCompactAction, styles.quickItemTableDelete]} onPress={() => handleDeleteltem(subIndex, itemIndex, item._id)}><Ionicons name="trash-outline" size={14} color="#F87171" /></TouchableOpacity>}
+                            </View>
+                          </View>
+                          {variantDropdownOpen && (
+                            <View style={styles.quickVariantDropdown}>
+                              <View style={styles.quickVariantDropdownHeader}>
+                                <Text style={styles.quickVariantDropdownTitle}>Extra quantity & price</Text>
+                                {isEditMode && <TouchableOpacity style={styles.quickVariantAddButton} onPress={() => addMoreQuantityPrice(subIndex, itemIndex)}><Ionicons name="add-circle-outline" size={15} color="#86EFAC" /><Text style={styles.quickVariantAddText}>Add new</Text></TouchableOpacity>}
+                              </View>
+                              {(item.variants || []).length === 0 ? (
+                                <Text style={styles.quickVariantEmptyText}>No extra quantities or prices added.</Text>
+                              ) : (item.variants || []).map((variant: any, variantIndex: number) => (
+                                <View key={`${variant.id || variantIndex}-${variantIndex}`} style={styles.quickVariantDropdownRow}>
+                                  <Text style={styles.quickVariantIndex}>{variantIndex + 1}.</Text>
+                                  <TextInput placeholder="New quantity" placeholderTextColor="#64748B" value={variant.quantity} onChangeText={(value) => updateVariantField(subIndex, itemIndex, variantIndex, "quantity", value)} style={[styles.quickItemTableInput, styles.quickVariantInput]} editable={isEditMode} />
+                                  <TextInput placeholder="New price (₹)" placeholderTextColor="#64748B" value={variant.price} onChangeText={(value) => updateVariantField(subIndex, itemIndex, variantIndex, "price", value)} style={[styles.quickItemTableInput, styles.quickVariantInput]} keyboardType="numeric" editable={isEditMode} />
+                                  {isEditMode && <TouchableOpacity style={styles.quickVariantRemoveButton} onPress={() => removeVariant(subIndex, itemIndex, variantIndex)}><Ionicons name="trash-outline" size={14} color="#F87171" /></TouchableOpacity>}
+                                </View>
+                              ))}
+                            </View>
+                          )}
+                        </React.Fragment>
+                      );
+                    }
+
                     return (
-                      <View key={item.id || `item-${subIndex}-${itemIndex}`} style={[styles.itemBlock, { position: "relative" }]}>
+                      <View key={item.id || `item-${subIndex}-${itemIndex}`} style={[styles.itemBlock, { position: "relative" }, isQuickBitesOrHomemade && quickTableMode && { width: quickTableAvailableWidth }]}>
                         {isEditMode && (
                           <TouchableOpacity
                             style={[styles.topIconBtn, { right: 10, top: 10, backgroundColor: "rgba(220, 38, 38, 0.15)", borderColor: "rgba(220, 38, 38, 0.35)", zIndex: 10 }]}
@@ -2855,6 +3006,7 @@ export default function AddChefCategory() {
                       </View>
                     );
                   })}
+                  </QuickTableScroll>
                   {isEditMode && (
                     <TouchableOpacity style={styles.addMediumButton} onPress={() => addNewItemToSub(subIndex)}>
                       <Ionicons name="add-circle" size={16} color="#52B788" />
@@ -4347,6 +4499,41 @@ const styles = StyleSheet.create({
   editToggleButton: { marginTop: 16, paddingVertical: 14, borderRadius: 10, alignItems: "center", backgroundColor: "#15803D", borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.3)" },
   editToggleText: { color: "#FFFFFF", fontWeight: "800", fontSize: 14.5 },
   
+  // Horizontal Quick Bites / Homemade item table styles.
+  // Header and rows share the same horizontal padding and the same per-cell
+  // 1px right border (transparent in the header) so every column lines up exactly.
+  quickItemTableHeader: { flexDirection: "row", alignItems: "center", width: "100%", backgroundColor: "#18261C", borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.28)", borderTopLeftRadius: 10, borderTopRightRadius: 10, paddingHorizontal: 3, paddingVertical: 10, marginTop: 8 },
+  quickItemTableHeading: { color: "#52B788", fontSize: 9, fontWeight: "900", letterSpacing: 0.2, paddingHorizontal: 2, flexShrink: 1, minWidth: 0, borderRightWidth: 1, borderRightColor: "transparent" },
+  quickItemTableRow: { flexDirection: "row", alignItems: "center", width: "100%", minHeight: 92, backgroundColor: "#131E16", borderWidth: 1, borderTopWidth: 0, borderColor: "rgba(82, 183, 136, 0.18)", paddingHorizontal: 3, paddingVertical: 6 },
+  quickItemTableCell: { minWidth: 0, flexShrink: 1, justifyContent: "center", paddingHorizontal: 2, paddingVertical: 2, borderRightWidth: 1, borderRightColor: "rgba(82, 183, 136, 0.10)" },
+  quickItemTableInput: { width: "100%", minWidth: 0, minHeight: 34, borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.2)", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 5, color: "#FFFFFF", backgroundColor: "#0C130E", fontSize: 11, fontWeight: "600" },
+  quickItemTableDescription: { minHeight: 34, maxHeight: 52, marginTop: 5, fontSize: 10, textAlignVertical: "top" },
+  quickItemTableValue: { color: "#CBD5E1", fontSize: 9, fontWeight: "700", marginBottom: 3, textAlign: "center" },
+  quickItemTableAction: { width: 34, height: 34, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#0C130E", borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.25)" },
+  quickItemTableCompactAction: { width: 30, height: 30, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: "#0C130E", borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.25)" },
+  quickItemTableCompactToggle: { minWidth: 0, width: "100%", paddingHorizontal: 2, paddingVertical: 7, borderRadius: 6, alignItems: "center", justifyContent: "center", borderWidth: 1 },
+  quickItemTableCompactToggleText: { fontSize: 10, fontWeight: "900", textAlign: "center" },
+  quickItemTableThumbnail: { width: 30, height: 30, borderRadius: 6 },
+  quickItemTableImagePicker: { width: 36, height: 36, borderRadius: 7, alignItems: "center", justifyContent: "center", backgroundColor: "#0C130E", borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.25)" },
+  quickItemAvailableLabel: { fontSize: 9, fontWeight: "800", textAlign: "center", marginBottom: 2 },
+  quickItemAvailableSwitch: { transform: [{ scaleX: 0.72 }, { scaleY: 0.72 }] },
+  quickVariantCount: { color: "#86EFAC", fontSize: 9, fontWeight: "700", textAlign: "center", marginTop: 3 },
+  quickVariantDropdown: { width: "100%", paddingHorizontal: 8, paddingVertical: 8, backgroundColor: "#101A13", borderWidth: 1, borderTopWidth: 0, borderColor: "rgba(82, 183, 136, 0.22)", borderBottomLeftRadius: 8, borderBottomRightRadius: 8 },
+  quickVariantDropdownHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  quickVariantDropdownTitle: { color: "#E2E8F0", fontSize: 10, fontWeight: "800" },
+  quickVariantAddButton: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.28)", backgroundColor: "rgba(82, 183, 136, 0.08)" },
+  quickVariantAddText: { color: "#86EFAC", fontSize: 9, fontWeight: "800" },
+  quickVariantEmptyText: { color: "#94A3B8", fontSize: 9, paddingVertical: 5 },
+  quickVariantDropdownRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 5 },
+  quickVariantIndex: { width: 15, color: "#94A3B8", fontSize: 9, textAlign: "center" },
+  quickVariantInput: { flex: 1, minHeight: 30 },
+  quickVariantRemoveButton: { width: 30, height: 30, borderRadius: 6, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(220, 38, 38, 0.12)", borderWidth: 1, borderColor: "rgba(220, 38, 38, 0.3)" },
+  quickLayoutToggleButton: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 7, backgroundColor: "#15803D", borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.4)" },
+  quickLayoutToggleButtonText: { color: "#FFFFFF", fontSize: 9, fontWeight: "800", flexShrink: 1, textAlign: "center" },
+  quickItemTableDelete: { backgroundColor: "rgba(220, 38, 38, 0.12)", borderColor: "rgba(220, 38, 38, 0.3)" },
+  quickItemBackToTable: { flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 6, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 10, borderRadius: 8, backgroundColor: "rgba(82, 183, 136, 0.10)", borderWidth: 1, borderColor: "rgba(82, 183, 136, 0.25)" },
+  quickItemBackToTableText: { color: "#52B788", fontSize: 12, fontWeight: "800" },
+
   emptySelectionBox: { alignItems: 'center', padding: 36, backgroundColor: '#131E16', borderRadius: 20, borderWidth: 1, borderColor: 'rgba(82, 183, 136, 0.16)' },
   emptySelectionTitle: { fontSize: 15.5, fontWeight: '800', color: '#FFFFFF', marginTop: 12 },
   emptySelectionSub: { fontSize: 12.5, color: '#94A3B8', textAlign: 'center', marginTop: 6, lineHeight: 18 },

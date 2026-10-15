@@ -1488,6 +1488,9 @@ export default function ProfileScreen() {
           <TouchableOpacity
             style={styles.settingRowItem}
             activeOpacity={0.7}
+            onPress={() => Linking.openURL("https://katbox.in/terms-and-conditions")}
+            accessibilityRole="link"
+            accessibilityLabel="Terms and Conditions"
           >
             <View
               style={[
@@ -1524,6 +1527,9 @@ export default function ProfileScreen() {
           <TouchableOpacity
             style={styles.settingRowItem}
             activeOpacity={0.7}
+            onPress={() => Linking.openURL("https://katbox.in/privacy-policy")}
+            accessibilityRole="link"
+            accessibilityLabel="Privacy Policy"
           >
             <View
               style={[
@@ -1554,6 +1560,43 @@ export default function ProfileScreen() {
               color="#CBD5E1"
             />
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.settingRowItem}
+            activeOpacity={0.7}
+            onPress={() => Linking.openURL("https://katbox.in/refund-cancellation-policy")}
+            accessibilityRole="link"
+            accessibilityLabel="Refund and Cancellation Policy"
+          >
+            <View
+              style={[
+                styles.settingIconBox,
+                { backgroundColor: "#FFF7ED" },
+              ]}
+            >
+              <Ionicons
+                name="receipt-outline"
+                size={17}
+                color="#C2410C"
+              />
+            </View>
+
+            <View style={styles.settingTextCol}>
+              <Text style={styles.settingTitleText}>
+                Refund & Cancellation Policy
+              </Text>
+
+              <Text style={styles.settingSubtextText}>
+                Understand cancellations and refunds
+              </Text>
+            </View>
+
+            <Ionicons
+              name="chevron-forward"
+              size={17}
+              color="#CBD5E1"
+            />
+          </TouchableOpacity>
+
 
           <View style={styles.settingRowDivider} />
 
