@@ -107,6 +107,7 @@ const normalizeCombo = (raw: any): any | null => {
 
   return {
     comboName: typeof raw.comboName === "string" ? raw.comboName.trim() : "",
+    description: typeof raw.description === "string" ? raw.description.trim() : (typeof raw.comboDescription === "string" ? raw.comboDescription.trim() : ""),
     sourceItem: {
       name: String(source.name).trim(),
       imageUrl: source.imageUrl || "",

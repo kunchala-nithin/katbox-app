@@ -4,8 +4,7 @@ import mongoose, { Schema, Document } from "mongoose";
 // 1. CHEF CATEGORY SCHEMAS & INTERFACES
 // ==========================================
 
-// ✅ NEW: Combo sub-document — represents an "Add X + Y for ₹Z" offer
-// (Swiggy-style "Frequently bought together / Add a combo" card).
+// Combo sub-document — represents an "Add X + Y for ₹Z" offer.
 // Stored per-item so it can be offered contextually for the dish it
 // belongs to. The two source items are referenced by their name + image
 // snapshot (denormalised) so the combo renders even if the source item
@@ -20,6 +19,7 @@ interface IComboSource {
 
 interface IItemCombo {
   comboName: string;
+  description: string;        // Description displayed on the customer combo card
   sourceItem: IComboSource;   // "Add this" (the anchor dish the combo is attached to)
   pairedItem: IComboSource;   // "with this" (the second item in the bundle)
   comboPrice: number;         // combined offer price (must be < source + paired)
@@ -40,7 +40,7 @@ interface ICategoryItem {
     quantity: string;
     price: number;
   }>;
-  combos: IItemCombo[]; // ✅ NEW
+  combos: IItemCombo[];
 }
 
 interface ISubCategory {
@@ -57,7 +57,7 @@ export interface IChefCategory extends Document {
   subCategories: ISubCategory[];
 }
 
-// ✅ NEW: Combo source schema (used inside IItemCombo)
+// Combo source schema (used inside IItemCombo)
 const ComboSourceSchema = new Schema({
   name: { type: String, required: true },
   imageUrl: { type: String, default: "" },
@@ -66,9 +66,10 @@ const ComboSourceSchema = new Schema({
   quantity: { type: String, default: "" },
 }, { _id: false });
 
-// ✅ NEW: Combo schema — a Swiggy-style "Add A + B for ₹C" offer.
+// Combo schema — a Swiggy-style "Add A + B for ₹C" offer.
 const ItemComboSchema = new Schema({
   comboName: { type: String, default: "" },
+  description: { type: String, default: "", trim: true, maxlength: 1200 },
   sourceItem: { type: ComboSourceSchema, required: true },
   pairedItem: { type: ComboSourceSchema, required: true },
   comboPrice: { type: Number, required: true },
@@ -89,7 +90,7 @@ const CategoryItemSchema = new Schema({
     quantity: String,
     price: Number
   }],
-  combos: { type: [ItemComboSchema], default: [] }, // ✅ NEW
+  combos: { type: [ItemComboSchema], default: [] },
 }, { _id: false });
 
 const SubCategorySchema = new Schema({
@@ -139,7 +140,7 @@ interface IDaawathCategory {
   items: IDaawathItem[];
 }
 
-// ✅ IMAGE FIELDS NO LONGER REQUIRED — category form now uses a numeric badge in the UI
+// IMAGE FIELDS NO LONGER REQUIRED — category form now uses a numeric badge in the UI
 const DaawathCategorySchema = new Schema<IDaawathCategory>(
   {
     name: { type: String, required: true },

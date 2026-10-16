@@ -114,12 +114,16 @@ const CATEGORIES: CategoryItem[] = [
   { id: '6', name: 'View All', icon: 'grid', type: 'feather' },
 ];
 
+// ✅ UPDATED: Filter pills now include a dedicated "Nearby" pill in place of
+//    "North Indian". Nearby is a toggle-style pill that reuses the existing
+//    nearbyChefsOnly state so its behavior is identical to the standalone
+//    Nearby Chefs button (which has been removed from the UI).
 const FILTER_TAGS = [
   { name: 'All', icon: null },
   { name: 'Veg', icon: 'leaf' },
   { name: 'Non Veg', icon: 'drumstick' },
   { name: 'Biryani', icon: 'pot-steam' },
-  { name: 'North Indian', icon: 'food-croissant' },
+  { name: 'Nearby', icon: 'near-me' },
 ];
 
 const DEFAULT_COVER_IMAGES = [
@@ -361,6 +365,11 @@ export default function HomeScreen() {
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedTag, setSelectedTag] = useState<string>('All');
+  // Filters the Home chef carousel to chefs within the delivery-location radius.
+  // This single flag drives the new "Nearby" pill inside the filter row, so
+  // tapping "Nearby" here has the same effect as the previously standalone
+  // Nearby Chefs button — now removed.
+  const [nearbyChefsOnly, setNearbyChefsOnly] = useState<boolean>(false);
   const [favorites, setFavorites] = useState<{ [key: string]: boolean }>({});
   const [activeBannerIndex, setActiveBannerIndex] = useState<number>(0);
   const [couponApplied, setCouponApplied] = useState<boolean>(false);
@@ -543,20 +552,63 @@ export default function HomeScreen() {
               ? chef.banners[0].url
               : chef.coverImage ||
                 DEFAULT_COVER_IMAGES[i % DEFAULT_COVER_IMAGES.length];
+            // Normalize API distance values because some responses may serialize
+            // distanceKm as a numeric string rather than a JavaScript number.
+            const parsedDistanceKm =
+              chef.distanceKm !== undefined &&
+              chef.distanceKm !== null &&
+              chef.distanceKm !== '' &&
+              Number.isFinite(Number(chef.distanceKm))
+                ? Number(chef.distanceKm)
+                : null;
+
+            // Keep the chef's actual saved location separate from calculated
+            // delivery distance. This lets the card show the dynamic location
+            // directly below the experience text while the image badge continues
+            // to show the calculated distance.
+            const locationCandidate =
+              chef.location ??
+              chef.locality ??
+              chef.area ??
+              chef.city ??
+              chef.address ??
+              chef.fullAddress ??
+              chef.activeAddress?.fullAddress ??
+              '';
+
+            const formattedChefLocation = (() => {
+              if (typeof locationCandidate === 'string') {
+                return locationCandidate.trim();
+              }
+
+              if (locationCandidate && typeof locationCandidate === 'object') {
+                const parts = [
+                  locationCandidate.area,
+                  locationCandidate.locality,
+                  locationCandidate.city,
+                  locationCandidate.district,
+                  locationCandidate.state,
+                  locationCandidate.fullAddress,
+                  locationCandidate.address,
+                ]
+                  .filter(
+                    (part) => typeof part === 'string' && part.trim().length > 0
+                  )
+                  .map((part) => part.trim());
+
+                return [...new Set(parts)].join(', ');
+              }
+
+              return '';
+            })();
 
             return {
               id: chef._id,
               name: chef.name || 'Chef',
               expText: chef.exp ? `${chef.exp} yrs experience` : '12 yrs experience',
-              locationText:
-                typeof chef.distanceKm === 'number'
-                  ? `${Number(chef.distanceKm).toFixed(1)} km away`
-                  : hasDeliveryCoordinates
-                    ? 'Distance unavailable'
-                    : chef.location || 'Location not set',
-              rawLocation: chef.location || '',
-              distanceKm:
-                typeof chef.distanceKm === 'number' ? Number(chef.distanceKm) : null,
+              locationText: formattedChefLocation || 'Location not set',
+              rawLocation: formattedChefLocation,
+              distanceKm: parsedDistanceKm,
               withinRadius: chef.withinRadius === true,
               specialty:
                 chef.specialty ||
@@ -800,13 +852,15 @@ export default function HomeScreen() {
         return;
       }
 
-      // Silent background refresh on subsequent focuses
+      // Silent background refresh on subsequent focuses. Force the chef
+      // request so the 10-second throttle cannot leave stale location labels
+      // on screen after returning from another route. The callback dependencies
+      // keep the latest delivery coordinates and fetch functions in use.
       loadUserDataAndAddresses();
-      fetchDynamicChefs(true);
+      fetchDynamicChefs(true, true);
       fetchDynamicBanners(true);
       fetchCartCount();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [loadUserDataAndAddresses, fetchDynamicChefs, fetchDynamicBanners, fetchCartCount])
   );
 
   const checkLocationStatusAndPrompt = useCallback(async () => {
@@ -1453,9 +1507,74 @@ export default function HomeScreen() {
     return <MaterialCommunityIcons name={item.icon as any} size={22} color={color} />;
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // ✅ UPDATED: single unified pill press handler.
+  //    The "Nearby" pill now toggles the nearbyChefsOnly flag using the
+  //    customer's current delivery coordinates, replacing the standalone
+  //    Nearby Chefs button. All other tags just update selectedTag.
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleFilterPillPress = useCallback(
+    (tagName: string) => {
+      if (tagName === 'Nearby') {
+        if (nearbyChefsOnly) {
+          setNearbyChefsOnly(false);
+          return;
+        }
+
+        const latitude = deliveryLocation?.latitude ?? activeAddress?.latitude;
+        const longitude = deliveryLocation?.longitude ?? activeAddress?.longitude;
+        const hasCoordinates =
+          latitude !== undefined &&
+          longitude !== undefined &&
+          Number.isFinite(Number(latitude)) &&
+          Number.isFinite(Number(longitude)) &&
+          !(Number(latitude) === 0 && Number(longitude) === 0);
+
+        if (!hasCoordinates) {
+          Alert.alert(
+            'Choose your delivery location',
+            'Select or detect your delivery location to find chefs near you.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Choose location',
+                onPress: () => setIsAddressSheetVisible(true),
+              },
+            ]
+          );
+          return;
+        }
+
+        setNearbyChefsOnly(true);
+        // Force a fresh location-aware request so the nearby list uses
+        // the latest customer coordinates.
+        fetchDynamicChefs(true, true);
+        return;
+      }
+
+      setSelectedTag(tagName);
+    },
+    [
+      nearbyChefsOnly,
+      deliveryLocation?.latitude,
+      deliveryLocation?.longitude,
+      activeAddress?.latitude,
+      activeAddress?.longitude,
+      fetchDynamicChefs,
+    ]
+  );
+
   // ✅ PERF: memoized filtered chefs list
   const filteredChefs = useMemo(() => {
     return chefsData.filter((chef) => {
+      if (nearbyChefsOnly) {
+        const distance = Number(chef.distanceKm);
+        const hasDistance = Number.isFinite(distance) && distance >= 0;
+        // The API's withinRadius flag is authoritative; distance is a safe fallback.
+        if (chef.withinRadius !== true && !(hasDistance && distance <= 10)) {
+          return false;
+        }
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const chefName = (chef.name || '').toLowerCase();
@@ -1477,19 +1596,11 @@ export default function HomeScreen() {
         const spec = (chef.specialty || '').toLowerCase();
         const name = (chef.name || '').toLowerCase();
         if (!spec.includes('biryani') && !name.includes('biryani')) return false;
-      } else if (selectedTag === 'North Indian') {
-        const spec = (chef.specialty || '').toLowerCase();
-        if (
-          !spec.includes('north') &&
-          !spec.includes('punjabi') &&
-          !spec.includes('mughlai')
-        )
-          return false;
       }
 
       return true;
     });
-  }, [chefsData, searchQuery, selectedTag]);
+  }, [chefsData, searchQuery, selectedTag, nearbyChefsOnly]);
 
   const handleSearchIconPress = () => {
     caterersSectionRef.current?.measureLayout(
@@ -1979,26 +2090,49 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </View>
 
+              {/* ✅ UPDATED: Unified, neatly aligned, user-friendly filter pill
+                  row. "Nearby" replaces "North Indian" as the 5th pill and
+                  toggles the nearbyChefsOnly filter. Alignment is handled via
+                  alignItems: 'center' on the container so all pills sit
+                  perfectly in line vertically. */}
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.filterPillsScroll}
               >
                 {FILTER_TAGS.map((tag) => {
-                  const isSelected = selectedTag === tag.name;
+                  const isNearbyPill = tag.name === 'Nearby';
+                  const isSelected = isNearbyPill
+                    ? nearbyChefsOnly
+                    : selectedTag === tag.name;
+
                   return (
                     <TouchableOpacity
                       key={tag.name}
-                      onPress={() => setSelectedTag(tag.name)}
-                      style={[styles.filterPill, isSelected && styles.filterPillActive]}
-                      activeOpacity={0.8}
+                      onPress={() => handleFilterPillPress(tag.name)}
+                      style={[
+                        styles.filterPill,
+                        isSelected && styles.filterPillActive,
+                        isNearbyPill && styles.filterPillNearby,
+                        isNearbyPill && isSelected && styles.filterPillNearbyActive,
+                      ]}
+                      activeOpacity={0.82}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      accessibilityLabel={
+                        isNearbyPill
+                          ? isSelected
+                            ? 'Show all chefs'
+                            : 'Show chefs near your location'
+                          : `Filter by ${tag.name}`
+                      }
                     >
                       {tag.icon === 'leaf' && (
                         <Ionicons
                           name="leaf-outline"
                           size={12}
                           color={isSelected ? '#FFFFFF' : '#2D6A4F'}
-                          style={{ marginRight: 5 }}
+                          style={styles.filterPillIcon}
                         />
                       )}
                       {tag.icon === 'drumstick' && (
@@ -2006,7 +2140,7 @@ export default function HomeScreen() {
                           name="food-drumstick-outline"
                           size={12}
                           color={isSelected ? '#FFFFFF' : '#6B7280'}
-                          style={{ marginRight: 5 }}
+                          style={styles.filterPillIcon}
                         />
                       )}
                       {tag.icon === 'pot-steam' && (
@@ -2014,15 +2148,15 @@ export default function HomeScreen() {
                           name="pot-steam-outline"
                           size={12}
                           color={isSelected ? '#FFFFFF' : '#6B7280'}
-                          style={{ marginRight: 5 }}
+                          style={styles.filterPillIcon}
                         />
                       )}
-                      {tag.icon === 'food-croissant' && (
-                        <MaterialCommunityIcons
-                          name="silverware-fork-knife"
-                          size={11}
-                          color={isSelected ? '#FFFFFF' : '#6B7280'}
-                          style={{ marginRight: 5 }}
+                      {tag.icon === 'near-me' && (
+                        <Ionicons
+                          name="navigate-circle-outline"
+                          size={13}
+                          color={isSelected ? '#FFFFFF' : '#2D6A4F'}
+                          style={styles.filterPillIcon}
                         />
                       )}
                       <Text
@@ -2033,10 +2167,34 @@ export default function HomeScreen() {
                       >
                         {tag.name}
                       </Text>
+                      {isNearbyPill && isSelected && (
+                        <Ionicons
+                          name="checkmark-circle"
+                          size={13}
+                          color="#FFFFFF"
+                          style={styles.filterPillCheckIcon}
+                        />
+                      )}
                     </TouchableOpacity>
                   );
                 })}
               </ScrollView>
+
+              {/* Active nearby hint shown below the pill row so the customer
+                  always knows the nearby filter is on and remembers their
+                  current radius. */}
+              {nearbyChefsOnly && (
+                <View style={styles.nearbyActiveHintRow}>
+                  <Ionicons
+                    name="information-circle-outline"
+                    size={13}
+                    color="#2D6A4F"
+                  />
+                  <Text style={styles.nearbyActiveHintText}>
+                    Showing chefs within 10 km of your delivery location
+                  </Text>
+                </View>
+              )}
 
               <ScrollView
                 horizontal
@@ -2093,7 +2251,7 @@ export default function HomeScreen() {
                             <Text style={styles.cardDistanceBannerText} numberOfLines={1}>
                               {typeof caterer.distanceKm === 'number'
                                 ? `${caterer.distanceKm.toFixed(1)} km`
-                                : caterer.locationText || 'Nearby'}
+                                : 'Nearby'}
                             </Text>
                           </View>
 
@@ -2136,20 +2294,18 @@ export default function HomeScreen() {
                             </Text>
                           </View>
 
-                          {/* Dynamic Location under Experience */}
-                          {(caterer.rawLocation || caterer.locationText) ? (
-                            <View style={styles.cardLocationRow}>
-                              <Ionicons
-                                name="location-sharp"
-                                size={10}
-                                color="#6B7280"
-                                style={{ marginRight: 3 }}
-                              />
-                              <Text style={styles.cardLocationText} numberOfLines={1}>
-                                {caterer.rawLocation || caterer.locationText}
-                              </Text>
-                            </View>
-                          ) : null}
+                          {/* Dynamic Chef Location under Experience */}
+                          <View style={styles.cardLocationRow}>
+                            <Ionicons
+                              name="location-sharp"
+                              size={10}
+                              color="#6B7280"
+                              style={{ marginRight: 3 }}
+                            />
+                            <Text style={styles.cardLocationText} numberOfLines={1}>
+                              {caterer.locationText || 'Location not set'}
+                            </Text>
+                          </View>
 
                           <View style={styles.cuisineContainer}>
                             <Text
@@ -2226,7 +2382,9 @@ export default function HomeScreen() {
                 ) : (
                   <View style={styles.caterersLoadingContainer}>
                     <Text style={styles.caterersLoadingText}>
-                      No chefs found for this category
+                      {nearbyChefsOnly
+                        ? 'No chefs found within 10 km. Try another location or tap Nearby again to see all chefs.'
+                        : 'No chefs found for this category'}
                     </Text>
                   </View>
                 )}
@@ -3620,33 +3778,79 @@ const styles = StyleSheet.create({
     color: '#2D6A4F',
     fontWeight: '700',
   },
+
+  /* ─────────────────────────────────────────────────────────────
+     ✅ UPDATED FILTER PILL ROW
+     - Single unified row containing All / Veg / Non Veg / Biryani /
+       Nearby (Nearby replaces the old North Indian pill).
+     - alignItems: 'center' on the container guarantees perfectly
+       aligned pills — every pill is the same height and vertically
+       centred against its siblings.
+     - Nearby gets an extra "checkmark" affordance while selected so
+       the active state is unmistakable.
+     - A subtle hint row beneath the pills confirms the 10 km radius
+       when the Nearby filter is active.
+     ───────────────────────────────────────────────────────────── */
   filterPillsScroll: {
     paddingHorizontal: 16,
-    marginBottom: 12,
+    paddingVertical: 2,
+    alignItems: 'center',
+    gap: 8,
   },
   filterPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 13,
-    paddingVertical: 5.5,
-    borderRadius: 16,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 18,
     backgroundColor: '#F9FAFB',
     borderWidth: 1,
     borderColor: '#E5E7EB',
     marginRight: 8,
+    minHeight: 32,
   },
   filterPillActive: {
     backgroundColor: '#2D6A4F',
     borderColor: '#2D6A4F',
   },
+  filterPillNearby: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  filterPillNearbyActive: {
+    backgroundColor: '#2D6A4F',
+    borderColor: '#2D6A4F',
+  },
+  filterPillIcon: {
+    marginRight: 5,
+  },
+  filterPillCheckIcon: {
+    marginLeft: 5,
+  },
   filterPillText: {
-    fontSize: 11,
+    fontSize: 11.5,
     color: '#4B5563',
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.1,
   },
   filterPillTextActive: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
+  },
+
+  nearbyActiveHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    marginTop: -4,
+    marginBottom: 10,
+    gap: 5,
+  },
+  nearbyActiveHintText: {
+    fontSize: 10.5,
+    color: '#2D6A4F',
+    fontWeight: '600',
   },
 
   caterersDeckScroll: {
@@ -3665,6 +3869,7 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '600',
     color: '#6B7280',
+    textAlign: 'center',
   },
 
   // ─── Simplified & Small Chef Card UI ───

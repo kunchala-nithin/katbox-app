@@ -52,7 +52,7 @@ const KATBOX = {
 
 // ─── Helper: normalize a category name for robust QuickBites detection ───
 // Handles any casing, leading/trailing whitespace, and internal spaces.
-// e.g. "Quick Bites", "quickbites", "QUICK BITES", "  Quick  Bites  " all match.
+// e.g. "Quick Bites", "quickbites", "QUICK BITES", "   Quick  Bites  " all match.
 const normalizeCategoryKey = (val: any): string =>
   String(val || "").trim().toLowerCase().replace(/\s+/g, "");
 
@@ -138,6 +138,7 @@ const HomeMadeItemScreen = () => {
 
   // Expanded Descriptions State
   const [expandedDescriptions, setExpandedDescriptions] = useState<{ [key: string]: boolean }>({});
+  const [expandedComboDescriptions, setExpandedComboDescriptions] = useState<{ [key: string]: boolean }>({});
 
   // ─── QUICK BITES FLOW DETECTION ──────────────────────────────────────
   // Detects if the current category is "Quick Bites" (case/space-insensitive).
@@ -417,6 +418,41 @@ const HomeMadeItemScreen = () => {
     }))
     .filter((section) => section.data.length > 0);
 
+  // ─── SWIGGY & ZOMATO STYLE COMBOS EXTRACTION (UNIQUE BY ID/KEY) ───────
+  const allCombos = useMemo(() => {
+    const comboList: { item: any; combo: any; comboIndex: number }[] = [];
+    const seenKeys = new Set<string>();
+
+    menuSections.forEach((section) => {
+      section.data.forEach((item: any) => {
+        if (Array.isArray(item.combos)) {
+          item.combos.forEach((combo: any, cIdx: number) => {
+            const key = getComboKey(combo, item.id, cIdx);
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              comboList.push({ item, combo, comboIndex: cIdx });
+            }
+          });
+        }
+      });
+    });
+
+    if (!searchText.trim()) return comboList;
+    const lowerSearch = searchText.toLowerCase();
+    return comboList.filter(({ item, combo }) => {
+      const cName = (combo.comboName || "").toLowerCase();
+      const sName = (combo.sourceItem?.name || "").toLowerCase();
+      const pName = (combo.pairedItem?.name || "").toLowerCase();
+      const iName = (item.name || "").toLowerCase();
+      return (
+        cName.includes(lowerSearch) ||
+        sName.includes(lowerSearch) ||
+        pName.includes(lowerSearch) ||
+        iName.includes(lowerSearch)
+      );
+    });
+  }, [menuSections, searchText]);
+
   // Helper values to calculate total elements added into Cart
   const getCartTotals = () => {
     let count = 0;
@@ -456,9 +492,8 @@ const HomeMadeItemScreen = () => {
   const currentModalItemCount = selectedItemId ? (itemQuantities[selectedItemId] || 1) : 1;
   const dynamicModalTotalPrice = getModalSelectedOptionPrice() * currentModalItemCount;
 
-  // Renders a combo using the same white card, border, radius, padding,
-  // and shadow treatment as the regular menuItemCard.
-  const renderComboCard = (item: any, combo: any, comboIndex: number) => {
+  // Horizontal Boutique Combo Card with elevated, pristine styling
+  const renderHorizontalComboCard = (item: any, combo: any, comboIndex: number) => {
     const comboKey = getComboKey(combo, item.id, comboIndex);
     const cartEntry = comboCart[comboKey];
     const comboQty = cartEntry?.qty || 0;
@@ -469,78 +504,113 @@ const HomeMadeItemScreen = () => {
     const offer = Number(combo.comboPrice) || 0;
 
     return (
-      <View style={styles.comboCard} key={comboKey}>
-        {/* LEFT: Combo details, following the regular menu card hierarchy */}
-        <View style={styles.comboCardLeft}>
-          <Text style={styles.comboTitle} numberOfLines={2}>
-            {combo.comboName || `${src.name || "Item"} + ${pair.name || "Item"}`}
-          </Text>
-          <Text style={styles.comboItemsText} numberOfLines={2}>
-            {src.name || "Item"} + {pair.name || "Item"}
-          </Text>
-          <View style={styles.comboPriceRow}>
-            <Text style={styles.comboOffer}>₹{offer}</Text>
-            {gross > offer && <Text style={styles.comboStrike}>₹{gross}</Text>}
+      <View style={styles.hzComboCard} key={comboKey}>
+        {/* PREMIUM FLOATING SAVINGS TAG */}
+        {savings > 0 && (
+          <View style={styles.hzComboSavePill}>
+            <Ionicons name="sparkles" size={10} color="#FFFFFF" style={{ marginRight: 3 }} />
+            <Text style={styles.hzComboSavePillText}>SAVE ₹{savings}</Text>
           </View>
-          {savings > 0 && (
-            <View style={styles.comboSaveBadge}>
-              <Text style={styles.comboSaveBadgeText}>Save ₹{savings}</Text>
+        )}
+
+        {/* TOP: Clean Elevated Dual Dish Preview */}
+        <View style={styles.hzComboVisualContainer}>
+          <View style={styles.hzComboImageStack}>
+            <View style={styles.hzComboImageWrap}>
+              {src.imageUrl ? (
+                <Image source={{ uri: src.imageUrl }} style={styles.hzComboImage} />
+              ) : (
+                <View style={[styles.hzComboImage, styles.comboImagePlaceholder]}>
+                  <Ionicons name="fast-food-outline" size={22} color={KATBOX.primary} />
+                </View>
+              )}
             </View>
-          )}
+
+            {/* Harmonious overlapping connector badge */}
+            <View style={styles.hzComboPlusBadge}>
+              <Ionicons name="add" size={12} color="#FFFFFF" />
+            </View>
+
+            <View style={styles.hzComboImageWrap}>
+              {pair.imageUrl ? (
+                <Image source={{ uri: pair.imageUrl }} style={styles.hzComboImage} />
+              ) : (
+                <View style={[styles.hzComboImage, styles.comboImagePlaceholder]}>
+                  <Ionicons name="fast-food-outline" size={22} color={KATBOX.primary} />
+                </View>
+              )}
+            </View>
+          </View>
         </View>
 
-        {/* RIGHT: Paired food images and the same compact ADD/counter control */}
-        <View style={styles.comboCardRight}>
-          <View style={styles.comboImageStack}>
-            <View style={styles.comboImageWrap}>
-              {src.imageUrl ? (
-                <Image source={{ uri: src.imageUrl }} style={styles.comboImage} />
-              ) : (
-                <View style={[styles.comboImage, styles.comboImagePlaceholder]}>
-                  <Ionicons name="fast-food-outline" size={18} color={KATBOX.primary} />
-                </View>
-              )}
-            </View>
-            <View style={styles.comboPlusBadge}>
-              <Ionicons name="add" size={11} color="#FFFFFF" />
-            </View>
-            <View style={styles.comboImageWrap}>
-              {pair.imageUrl ? (
-                <Image source={{ uri: pair.imageUrl }} style={styles.comboImage} />
-              ) : (
-                <View style={[styles.comboImage, styles.comboImagePlaceholder]}>
-                  <Ionicons name="fast-food-outline" size={18} color={KATBOX.primary} />
-                </View>
-              )}
-            </View>
+        {/* MIDDLE: Combo Info */}
+        <View style={styles.hzComboContent}>
+          <Text style={styles.hzComboTitle} numberOfLines={1}>
+            {combo.comboName || `${src.name || "Item"} + ${pair.name || "Item"}`}
+          </Text>
+
+          <View style={styles.hzComboPairTagRow}>
+            <Text style={styles.hzComboPairTagText} numberOfLines={1}>
+              {src.name || "Item"} • {pair.name || "Item"}
+            </Text>
           </View>
 
-          {comboQty === 0 ? (
-            <TouchableOpacity
-              style={styles.comboAddButton}
-              activeOpacity={0.85}
-              onPress={() => updateComboQuantity(comboKey, combo, item.id, 1)}
-            >
-              <Text style={styles.comboAddButtonText}>ADD</Text>
-              <Ionicons name="add" size={15} color={KATBOX.primary} />
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.comboCounter}>
-              <TouchableOpacity
-                style={styles.comboCounterBtn}
-                onPress={() => updateComboQuantity(comboKey, combo, item.id, comboQty - 1)}
+          {!!String(combo.description || combo.comboDescription || "").trim() && (
+            <View style={{ marginTop: 7 }}>
+              <Text
+                style={styles.hzComboDescription}
+                numberOfLines={expandedComboDescriptions[comboKey] ? undefined : 2}
               >
-                <Ionicons name="remove" size={14} color="#fff" />
-              </TouchableOpacity>
-              <Text style={styles.comboCounterText}>{comboQty}</Text>
-              <TouchableOpacity
-                style={styles.comboCounterBtn}
-                onPress={() => updateComboQuantity(comboKey, combo, item.id, comboQty + 1)}
-              >
-                <Ionicons name="add" size={14} color="#fff" />
-              </TouchableOpacity>
+                {String(combo.description || combo.comboDescription || "").trim()}
+              </Text>
+              {String(combo.description || combo.comboDescription || "").trim().length > 90 && (
+                <TouchableOpacity
+                  onPress={() => setExpandedComboDescriptions((prev) => ({ ...prev, [comboKey]: !prev[comboKey] }))}
+                  activeOpacity={0.7}
+                  style={{ alignSelf: "flex-start", marginTop: 3 }}
+                >
+                  <Text style={{ color: KATBOX.primary, fontSize: 12, fontWeight: "700" }}>
+                    {expandedComboDescriptions[comboKey] ? "Show less" : "Show more"}
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
+
+          {/* BOTTOM: Clean Pricing and Rounded CTA */}
+          <View style={styles.hzComboActionRow}>
+            <View style={styles.hzComboPriceCol}>
+              <Text style={styles.hzComboOfferPrice}>₹{offer}</Text>
+              {gross > offer && <Text style={styles.hzComboGrossPrice}>₹{gross}</Text>}
+            </View>
+
+            {comboQty === 0 ? (
+              <TouchableOpacity
+                style={styles.hzComboAddBtn}
+                activeOpacity={0.85}
+                onPress={() => updateComboQuantity(comboKey, combo, item.id, 1)}
+              >
+                <Text style={styles.hzComboAddBtnText}>ADD</Text>
+                <Ionicons name="add" size={13} color={KATBOX.primary} />
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.hzComboCounter}>
+                <TouchableOpacity
+                  style={styles.hzComboCounterBtn}
+                  onPress={() => updateComboQuantity(comboKey, combo, item.id, comboQty - 1)}
+                >
+                  <Ionicons name="remove" size={12} color="#fff" />
+                </TouchableOpacity>
+                <Text style={styles.hzComboCounterText}>{comboQty}</Text>
+                <TouchableOpacity
+                  style={styles.hzComboCounterBtn}
+                  onPress={() => updateComboQuantity(comboKey, combo, item.id, comboQty + 1)}
+                >
+                  <Ionicons name="add" size={12} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
         </View>
       </View>
     );
@@ -553,7 +623,6 @@ const HomeMadeItemScreen = () => {
     const isExpanded = expandedDescriptions[item.id] || false;
     const cartCount = itemQuantities[item.id] || 0;
     const itemUnavailable = item.isAvailable === false;
-    const itemCombos = Array.isArray(item.combos) ? item.combos : [];
 
     // ─── UNAVAILABLE STATE ────────────────────────────────────────────
     // When the chef has toggled this dish OFF, we render a "dead" card:
@@ -713,13 +782,6 @@ const HomeMadeItemScreen = () => {
             )}
           </TouchableOpacity>
         </View>
-
-        {/* ✅ NEW: Swiggy-style combo offers rendered directly under the dish */}
-        {itemCombos.length > 0 && (
-          <View style={styles.comboListWrap}>
-            {itemCombos.map((combo: any, cIdx: number) => renderComboCard(item, combo, cIdx))}
-          </View>
-        )}
       </View>
     );
   };
@@ -919,6 +981,37 @@ const HomeMadeItemScreen = () => {
                   {" "}including cooking & delivery time.
                 </Text>
               </View>
+            </View>
+          )}
+
+          {/* ─── ✅ SWIGGY & ZOMATO STYLE COMBOS HORIZONTAL CAROUSEL AT TOP (PREMIUM & CLEAN) ─── */}
+          {!isLoading && allCombos.length > 0 && (
+            <View style={styles.topCombosContainer}>
+              <View style={styles.topCombosHeaderRow}>
+                <View style={styles.topCombosHeadingLeft}>
+                  <View style={styles.topCombosBadge}>
+                    <Ionicons name="sparkles" size={12} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.topCombosHeaderText}>Best Value Combos</Text>
+                </View>
+                <Text style={styles.topCombosCountSubtitle}>
+                  {allCombos.length} {allCombos.length === 1 ? "Offer" : "Offers"}
+                </Text>
+              </View>
+              <Text style={styles.topCombosSubDescription}>
+                Chef-curated pairings designed for maximum taste & savings
+              </Text>
+
+              <FlatList
+                data={allCombos}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyExtractor={(item) => getComboKey(item.combo, item.item.id, item.comboIndex)}
+                contentContainerStyle={styles.topCombosScrollContent}
+                renderItem={({ item }) =>
+                  renderHorizontalComboCard(item.item, item.combo, item.comboIndex)
+                }
+              />
             </View>
           )}
 
@@ -1359,9 +1452,9 @@ const styles = StyleSheet.create({
   /* ─── QUICK BITES — KATBOX NOTE-STYLE INFO CARD ───────────────────── */
   quickBitesNoteCard: {
     flexDirection: "row",
-    backgroundColor: KATBOX.primaryTintSoft,   // soft brand-tinted note bg
+    backgroundColor: KATBOX.primaryTintSoft,
     borderWidth: 1,
-    borderColor: "#A7F3D0",                    // matches katbox promise banner
+    borderColor: "#A7F3D0",
     borderRadius: 14,
     marginTop: -14,
     marginBottom: 22,
@@ -1374,7 +1467,7 @@ const styles = StyleSheet.create({
   },
   quickBitesNoteAccentBar: {
     width: 4,
-    backgroundColor: KATBOX.primary,           // brand green accent stripe
+    backgroundColor: KATBOX.primary,
   },
   quickBitesNoteContent: {
     flex: 1,
@@ -1391,7 +1484,7 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: KATBOX.primaryTint,       // subtle brand-tinted chip
+    backgroundColor: KATBOX.primaryTint,
     borderWidth: 1,
     borderColor: "#A7F3D0",
     alignItems: "center",
@@ -1413,6 +1506,253 @@ const styles = StyleSheet.create({
   quickBitesNoteBodyEmphasis: {
     color: KATBOX.primary,
     fontWeight: "900",
+  },
+
+  /* ============================================================
+     TOP HORIZONTAL COMBOS SECTION (PREMIUM BOUTIQUE STANDARD)
+     ============================================================ */
+  topCombosContainer: {
+    marginBottom: 26,
+    marginTop: -4,
+    marginHorizontal: -20,
+  },
+  topCombosHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    marginBottom: 4,
+  },
+  topCombosHeadingLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  topCombosBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: KATBOX.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: KATBOX.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  topCombosHeaderText: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: KATBOX.textPrimary,
+    letterSpacing: -0.3,
+  },
+  topCombosCountSubtitle: {
+    fontSize: 11.5,
+    fontWeight: "800",
+    color: KATBOX.primary,
+    backgroundColor: KATBOX.primaryTint,
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
+  },
+  topCombosSubDescription: {
+    fontSize: 12.5,
+    color: KATBOX.textTertiary,
+    paddingHorizontal: 20,
+    marginBottom: 14,
+    fontWeight: "500",
+  },
+  topCombosScrollContent: {
+    paddingLeft: 20,
+    paddingRight: 8,
+    paddingVertical: 4,
+  },
+  hzComboCard: {
+    width: Math.min(width * 0.68, 276),
+    backgroundColor: KATBOX.card,
+    borderRadius: 20,
+    padding: 13,
+    marginRight: 14,
+    borderWidth: 1,
+    borderColor: KATBOX.border,
+    shadowColor: KATBOX.shadow,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+    justifyContent: "space-between",
+    position: "relative",
+  },
+  hzComboSavePill: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    zIndex: 10,
+    backgroundColor: KATBOX.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+    shadowColor: KATBOX.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  hzComboSavePillText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 0.4,
+  },
+  hzComboVisualContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+    marginTop: 4,
+    backgroundColor: KATBOX.cardSoft,
+    borderRadius: 16,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: KATBOX.borderSoft,
+  },
+  hzComboImageStack: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  hzComboImageWrap: {
+    width: 78,
+    height: 78,
+    borderRadius: 14,
+    overflow: "hidden",
+    borderWidth: 1.5,
+    borderColor: "#FFFFFF",
+    backgroundColor: KATBOX.card,
+    shadowColor: KATBOX.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  hzComboImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  hzComboPlusBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: KATBOX.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: -8,
+    zIndex: 5,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    shadowColor: KATBOX.shadow,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  hzComboContent: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  hzComboTitle: {
+    fontSize: 14.5,
+    fontWeight: "800",
+    color: KATBOX.textPrimary,
+    letterSpacing: -0.2,
+    marginBottom: 3,
+  },
+  hzComboPairTagRow: {
+    marginBottom: 4,
+  },
+  hzComboPairTagText: {
+    fontSize: 11,
+    color: KATBOX.primary,
+    fontWeight: "700",
+  },
+  hzComboDescription: {
+    fontSize: 11,
+    color: KATBOX.textTertiary,
+    lineHeight: 15,
+    fontWeight: "400",
+    minHeight: 30,
+    marginBottom: 10,
+  },
+  hzComboActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderTopWidth: 1,
+    borderTopColor: KATBOX.borderSoft,
+    paddingTop: 9,
+  },
+  hzComboPriceCol: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 4,
+    flexShrink: 1,
+  },
+  hzComboOfferPrice: {
+    fontSize: 16.5,
+    color: KATBOX.textPrimary,
+    fontWeight: "900",
+  },
+  hzComboGrossPrice: {
+    fontSize: 11,
+    color: KATBOX.textMuted,
+    textDecorationLine: "line-through",
+    fontWeight: "600",
+  },
+  hzComboAddBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    backgroundColor: KATBOX.primaryTintSoft,
+    borderWidth: 1.2,
+    borderColor: KATBOX.primaryLight,
+    paddingHorizontal: 12,
+    paddingVertical: 5.5,
+    borderRadius: 10,
+  },
+  hzComboAddBtnText: {
+    color: KATBOX.primary,
+    fontSize: 11.5,
+    fontWeight: "900",
+    letterSpacing: 0.3,
+  },
+  hzComboCounter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: KATBOX.primary,
+    borderRadius: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 3,
+    minWidth: 76,
+  },
+  hzComboCounterBtn: {
+    width: 22,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  hzComboCounterText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
+    minWidth: 16,
+    textAlign: "center",
   },
 
   sectionHeader: {
@@ -1449,8 +1789,6 @@ const styles = StyleSheet.create({
     elevation: 2,
     position: "relative",
   },
-  // ✅ Greyed-out "dead" card when the chef toggles the dish OFF.
-  // Fully desaturated: light grey bg, neutral border, no colored accents.
   menuItemCardDisabled: {
     backgroundColor: "#EFEFEF",
     borderColor: "#D4D4D4",
@@ -1478,7 +1816,6 @@ const styles = StyleSheet.create({
     marginRight: 8,
     backgroundColor: KATBOX.card,
   },
-  // ✅ Neutral grey veg marker for unavailable dishes
   vegIconWrapperGrey: {
     borderColor: "#9CA3AF",
     backgroundColor: "#EFEFEF",
@@ -1492,7 +1829,6 @@ const styles = StyleSheet.create({
     backgroundColor: KATBOX.primaryLight,
     borderRadius: 3,
   },
-  // ✅ Neutral grey dot for unavailable dishes
   vegIconDotGrey: {
     backgroundColor: "#9CA3AF",
   },
@@ -1506,7 +1842,6 @@ const styles = StyleSheet.create({
     flex: 1,
     letterSpacing: -0.2,
   },
-  // ✅ Shared "grey text" style used on every text element of a dead card
   textGrey: {
     color: "#9CA3AF",
   },
@@ -1547,7 +1882,6 @@ const styles = StyleSheet.create({
     borderColor: KATBOX.border,
     gap: 4,
   },
-  // ✅ Greyed qty badge for unavailable dishes
   qtyButtonGrey: {
     backgroundColor: "#E5E5E5",
     borderColor: "#D4D4D4",
@@ -1576,10 +1910,6 @@ const styles = StyleSheet.create({
     height: "100%",
     resizeMode: "cover",
   },
-  // ✅ Black & white filter on the dish image when unavailable.
-  // `tintColor` is intentionally NOT applied here (would colourise);
-  // we rely on opacity + the grey card background to achieve the
-  // desaturated, monochrome look reliably across both iOS & Android.
   menuItemImageGrey: {
     opacity: 0.35,
   },
@@ -1610,8 +1940,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  // ✅ "Not Available" pill replaces the ADD / counter for unavailable dishes.
-  // Fully monochrome (grey bg + white text) to match the dead-card aesthetic.
   notAvailablePill: {
     position: "absolute",
     bottom: -12,
@@ -2040,7 +2368,7 @@ const styles = StyleSheet.create({
     textAlign: "right",
   },
   menuCountTextActive: {
-    color: KATBOX.primary,
+    color: KATBOX.primary, 
     fontWeight: "800",
   },
   menuCloseFloatingButton: {
@@ -2124,161 +2452,11 @@ const styles = StyleSheet.create({
   },
 
   // ============================================================
-  // COMBO CARD — matches the regular menuItemCard visual styling
+  // COMBO CARD STYLES
   // ============================================================
-  comboListWrap: {
-    marginTop: -6,
-    marginBottom: 16,
-    paddingHorizontal: 0,
-  },
-  comboCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: KATBOX.card,
-    borderRadius: 18,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: KATBOX.border,
-    shadowColor: KATBOX.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
-    position: "relative",
-  },
-  comboCardLeft: {
-    flex: 1,
-    paddingRight: 12,
-    justifyContent: "center",
-  },
-  comboItemsText: {
-    color: KATBOX.textSecondary,
-    fontSize: 12,
-    fontWeight: "600",
-    lineHeight: 17,
-    marginTop: 4,
-  },
-  comboImageStack: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 9,
-  },
-  comboImageWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: KATBOX.border,
-    backgroundColor: KATBOX.card,
-  },
-  comboImage: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "cover",
-  },
   comboImagePlaceholder: {
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: KATBOX.cardSoft,
-  },
-  comboPlusBadge: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: KATBOX.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    marginHorizontal: -6,
-    zIndex: 2,
-    borderWidth: 2,
-    borderColor: KATBOX.card,
-  },
-  comboTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: KATBOX.textPrimary,
-    letterSpacing: -0.2,
-  },
-  comboPriceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    marginTop: 7,
-  },
-  comboStrike: {
-    fontSize: 12,
-    color: KATBOX.textMuted,
-    textDecorationLine: "line-through",
-    fontWeight: "600",
-  },
-  comboOffer: {
-    fontSize: 17,
-    color: KATBOX.textPrimary,
-    fontWeight: "900",
-  },
-  comboSaveBadge: {
-    alignSelf: "flex-start",
-    marginTop: 7,
-    backgroundColor: KATBOX.primaryTint,
-    borderWidth: 1,
-    borderColor: "#A7F3D0",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  comboSaveBadgeText: {
-    color: KATBOX.primary,
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 0.2,
-  },
-  comboCardRight: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  comboAddButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 3,
-    minWidth: 82,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 9,
-    backgroundColor: KATBOX.card,
-    borderWidth: 1.2,
-    borderColor: KATBOX.primary,
-  },
-  comboAddButtonText: {
-    color: KATBOX.primary,
-    fontSize: 12.5,
-    fontWeight: "900",
-    letterSpacing: 0.3,
-  },
-  comboCounter: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: KATBOX.primary,
-    borderRadius: 10,
-    paddingHorizontal: 4,
-    paddingVertical: 4,
-    minWidth: 82,
-  },
-  comboCounterBtn: {
-    width: 22,
-    height: 22,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  comboCounterText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "900",
-    minWidth: 18,
-    textAlign: "center",
   },
 });

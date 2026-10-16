@@ -101,6 +101,7 @@ const compressImageForUpload = async (
 const makeEmptyCombo = () => ({
   id: Date.now().toString() + "-" + Math.random().toString(36).slice(2),
   comboName: "",
+  description: "",
   sourceName: "",
   sourcePrice: "",
   sourceQuantity: "",
@@ -287,13 +288,13 @@ export default function AddChefCategory() {
   const [addonCounts, setAddonCounts] = useState<{ [key: string]: number }>({});
 
   // ============================================================
-  // ✅ NEW: COMBO STATE (Swiggy-style "Add A + B for ₹C")
-  // ------------------------------------------------------------
-  // Each item in the Items editor can own zero or more combos.
-  // State shape: { [itemCompositeKey]: Array<comboDraft> }
-  // itemCompositeKey = `${subIndex}::${itemIndex}`
-  // The combo editor is rendered inline under each item block.
+  // GLOBAL COMBO OFFERS
+  // All combo offers are managed in one dedicated section at the bottom.
+  // For compatibility with the current API schema, the save payload stores
+  // the global list on the first menu item; the customer app already scans
+  // all menu items for combos, so the offers remain discoverable.
   // ============================================================
+  const [comboOffers, setComboOffers] = useState<any[]>([]);
   const [showComboEditorKey, setShowComboEditorKey] = useState<string | null>(null);
   const [comboDraft, setComboDraft] = useState<any>(makeEmptyCombo());
   // Quick Bites / Homemade can switch the entire item list between table and card layouts.
@@ -626,12 +627,13 @@ export default function AddChefCategory() {
     setComboDraft((prev: any) => ({ ...prev, [field]: value }));
   };
 
-  // Opens the inline combo editor pre-filled with existing combo values.
-  const openEditCombo = (compositeKey: string, combo: any) => {
-    setShowComboEditorKey(compositeKey);
+  // Opens the global combo editor pre-filled with an existing offer.
+  const openEditCombo = (_compositeKey: string, combo: any) => {
+    setShowComboEditorKey(combo.id);
     setComboDraft({
       id: combo.id || Date.now().toString() + "-" + Math.random().toString(36).slice(2),
       comboName: combo.comboName || "",
+      description: combo.description || combo.comboDescription || "",
       sourceName: combo.sourceName || "",
       sourcePrice: combo.sourcePrice !== undefined && combo.sourcePrice !== null ? String(combo.sourcePrice) : "",
       sourceQuantity: combo.sourceQuantity || "",
@@ -647,8 +649,8 @@ export default function AddChefCategory() {
     });
   };
 
-  const openNewCombo = (compositeKey: string) => {
-    setShowComboEditorKey(compositeKey);
+  const openNewCombo = (_compositeKey?: string) => {
+    setShowComboEditorKey("new");
     setComboDraft(makeEmptyCombo());
   };
 
@@ -657,14 +659,9 @@ export default function AddChefCategory() {
     setComboDraft(makeEmptyCombo());
   };
 
-  // Validates and commits the draft combo into the item's combos array.
+  // Validates and commits a combo into the standalone global offers list.
   const saveComboDraft = () => {
     if (!showComboEditorKey) return;
-    const [subStr, itemStr] = showComboEditorKey.split("::");
-    const sIdx = Number(subStr);
-    const iIdx = Number(itemStr);
-
-    if (!Number.isFinite(sIdx) || !Number.isFinite(iIdx)) return;
 
     const srcPrice = Number(comboDraft.sourcePrice);
     const pairPrice = Number(comboDraft.pairedPrice);
@@ -673,30 +670,20 @@ export default function AddChefCategory() {
     if (!comboDraft.sourceName.trim() || !comboDraft.pairedName.trim()) {
       return Alert.alert("Validation Error", "Please provide names for both combo items.");
     }
-    if (
-      !Number.isFinite(srcPrice) ||
-      !Number.isFinite(pairPrice) ||
-      srcPrice <= 0 ||
-      pairPrice <= 0
-    ) {
-      return Alert.alert(
-        "Validation Error",
-        "Please enter a price greater than ₹0 for both combo items."
-      );
+    if (!Number.isFinite(srcPrice) || !Number.isFinite(pairPrice) || srcPrice <= 0 || pairPrice <= 0) {
+      return Alert.alert("Validation Error", "Please enter a price greater than ₹0 for both combo items.");
     }
     if (!Number.isFinite(cPrice) || cPrice <= 0) {
       return Alert.alert("Validation Error", "Please enter a valid combo price.");
     }
     if (cPrice >= srcPrice + pairPrice) {
-      return Alert.alert(
-        "Combo Discount Required",
-        "The combo price must be less than the sum of both item prices — otherwise there's no offer."
-      );
+      return Alert.alert("Combo Discount Required", "The combo price must be less than the sum of both item prices — otherwise there's no offer.");
     }
 
     const committed = {
       id: comboDraft.id,
       comboName: comboDraft.comboName.trim(),
+      description: String(comboDraft.description || "").trim(),
       sourceName: comboDraft.sourceName.trim(),
       sourcePrice: srcPrice,
       sourceQuantity: comboDraft.sourceQuantity.trim(),
@@ -711,44 +698,26 @@ export default function AddChefCategory() {
       isAvailable: comboDraft.isAvailable !== false,
     };
 
-    const updated = [...modalSubCategories];
-    if (!updated[sIdx]?.items?.[iIdx]) return;
-    const existingCombos = Array.isArray(updated[sIdx].items[iIdx].combos)
-      ? [...updated[sIdx].items[iIdx].combos]
-      : [];
-
-    const existingIndex = existingCombos.findIndex((c: any) => c.id === committed.id);
-    if (existingIndex !== -1) {
-      existingCombos[existingIndex] = committed;
-    } else {
-      existingCombos.push(committed);
-    }
-
-    updated[sIdx].items[iIdx].combos = existingCombos;
-    setModalSubCategories(updated);
-
+    setComboOffers((prev) => {
+      const existingIndex = prev.findIndex((c: any) => c.id === committed.id);
+      if (existingIndex >= 0) {
+        const next = [...prev];
+        next[existingIndex] = committed;
+        return next;
+      }
+      return [...prev, committed];
+    });
     setShowComboEditorKey(null);
     setComboDraft(makeEmptyCombo());
   };
 
-  const deleteCombo = (compositeKey: string, comboId: string) => {
+  const deleteCombo = (_compositeKey: string, comboId: string) => {
     Alert.alert("Delete Combo", "Are you sure you want to delete this combo offer?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
-        onPress: () => {
-          const [subStr, itemStr] = compositeKey.split("::");
-          const sIdx = Number(subStr);
-          const iIdx = Number(itemStr);
-          const updated = [...modalSubCategories];
-          if (!updated[sIdx]?.items?.[iIdx]) return;
-          const list = Array.isArray(updated[sIdx].items[iIdx].combos)
-            ? updated[sIdx].items[iIdx].combos.filter((c: any) => c.id !== comboId)
-            : [];
-          updated[sIdx].items[iIdx].combos = list;
-          setModalSubCategories(updated);
-        },
+        onPress: () => setComboOffers((prev) => prev.filter((c: any) => c.id !== comboId)),
       },
     ]);
   };
@@ -959,6 +928,7 @@ export default function AddChefCategory() {
           combos: (item.combos || []).map((c: any, ci: number) => ({
             id: c._id || c.id || Date.now().toString() + "-" + ci,
             comboName: c.comboName || "",
+            description: c.description || c.comboDescription || "",
             sourceName: c.sourceItem?.name || "",
             sourcePrice: c.sourceItem?.price !== undefined && c.sourceItem?.price !== null ? String(c.sourceItem.price) : "",
             sourceQuantity: c.sourceItem?.quantity || "",
@@ -996,6 +966,21 @@ export default function AddChefCategory() {
         },
       ];
     setModalSubCategories(initialData);
+    // Migrate legacy item-attached offers into one global list, de-duplicated by id.
+    const seenComboIds = new Set<string>();
+    const existingGlobalCombos: any[] = [];
+    initialData.forEach((sub: any) => {
+      (sub.items || []).forEach((item: any) => {
+        (item.combos || []).forEach((combo: any) => {
+          const comboId = String(combo.id || `${combo.sourceName || ""}-${combo.pairedName || ""}-${combo.comboPrice || ""}`);
+          if (!seenComboIds.has(comboId)) {
+            seenComboIds.add(comboId);
+            existingGlobalCombos.push({ ...combo, id: comboId });
+          }
+        });
+      });
+    });
+    setComboOffers(existingGlobalCombos);
   };
 
   const closeltemsEditor = () => {
@@ -1006,8 +991,9 @@ export default function AddChefCategory() {
     setModalSubCategories([]);
     setSelectedCategoryForItems(null);
     setIsEditMode(false);
-    setShowComboEditorKey(null); // ✅ NEW
-    setComboDraft(makeEmptyCombo()); // ✅ NEW
+    setShowComboEditorKey(null);
+    setComboDraft(makeEmptyCombo());
+    setComboOffers([]);
   };
 
   const addNewSubCategory = () => {
@@ -1091,29 +1077,20 @@ export default function AddChefCategory() {
       // parses. The order of appended files matters and must mirror the
       // order in which the server consumes them — item images first,
       // then combo images (source, then paired) per item.
-      const subCategoriesForServer = modalSubCategories.map((sub: any) => ({
+      const subCategoriesForServer = modalSubCategories.map((sub: any, subIndex: number) => ({
         ...sub,
-        items: (sub.items || []).map((item: any) => ({
+        items: (sub.items || []).map((item: any, itemIndex: number) => ({
           ...item,
-          combos: (item.combos || []).map((c: any) => ({
+          // The backend currently stores combos on menu items. Keep one carrier
+          // (the first item) for persistence while presenting the offers globally.
+          combos: subIndex === 0 && itemIndex === 0 ? comboOffers.map((c: any) => ({
             comboName: c.comboName,
-            sourceItem: {
-              name: c.sourceName,
-              price: Number(c.sourcePrice),
-              quantity: c.sourceQuantity || "",
-              imageUrl: c.sourceImage || "",
-              cloudinaryId: c.sourceCloudinaryId || "",
-            },
-            pairedItem: {
-              name: c.pairedName,
-              price: Number(c.pairedPrice),
-              quantity: c.pairedQuantity || "",
-              imageUrl: c.pairedImage || "",
-              cloudinaryId: c.pairedCloudinaryId || "",
-            },
+            description: String(c.description || "").trim(),
+            sourceItem: { name: c.sourceName, price: Number(c.sourcePrice), quantity: c.sourceQuantity || "", imageUrl: c.sourceImage || "", cloudinaryId: c.sourceCloudinaryId || "" },
+            pairedItem: { name: c.pairedName, price: Number(c.pairedPrice), quantity: c.pairedQuantity || "", imageUrl: c.pairedImage || "", cloudinaryId: c.pairedCloudinaryId || "" },
             comboPrice: Number(c.comboPrice),
             isAvailable: c.isAvailable !== false,
-          })),
+          })) : [],
         })),
       }));
 
@@ -1134,33 +1111,19 @@ export default function AddChefCategory() {
         });
       });
 
-      // ✅ NEW: Combo-side images. These are appended AFTER all item
-      // images so the server's sequential `consumeNextFile()` pointer
-      // walks through them in the same order we're about to write in
-      // the JSON. See the matching consumption order in the backend.
-      modalSubCategories.forEach((sub: any, subIndex: number) => {
-        (sub.items || []).forEach((item: any, itemIndex: number) => {
-          (item.combos || []).forEach((c: any, comboIndex: number) => {
-            const src = c.sourceImage || "";
-            if (src && src.startsWith("file")) {
-              const fileType = src.split(".").pop() || "jpg";
-              formData.append("images", {
-                uri: src,
-                name: `combo_${subIndex}_${itemIndex}_${comboIndex}_src.${fileType}`,
-                type: `image/${fileType}`,
-              } as any);
-            }
-            const pair = c.pairedImage || "";
-            if (pair && pair.startsWith("file")) {
-              const fileType = pair.split(".").pop() || "jpg";
-              formData.append("images", {
-                uri: pair,
-                name: `combo_${subIndex}_${itemIndex}_${comboIndex}_pair.${fileType}`,
-                type: `image/${fileType}`,
-              } as any);
-            }
-          });
-        });
+      // Combo-side images are appended after item images, in the same order
+      // as the global combo list stored on the first item in the payload.
+      comboOffers.forEach((c: any, comboIndex: number) => {
+        const src = c.sourceImage || "";
+        if (src && src.startsWith("file")) {
+          const fileType = src.split(".").pop() || "jpg";
+          formData.append("images", { uri: src, name: `combo_0_0_${comboIndex}_src.${fileType}`, type: `image/${fileType}` } as any);
+        }
+        const pair = c.pairedImage || "";
+        if (pair && pair.startsWith("file")) {
+          const fileType = pair.split(".").pop() || "jpg";
+          formData.append("images", { uri: pair, name: `combo_0_0_${comboIndex}_pair.${fileType}`, type: `image/${fileType}` } as any);
+        }
       });
 
       const res = await api.post(`/api/chef-categories/${selectedCategoryForItems._id}/items`, formData, {
@@ -1212,6 +1175,13 @@ export default function AddChefCategory() {
           }))
         }));
         setModalSubCategories(updatedSubCats);
+        const savedComboOffers: any[] = [];
+        const savedComboIds = new Set<string>();
+        updatedSubCats.forEach((sub: any) => (sub.items || []).forEach((item: any) => (item.combos || []).forEach((combo: any) => {
+          const comboId = String(combo.id || `${combo.sourceName || ""}-${combo.pairedName || ""}-${combo.comboPrice || ""}`);
+          if (!savedComboIds.has(comboId)) { savedComboIds.add(comboId); savedComboOffers.push({ ...combo, id: comboId }); }
+        })));
+        setComboOffers(savedComboOffers);
         setSelectedCategoryForItems(res.data);
         fetchAllData();
       }
@@ -2546,12 +2516,6 @@ export default function AddChefCategory() {
                   {subCat.items.map((item: any, itemIndex: number) => {
                     // ✅ NEW: composite key uniquely identifies this item in the editor
                     const compositeKey = `${subIndex}::${itemIndex}`;
-                    const combosForItem = Array.isArray(item.combos) ? item.combos : [];
-                    const isComboEditorOpen = showComboEditorKey === compositeKey;
-                    const draftSavings = computeComboSavings(comboDraft);
-                    const draftGross =
-                      (Number(comboDraft.sourcePrice) || 0) + (Number(comboDraft.pairedPrice) || 0);
-
                     if (isQuickBitesOrHomemade && quickTableMode) {
                       const variantDropdownOpen = expandedVariantDropdownKey === compositeKey;
                       return (
@@ -2621,6 +2585,7 @@ export default function AddChefCategory() {
                               ))}
                             </View>
                           )}
+
                         </React.Fragment>
                       );
                     }
@@ -2760,251 +2725,6 @@ export default function AddChefCategory() {
                           </View>
                         )}
 
-                        {/* ============================================================
-                            ✅ NEW: COMBO BUILDER (Swiggy-style "Add A + B for ₹C")
-                            ------------------------------------------------------------
-                            Renders a compact list of existing combos for this item
-                            plus an "Add Combo Offer" button (only in edit mode).
-                            Opening the inline editor swaps the button for a form
-                            where the chef picks the two bundled items and price.
-                        ============================================================ */}
-                        <View style={styles.comboSectionHeader}>
-                          <Ionicons name="pricetags-outline" size={15} color="#52B788" />
-                          <Text style={styles.comboSectionTitle}>Combo Offers</Text>
-                          <View style={styles.comboCountBadge}>
-                            <Text style={styles.comboCountBadgeText}>{combosForItem.length}</Text>
-                          </View>
-                        </View>
-
-                        {combosForItem.map((combo: any, comboIdx: number) => {
-                          const savings = computeComboSavings(combo);
-                          const gross = (Number(combo.sourcePrice) || 0) + (Number(combo.pairedPrice) || 0);
-                          return (
-                            <View key={combo.id || `combo-${comboIdx}`} style={styles.comboRow}>
-                              <View style={styles.comboRowImages}>
-                                {combo.sourceImage ? (
-                                  <Image source={{ uri: combo.sourceImage }} style={styles.comboRowImage} />
-                                ) : (
-                                  <View style={[styles.comboRowImage, styles.comboRowImagePlaceholder]}>
-                                    <Ionicons name="fast-food-outline" size={18} color="#52B788" />
-                                  </View>
-                                )}
-                                <View style={styles.comboRowPlusBadge}>
-                                  <Ionicons name="add" size={11} color="#FFFFFF" />
-                                </View>
-                                {combo.pairedImage ? (
-                                  <Image source={{ uri: combo.pairedImage }} style={styles.comboRowImage} />
-                                ) : (
-                                  <View style={[styles.comboRowImage, styles.comboRowImagePlaceholder]}>
-                                    <Ionicons name="fast-food-outline" size={18} color="#52B788" />
-                                  </View>
-                                )}
-                              </View>
-
-                              <View style={styles.comboRowInfo}>
-                                <Text style={styles.comboRowTitle} numberOfLines={1}>
-                                  {combo.sourceName} + {combo.pairedName}
-                                </Text>
-                                <View style={styles.comboRowPriceLine}>
-                                  <Text style={styles.comboRowStrike}>₹{gross}</Text>
-                                  <Text style={styles.comboRowOffer}>₹{combo.comboPrice}</Text>
-                                  {savings > 0 && (
-                                    <View style={styles.comboSavePill}>
-                                      <Text style={styles.comboSavePillText}>Save ₹{savings}</Text>
-                                    </View>
-                                  )}
-                                </View>
-                                {!!combo.comboName && (
-                                  <Text style={styles.comboRowSubtitle} numberOfLines={1}>{combo.comboName}</Text>
-                                )}
-                              </View>
-
-                              {isEditMode && (
-                                <View style={styles.comboRowActions}>
-                                  <TouchableOpacity
-                                    style={styles.comboRowActionBtn}
-                                    onPress={() => openEditCombo(compositeKey, combo)}
-                                  >
-                                    <Ionicons name="pencil" size={14} color="#52B788" />
-                                  </TouchableOpacity>
-                                  <TouchableOpacity
-                                    style={[styles.comboRowActionBtn, styles.comboRowActionBtnDanger]}
-                                    onPress={() => deleteCombo(compositeKey, combo.id)}
-                                  >
-                                    <Ionicons name="trash" size={14} color="#F87171" />
-                                  </TouchableOpacity>
-                                </View>
-                              )}
-                            </View>
-                          );
-                        })}
-
-                        {!isComboEditorOpen && isEditMode && (
-                          <TouchableOpacity
-                            style={styles.comboAddButton}
-                            onPress={() => openNewCombo(compositeKey)}
-                          >
-                            <Ionicons name="add-circle" size={16} color="#52B788" />
-                            <Text style={styles.comboAddButtonText}>Add Combo Offer</Text>
-                          </TouchableOpacity>
-                        )}
-
-                        {isComboEditorOpen && (
-                          <View style={styles.comboEditorCard}>
-                            <View style={styles.comboEditorHeader}>
-                              <Text style={styles.comboEditorTitle}>
-                                {combosForItem.some((c: any) => c.id === comboDraft.id)
-                                  ? "Edit Combo Offer"
-                                  : "New Combo Offer"}
-                              </Text>
-                              <TouchableOpacity onPress={cancelComboEditor} style={styles.closeRoundBtn}>
-                                <Ionicons name="close" size={14} color="#E2E8F0" />
-                              </TouchableOpacity>
-                            </View>
-
-                            <Text style={styles.comboEditorHelp}>
-                              Bundle two dishes together at a discounted price. The customer
-                              sees an "Add A + B for ₹C" card and can add both with one tap.
-                            </Text>
-
-                            <Text style={styles.comboEditorSectionLabel}>Item 1 (the anchor dish)</Text>
-                            <TextInput
-                              style={styles.comboEditorInput}
-                              placeholder="e.g. Chicken Biryani"
-                              placeholderTextColor="#64748B"
-                              value={comboDraft.sourceName}
-                              onChangeText={(t) => updateComboDraftField("sourceName", t)}
-                            />
-                            <View style={{ flexDirection: "row", gap: 10 }}>
-                              <TextInput
-                                style={[styles.comboEditorInput, { flex: 1 }]}
-                                placeholder="Qty e.g. 1 Plate"
-                                placeholderTextColor="#64748B"
-                                value={comboDraft.sourceQuantity}
-                                onChangeText={(t) => updateComboDraftField("sourceQuantity", t)}
-                              />
-                              <TextInput
-                                style={[styles.comboEditorInput, { flex: 1 }]}
-                                placeholder="Price ₹"
-                                placeholderTextColor="#64748B"
-                                value={comboDraft.sourcePrice}
-                                onChangeText={(t) => updateComboDraftField("sourcePrice", t)}
-                                keyboardType="numeric"
-                              />
-                            </View>
-                            <TouchableOpacity
-                              style={styles.comboEditorImagePicker}
-                              onPress={() => pickComboSideImage("source")}
-                            >
-                              <Ionicons name="image-outline" size={16} color="#52B788" />
-                              <Text style={styles.comboEditorImagePickerText}>
-                                {comboDraft.sourceImage ? "Change Item 1 Image" : "Pick Item 1 Image"}
-                              </Text>
-                            </TouchableOpacity>
-                            {!!comboDraft.sourceImage && (
-                              <View style={styles.comboEditorPreviewWrap}>
-                                <Image source={{ uri: comboDraft.sourceImage }} style={styles.comboEditorPreview} />
-                                <TouchableOpacity
-                                  style={styles.removelcon}
-                                  onPress={() =>
-                                    setComboDraft((p: any) => ({ ...p, sourceImage: "", sourceCloudinaryId: "" }))
-                                  }
-                                >
-                                  <Ionicons name="close" size={12} color="#fff" />
-                                </TouchableOpacity>
-                              </View>
-                            )}
-
-                            <Text style={styles.comboEditorSectionLabel}>Item 2 (the paired dish)</Text>
-                            <TextInput
-                              style={styles.comboEditorInput}
-                              placeholder="e.g. Gulab Jamun"
-                              placeholderTextColor="#64748B"
-                              value={comboDraft.pairedName}
-                              onChangeText={(t) => updateComboDraftField("pairedName", t)}
-                            />
-                            <View style={{ flexDirection: "row", gap: 10 }}>
-                              <TextInput
-                                style={[styles.comboEditorInput, { flex: 1 }]}
-                                placeholder="Qty e.g. 2 pcs"
-                                placeholderTextColor="#64748B"
-                                value={comboDraft.pairedQuantity}
-                                onChangeText={(t) => updateComboDraftField("pairedQuantity", t)}
-                              />
-                              <TextInput
-                                style={[styles.comboEditorInput, { flex: 1 }]}
-                                placeholder="Price ₹"
-                                placeholderTextColor="#64748B"
-                                value={comboDraft.pairedPrice}
-                                onChangeText={(t) => updateComboDraftField("pairedPrice", t)}
-                                keyboardType="numeric"
-                              />
-                            </View>
-                            <TouchableOpacity
-                              style={styles.comboEditorImagePicker}
-                              onPress={() => pickComboSideImage("paired")}
-                            >
-                              <Ionicons name="image-outline" size={16} color="#52B788" />
-                              <Text style={styles.comboEditorImagePickerText}>
-                                {comboDraft.pairedImage ? "Change Item 2 Image" : "Pick Item 2 Image"}
-                              </Text>
-                            </TouchableOpacity>
-                            {!!comboDraft.pairedImage && (
-                              <View style={styles.comboEditorPreviewWrap}>
-                                <Image source={{ uri: comboDraft.pairedImage }} style={styles.comboEditorPreview} />
-                                <TouchableOpacity
-                                  style={styles.removelcon}
-                                  onPress={() =>
-                                    setComboDraft((p: any) => ({ ...p, pairedImage: "", pairedCloudinaryId: "" }))
-                                  }
-                                >
-                                  <Ionicons name="close" size={12} color="#fff" />
-                                </TouchableOpacity>
-                              </View>
-                            )}
-
-                            <Text style={styles.comboEditorSectionLabel}>Bundle Offer</Text>
-                            <TextInput
-                              style={styles.comboEditorInput}
-                              placeholder="Combo label (optional) e.g. Biryani + Dessert Combo"
-                              placeholderTextColor="#64748B"
-                              value={comboDraft.comboName}
-                              onChangeText={(t) => updateComboDraftField("comboName", t)}
-                            />
-                            <TextInput
-                              style={styles.comboEditorInput}
-                              placeholder="Discounted combo price ₹"
-                              placeholderTextColor="#64748B"
-                              value={comboDraft.comboPrice}
-                              onChangeText={(t) => updateComboDraftField("comboPrice", t)}
-                              keyboardType="numeric"
-                            />
-
-                            {Number(comboDraft.comboPrice) > 0 && draftGross > 0 && (
-                              <View style={styles.comboEditorSummary}>
-                                <Text style={styles.comboEditorSummaryStrike}>₹{draftGross}</Text>
-                                <Text style={styles.comboEditorSummaryOffer}>₹{Number(comboDraft.comboPrice) || 0}</Text>
-                                {draftSavings > 0 && (
-                                  <View style={styles.comboSavePill}>
-                                    <Text style={styles.comboSavePillText}>Save ₹{draftSavings}</Text>
-                                  </View>
-                                )}
-                              </View>
-                            )}
-
-                            <View style={styles.comboEditorFooter}>
-                              <TouchableOpacity style={styles.comboEditorCancelBtn} onPress={cancelComboEditor}>
-                                <Text style={styles.comboEditorCancelText}>Cancel</Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity style={styles.comboEditorSaveBtn} onPress={saveComboDraft}>
-                                <Ionicons name="checkmark" size={16} color="#FFFFFF" />
-                                <Text style={styles.comboEditorSaveText}>
-                                  {combosForItem.some((c: any) => c.id === comboDraft.id) ? "Update Combo" : "Save Combo"}
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
-                          </View>
-                        )}
                       </View>
                     );
                   })}
@@ -3023,6 +2743,127 @@ export default function AddChefCategory() {
                   <Text style={styles.addLargeText}>+ Add New Sub Category</Text>
                 </TouchableOpacity>
               )}
+
+              {/* =============================================================
+                  GLOBAL COMBO OFFERS SECTION
+                  All offers live here at the bottom, independent of menu rows.
+                 ============================================================= */}
+              {(isEditMode || comboOffers.length > 0) && (
+                <View style={[styles.subCategoryBlock, { marginTop: 22, position: "relative" }]}>
+                  <View style={styles.comboSectionHeader}>
+                    <Ionicons name="pricetags-outline" size={17} color="#52B788" />
+                    <Text style={styles.comboSectionTitle}>Combo Offers</Text>
+                    <View style={styles.comboCountBadge}>
+                      <Text style={styles.comboCountBadgeText}>{comboOffers.length}</Text>
+                    </View>
+                  </View>
+                  <Text style={{ color: "#94A3B8", fontSize: 12, lineHeight: 18, marginBottom: 12 }}>
+                    Create and manage any number of combo offers here. Each offer contains two dishes and one discounted bundle price.
+                  </Text>
+
+                  {comboOffers.map((combo: any, comboIdx: number) => {
+                    const compositeKey = "global";
+                    const savings = computeComboSavings(combo);
+                    const gross = (Number(combo.sourcePrice) || 0) + (Number(combo.pairedPrice) || 0);
+                    const isEditingThisCombo = showComboEditorKey === combo.id;
+                    return (
+                      <View key={combo.id || `global-combo-${comboIdx}`} style={{ marginBottom: 10, padding: 10, borderRadius: 12, backgroundColor: "#101A14", borderWidth: 1, borderColor: "rgba(82,183,136,0.22)" }}>
+                        <View style={styles.comboRow}>
+                          <View style={styles.comboRowImages}>
+                            {combo.sourceImage ? <Image source={{ uri: combo.sourceImage }} style={styles.comboRowImage} /> : <View style={[styles.comboRowImage, styles.comboRowImagePlaceholder]}><Ionicons name="fast-food-outline" size={18} color="#52B788" /></View>}
+                            <View style={styles.comboRowPlusBadge}><Ionicons name="add" size={11} color="#FFFFFF" /></View>
+                            {combo.pairedImage ? <Image source={{ uri: combo.pairedImage }} style={styles.comboRowImage} /> : <View style={[styles.comboRowImage, styles.comboRowImagePlaceholder]}><Ionicons name="fast-food-outline" size={18} color="#52B788" /></View>}
+                          </View>
+                          <View style={styles.comboRowInfo}>
+                            <Text style={styles.comboRowTitle} numberOfLines={1}>{combo.sourceName} + {combo.pairedName}</Text>
+                            <View style={styles.comboRowPriceLine}>
+                              <Text style={styles.comboRowStrike}>₹{gross}</Text>
+                              <Text style={styles.comboRowOffer}>₹{combo.comboPrice}</Text>
+                              {savings > 0 && <View style={styles.comboSavePill}><Text style={styles.comboSavePillText}>Save ₹{savings}</Text></View>}
+                            </View>
+                            {!!combo.comboName && <Text style={styles.comboRowSubtitle} numberOfLines={1}>{combo.comboName}</Text>}
+                          </View>
+                          {isEditMode && <View style={styles.comboRowActions}>
+                            <TouchableOpacity style={styles.comboRowActionBtn} onPress={() => openEditCombo(compositeKey, combo)}><Ionicons name="pencil" size={14} color="#52B788" /></TouchableOpacity>
+                            <TouchableOpacity style={[styles.comboRowActionBtn, styles.comboRowActionBtnDanger]} onPress={() => deleteCombo(compositeKey, combo.id)}><Ionicons name="trash" size={14} color="#F87171" /></TouchableOpacity>
+                          </View>}
+                        </View>
+                        {isEditingThisCombo && isEditMode && (
+                          <View style={styles.comboEditorCard}>
+                            <View style={styles.comboEditorHeader}>
+                              <Text style={styles.comboEditorTitle}>Edit Combo Offer</Text>
+                              <TouchableOpacity onPress={cancelComboEditor} style={styles.closeRoundBtn}><Ionicons name="close" size={14} color="#E2E8F0" /></TouchableOpacity>
+                            </View>
+                            <View style={styles.comboEditorHelp}><Text style={styles.comboEditorHelp}>Bundle two dishes together at a discounted price.</Text></View>
+                            <View style={styles.comboEditorItemsRow}>
+                              <View style={styles.comboEditorItemColumn}>
+                                <Text style={styles.comboEditorSectionLabel}>Item 1</Text>
+                                <TextInput style={styles.comboEditorInput} placeholder="Dish name" placeholderTextColor="#64748B" value={comboDraft.sourceName} onChangeText={(t) => updateComboDraftField("sourceName", t)} />
+                                <View style={styles.comboEditorItemFieldsRow}><TextInput style={[styles.comboEditorInput, styles.comboEditorCompactInput]} placeholder="Qty" placeholderTextColor="#64748B" value={comboDraft.sourceQuantity} onChangeText={(t) => updateComboDraftField("sourceQuantity", t)} /><TextInput style={[styles.comboEditorInput, styles.comboEditorCompactInput]} placeholder="Price ₹" placeholderTextColor="#64748B" value={comboDraft.sourcePrice} onChangeText={(t) => updateComboDraftField("sourcePrice", t)} keyboardType="numeric" /></View>
+                                <TouchableOpacity style={styles.comboEditorImagePicker} onPress={() => pickComboSideImage("source")}><Ionicons name="image-outline" size={15} color="#52B788" /><Text style={styles.comboEditorImagePickerText}>{comboDraft.sourceImage ? "Change Image" : "Pick Image"}</Text></TouchableOpacity>
+                                {!!comboDraft.sourceImage && <Image source={{ uri: comboDraft.sourceImage }} style={styles.comboEditorPreview} />}
+                              </View>
+                              <View style={styles.comboEditorPlusColumn}><View style={styles.comboEditorPlusBadge}><Ionicons name="add" size={16} color="#FFFFFF" /></View></View>
+                              <View style={styles.comboEditorItemColumn}>
+                                <Text style={styles.comboEditorSectionLabel}>Item 2</Text>
+                                <TextInput style={styles.comboEditorInput} placeholder="Dish name" placeholderTextColor="#64748B" value={comboDraft.pairedName} onChangeText={(t) => updateComboDraftField("pairedName", t)} />
+                                <View style={styles.comboEditorItemFieldsRow}><TextInput style={[styles.comboEditorInput, styles.comboEditorCompactInput]} placeholder="Qty" placeholderTextColor="#64748B" value={comboDraft.pairedQuantity} onChangeText={(t) => updateComboDraftField("pairedQuantity", t)} /><TextInput style={[styles.comboEditorInput, styles.comboEditorCompactInput]} placeholder="Price ₹" placeholderTextColor="#64748B" value={comboDraft.pairedPrice} onChangeText={(t) => updateComboDraftField("pairedPrice", t)} keyboardType="numeric" /></View>
+                                <TouchableOpacity style={styles.comboEditorImagePicker} onPress={() => pickComboSideImage("paired")}><Ionicons name="image-outline" size={15} color="#52B788" /><Text style={styles.comboEditorImagePickerText}>{comboDraft.pairedImage ? "Change Image" : "Pick Image"}</Text></TouchableOpacity>
+                                {!!comboDraft.pairedImage && <Image source={{ uri: comboDraft.pairedImage }} style={styles.comboEditorPreview} />}
+                              </View>
+                            </View>
+                            <Text style={styles.comboEditorSectionLabel}>Bundle Offer</Text>
+                            <View style={styles.comboEditorOfferRow}><TextInput style={[styles.comboEditorInput, styles.comboEditorOfferNameInput]} placeholder="Combo name (optional)" placeholderTextColor="#64748B" value={comboDraft.comboName} onChangeText={(t) => updateComboDraftField("comboName", t)} /><TextInput style={[styles.comboEditorInput, styles.comboEditorOfferPriceInput]} placeholder="Offer price ₹" placeholderTextColor="#64748B" value={comboDraft.comboPrice} onChangeText={(t) => updateComboDraftField("comboPrice", t)} keyboardType="numeric" /></View>
+                            <TextInput style={[styles.comboEditorInput, { minHeight: 82, textAlignVertical: "top", marginTop: 10 }]} placeholder="Combo description (optional)" placeholderTextColor="#64748B" value={comboDraft.description || ""} onChangeText={(t) => updateComboDraftField("description", t)} multiline maxLength={1200} />
+                            {Number(comboDraft.comboPrice) > 0 && Number(comboDraft.sourcePrice) + Number(comboDraft.pairedPrice) > 0 && <View style={styles.comboEditorSummary}><Text style={styles.comboEditorSummaryStrike}>₹{Number(comboDraft.sourcePrice) + Number(comboDraft.pairedPrice)}</Text><Text style={styles.comboEditorSummaryOffer}>₹{Number(comboDraft.comboPrice) || 0}</Text>{computeComboSavings(comboDraft) > 0 && <View style={styles.comboSavePill}><Text style={styles.comboSavePillText}>Save ₹{computeComboSavings(comboDraft)}</Text></View>}</View>}
+                            <View style={styles.comboEditorFooter}><TouchableOpacity style={styles.comboEditorCancelBtn} onPress={cancelComboEditor}><Text style={styles.comboEditorCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={styles.comboEditorSaveBtn} onPress={saveComboDraft}><Ionicons name="checkmark" size={16} color="#FFFFFF" /><Text style={styles.comboEditorSaveText}>{comboOffers.some((c: any) => c.id === comboDraft.id) ? "Update Combo" : "Save Combo"}</Text></TouchableOpacity></View>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+
+                  {isEditMode && showComboEditorKey === "new" && (
+                    <View style={styles.comboEditorCard}>
+                      <View style={styles.comboEditorHeader}>
+                        <Text style={styles.comboEditorTitle}>New Combo Offer</Text>
+                        <TouchableOpacity onPress={cancelComboEditor} style={styles.closeRoundBtn}><Ionicons name="close" size={14} color="#E2E8F0" /></TouchableOpacity>
+                      </View>
+                      <View style={styles.comboEditorHelp}><Text style={styles.comboEditorHelp}>Bundle two dishes together at a discounted price.</Text></View>
+                            <View style={styles.comboEditorItemsRow}>
+                              <View style={styles.comboEditorItemColumn}>
+                                <Text style={styles.comboEditorSectionLabel}>Item 1</Text>
+                                <TextInput style={styles.comboEditorInput} placeholder="Dish name" placeholderTextColor="#64748B" value={comboDraft.sourceName} onChangeText={(t) => updateComboDraftField("sourceName", t)} />
+                                <View style={styles.comboEditorItemFieldsRow}><TextInput style={[styles.comboEditorInput, styles.comboEditorCompactInput]} placeholder="Qty" placeholderTextColor="#64748B" value={comboDraft.sourceQuantity} onChangeText={(t) => updateComboDraftField("sourceQuantity", t)} /><TextInput style={[styles.comboEditorInput, styles.comboEditorCompactInput]} placeholder="Price ₹" placeholderTextColor="#64748B" value={comboDraft.sourcePrice} onChangeText={(t) => updateComboDraftField("sourcePrice", t)} keyboardType="numeric" /></View>
+                                <TouchableOpacity style={styles.comboEditorImagePicker} onPress={() => pickComboSideImage("source")}><Ionicons name="image-outline" size={15} color="#52B788" /><Text style={styles.comboEditorImagePickerText}>{comboDraft.sourceImage ? "Change Image" : "Pick Image"}</Text></TouchableOpacity>
+                                {!!comboDraft.sourceImage && <Image source={{ uri: comboDraft.sourceImage }} style={styles.comboEditorPreview} />}
+                              </View>
+                              <View style={styles.comboEditorPlusColumn}><View style={styles.comboEditorPlusBadge}><Ionicons name="add" size={16} color="#FFFFFF" /></View></View>
+                              <View style={styles.comboEditorItemColumn}>
+                                <Text style={styles.comboEditorSectionLabel}>Item 2</Text>
+                                <TextInput style={styles.comboEditorInput} placeholder="Dish name" placeholderTextColor="#64748B" value={comboDraft.pairedName} onChangeText={(t) => updateComboDraftField("pairedName", t)} />
+                                <View style={styles.comboEditorItemFieldsRow}><TextInput style={[styles.comboEditorInput, styles.comboEditorCompactInput]} placeholder="Qty" placeholderTextColor="#64748B" value={comboDraft.pairedQuantity} onChangeText={(t) => updateComboDraftField("pairedQuantity", t)} /><TextInput style={[styles.comboEditorInput, styles.comboEditorCompactInput]} placeholder="Price ₹" placeholderTextColor="#64748B" value={comboDraft.pairedPrice} onChangeText={(t) => updateComboDraftField("pairedPrice", t)} keyboardType="numeric" /></View>
+                                <TouchableOpacity style={styles.comboEditorImagePicker} onPress={() => pickComboSideImage("paired")}><Ionicons name="image-outline" size={15} color="#52B788" /><Text style={styles.comboEditorImagePickerText}>{comboDraft.pairedImage ? "Change Image" : "Pick Image"}</Text></TouchableOpacity>
+                                {!!comboDraft.pairedImage && <Image source={{ uri: comboDraft.pairedImage }} style={styles.comboEditorPreview} />}
+                              </View>
+                            </View>
+                            <Text style={styles.comboEditorSectionLabel}>Bundle Offer</Text>
+                            <View style={styles.comboEditorOfferRow}><TextInput style={[styles.comboEditorInput, styles.comboEditorOfferNameInput]} placeholder="Combo name (optional)" placeholderTextColor="#64748B" value={comboDraft.comboName} onChangeText={(t) => updateComboDraftField("comboName", t)} /><TextInput style={[styles.comboEditorInput, styles.comboEditorOfferPriceInput]} placeholder="Offer price ₹" placeholderTextColor="#64748B" value={comboDraft.comboPrice} onChangeText={(t) => updateComboDraftField("comboPrice", t)} keyboardType="numeric" /></View>
+                            <TextInput style={[styles.comboEditorInput, { minHeight: 82, textAlignVertical: "top", marginTop: 10 }]} placeholder="Combo description (optional)" placeholderTextColor="#64748B" value={comboDraft.description || ""} onChangeText={(t) => updateComboDraftField("description", t)} multiline maxLength={1200} />
+                            {Number(comboDraft.comboPrice) > 0 && Number(comboDraft.sourcePrice) + Number(comboDraft.pairedPrice) > 0 && <View style={styles.comboEditorSummary}><Text style={styles.comboEditorSummaryStrike}>₹{Number(comboDraft.sourcePrice) + Number(comboDraft.pairedPrice)}</Text><Text style={styles.comboEditorSummaryOffer}>₹{Number(comboDraft.comboPrice) || 0}</Text>{computeComboSavings(comboDraft) > 0 && <View style={styles.comboSavePill}><Text style={styles.comboSavePillText}>Save ₹{computeComboSavings(comboDraft)}</Text></View>}</View>}
+                            <View style={styles.comboEditorFooter}><TouchableOpacity style={styles.comboEditorCancelBtn} onPress={cancelComboEditor}><Text style={styles.comboEditorCancelText}>Cancel</Text></TouchableOpacity><TouchableOpacity style={styles.comboEditorSaveBtn} onPress={saveComboDraft}><Ionicons name="checkmark" size={16} color="#FFFFFF" /><Text style={styles.comboEditorSaveText}>{comboOffers.some((c: any) => c.id === comboDraft.id) ? "Update Combo" : "Save Combo"}</Text></TouchableOpacity></View>
+                    </View>
+                  )}
+
+                  {isEditMode && showComboEditorKey === null && (
+                    <TouchableOpacity style={styles.comboAddButton} onPress={() => openNewCombo("global")}>
+                      <Ionicons name="add-circle" size={16} color="#52B788" />
+                      <Text style={styles.comboAddButtonText}>Add Combo Offer</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
               {isEditMode ? (
                 <TouchableOpacity style={[styles.saveButton, addingItemLoading && { opacity: 0.7 }]} onPress={saveCategoryItemsList} disabled={addingItemLoading}>
                   {addingItemLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>{selectedCategoryForItems?.subCategories?.length > 0 ? "Update Sub Categories & Items" : "Save All Sub Categories & Items"}</Text>}
@@ -4718,6 +4559,58 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     marginBottom: 10,
     fontStyle: "italic",
+  },
+  comboEditorItemsRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 8,
+    marginTop: 4,
+  },
+  comboEditorItemColumn: {
+    flex: 1,
+    minWidth: 0,
+    padding: 9,
+    borderRadius: 10,
+    backgroundColor: "#0C130E",
+    borderWidth: 1,
+    borderColor: "rgba(82, 183, 136, 0.2)",
+  },
+  comboEditorItemFieldsRow: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  comboEditorCompactInput: {
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 7,
+    fontSize: 11.5,
+  },
+  comboEditorPlusColumn: {
+    width: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  comboEditorPlusBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#15803D",
+    borderWidth: 2,
+    borderColor: "#131E16",
+  },
+  comboEditorOfferRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  comboEditorOfferNameInput: {
+    flex: 1,
+    minWidth: 0,
+  },
+  comboEditorOfferPriceInput: {
+    width: 125,
   },
   comboEditorSectionLabel: {
     fontSize: 11.5,
