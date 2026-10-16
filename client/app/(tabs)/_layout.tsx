@@ -64,6 +64,9 @@ export default function TabsLayout() {
 
   const hasLoadedRef = useRef(false)
 
+  // Invalidates role checks that started before a newer auth event.
+  const roleLoadIdRef = useRef(0)
+
   const lastHomeTapRef =
     useRef<number>(0)
 
@@ -74,22 +77,27 @@ export default function TabsLayout() {
       if (hasLoadedRef.current) return
 
       hasLoadedRef.current = true
+      const loadId = ++roleLoadIdRef.current
+
+      const isCurrentLoad = () =>
+        mounted && loadId === roleLoadIdRef.current
 
       try {
         const token = await getToken()
 
-        if (!token || isTokenExpired(token)) {
-          if (mounted) {
-            setRole('unauth')
-          }
+        if (!isCurrentLoad()) return
 
+        if (!token || isTokenExpired(token)) {
+          setRole('unauth')
           return
         }
 
         // 1) Cached user first (fast path — no network)
         const cached = await getUser()
 
-        if (cached && mounted) {
+        if (!isCurrentLoad()) return
+
+        if (cached) {
           if (cached.isAdmin) {
             setRole('admin')
             return
@@ -106,9 +114,10 @@ export default function TabsLayout() {
         // 2) Soft network refresh once
         const fresh = await refreshUser()
 
-        if (!mounted) return
+        if (!isCurrentLoad()) return
 
         if (!fresh) {
+          // A valid cached user is still usable if the refresh fails.
           if (!cached) {
             setRole('unauth')
           }
@@ -124,32 +133,34 @@ export default function TabsLayout() {
           setRole('customer')
         }
       } catch (e) {
+        if (!isCurrentLoad()) return
+
         console.log(
           'TabsLayout auth error:',
           e
         )
 
-        if (mounted) {
-          setRole('unauth')
-        }
+        setRole('unauth')
       }
     }
 
-    loadOnce()
+    void loadOnce()
 
     const unsub = subscribeAuth(() => {
+      // Invalidate the in-flight role lookup before starting another.
+      roleLoadIdRef.current += 1
       hasLoadedRef.current = false
-
       setRole('loading')
-
-      loadOnce()
+      void loadOnce()
     })
 
     return () => {
       mounted = false
+      roleLoadIdRef.current += 1
       unsub()
     }
   }, [])
+
 
   if (role === 'loading') {
     return (

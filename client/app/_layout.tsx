@@ -123,6 +123,13 @@ function InitialLayout() {
     useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /**
+   * Prevent overlapping authentication checks from applying stale
+   * results. This is especially important when the initial check
+   * overlaps a login-triggered check after saveSession().
+   */
+  const authCheckIdRef = useRef(0)
+
+  /**
    * ──────────────────────────────────────────────────────────
    * LOGIN TRANSITION GUARD
    * ──────────────────────────────────────────────────────────
@@ -241,8 +248,19 @@ function InitialLayout() {
    */
 
   const checkAuth = useCallback(async () => {
+    // Every check supersedes any older in-flight check.
+    const checkId = ++authCheckIdRef.current
+
+    const isLatestCheck = () =>
+      checkId === authCheckIdRef.current
+
     try {
       const token = await getToken()
+
+      // An older read must never overwrite a newer login/logout result.
+      if (!isLatestCheck()) {
+        return false
+      }
 
       /*
        * No Katbox JWT means the user is not authenticated
@@ -272,7 +290,16 @@ function InitialLayout() {
           logoutTimerRef.current = null
         }
 
+        // Do not delete a session if a newer check has started.
+        if (!isLatestCheck()) {
+          return false
+        }
+
         await removeToken()
+
+        if (!isLatestCheck()) {
+          return false
+        }
 
         setIsAuthenticated(false)
 
@@ -283,6 +310,10 @@ function InitialLayout() {
        * Valid token.
        */
       console.log('✅ Valid Katbox JWT found.')
+
+      if (!isLatestCheck()) {
+        return false
+      }
 
       setIsAuthenticated(true)
 
@@ -300,10 +331,22 @@ function InitialLayout() {
       if (timeLeft <= 0) {
         console.log('⏰ Katbox JWT expired while checking.')
 
+        if (!isLatestCheck()) {
+          return false
+        }
+
         await removeToken()
+
+        if (!isLatestCheck()) {
+          return false
+        }
 
         setIsAuthenticated(false)
 
+        return false
+      }
+
+      if (!isLatestCheck()) {
         return false
       }
 
@@ -312,24 +355,38 @@ function InitialLayout() {
       }
 
       logoutTimerRef.current = setTimeout(async () => {
+        // A newer auth check means this timer belongs to an old session.
+        if (!isLatestCheck()) {
+          return
+        }
+
         try {
           console.log('⏰ Katbox session expired.')
 
           await removeToken()
 
-          setIsAuthenticated(false)
+          if (isLatestCheck()) {
+            setIsAuthenticated(false)
+          }
         } catch (error) {
           console.log(
             '❌ Error clearing expired Katbox session:',
             error
           )
 
-          setIsAuthenticated(false)
+          if (isLatestCheck()) {
+            setIsAuthenticated(false)
+          }
         }
       }, timeLeft)
 
       return true
     } catch (error) {
+      // Ignore errors from a superseded check.
+      if (!isLatestCheck()) {
+        return false
+      }
+
       console.log('❌ Auth check error:', error)
 
       if (logoutTimerRef.current) {
@@ -342,6 +399,7 @@ function InitialLayout() {
       return false
     }
   }, [])
+
 
   /*
    * ------------------------------------------------------------
