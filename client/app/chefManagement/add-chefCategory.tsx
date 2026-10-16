@@ -2142,20 +2142,22 @@ export default function AddChefCategory() {
             </View>
           </View>
           <View style={styles.headerRight}>
-            <TouchableOpacity 
-              style={styles.headerAddCategoryBtn} 
-              onPress={() => {
-                setEditingCategoryId(null);
-                setCategoryName("");
-                setHeroImage("");
-                setHeroCloudinaryId("");
-                setShowForm(true);
-              }}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="add" size={15} color="#FFFFFF" />
-              <Text style={styles.headerAddCategoryText}>Add Category</Text>
-            </TouchableOpacity>
+            {layoutFormSelection === "items" && (
+              <TouchableOpacity 
+                style={styles.headerAddCategoryBtn} 
+                onPress={() => {
+                  setEditingCategoryId(null);
+                  setCategoryName("");
+                  setHeroImage("");
+                  setHeroCloudinaryId("");
+                  setShowForm(true);
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="add" size={15} color="#FFFFFF" />
+                <Text style={styles.headerAddCategoryText}>Add Category</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity 
               style={styles.headerCallBtn} 

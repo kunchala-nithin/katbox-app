@@ -61,9 +61,8 @@ import NetworkStatusBanner from '@/src/components/NetworkStatusBanner';
 
 // ✅ SKELETONS — all shimmer placeholders for dynamic data
 
-
 const { width, height } = Dimensions.get('window');
-const HOME_CARD_WIDTH = 220;
+const HOME_CARD_WIDTH = 180;
 
 // ─── Interfaces ───
 interface CategoryItem {
@@ -555,6 +554,7 @@ export default function HomeScreen() {
                   : hasDeliveryCoordinates
                     ? 'Distance unavailable'
                     : chef.location || 'Location not set',
+              rawLocation: chef.location || '',
               distanceKm:
                 typeof chef.distanceKm === 'number' ? Number(chef.distanceKm) : null,
               withinRadius: chef.withinRadius === true,
@@ -2071,14 +2071,30 @@ export default function HomeScreen() {
                             isOffline={isOffline}
                           />
 
+                          {/* Top Tag: Verified */}
                           <View style={styles.cardBestsellerTag}>
                             <MaterialIcons
                               name="verified"
                               size={9}
                               color="#FFFFFF"
-                              style={{ marginRight: 3 }}
+                              style={{ marginRight: 2 }}
                             />
                             <Text style={styles.cardBestsellerText}>Verified</Text>
+                          </View>
+
+                          {/* Dynamic Distance as Banner Tag with U-Turn Icon */}
+                          <View style={styles.cardDistanceBannerTag}>
+                            <MaterialCommunityIcons
+                              name="arrow-u-left-top"
+                              size={11}
+                              color="#FFFFFF"
+                              style={{ marginRight: 3 }}
+                            />
+                            <Text style={styles.cardDistanceBannerText} numberOfLines={1}>
+                              {typeof caterer.distanceKm === 'number'
+                                ? `${caterer.distanceKm.toFixed(1)} km`
+                                : caterer.locationText || 'Nearby'}
+                            </Text>
                           </View>
 
                           <TouchableOpacity
@@ -2088,7 +2104,7 @@ export default function HomeScreen() {
                           >
                             <Ionicons
                               name={isFav ? 'heart' : 'heart-outline'}
-                              size={17}
+                              size={15}
                               color={isFav ? '#E11D48' : '#FFFFFF'}
                             />
                           </TouchableOpacity>
@@ -2102,28 +2118,38 @@ export default function HomeScreen() {
                         </View>
 
                         <View style={styles.cardBody}>
-                          <Text style={styles.catererTitle} numberOfLines={1}>
-                            {caterer.name}
-                          </Text>
+                          <View style={styles.cardHeaderRow}>
+                            <Text style={styles.catererTitle} numberOfLines={1}>
+                              {caterer.name}
+                            </Text>
 
-                          <View style={styles.ratingDistanceRow}>
-                            <Ionicons name="star" size={12} color="#D97706" />
-                            <Text style={styles.ratingNumber}>{caterer.rating}</Text>
-                            <Text style={styles.reviewsCount}>
-                              ({caterer.ratingCount || '120+'})
-                            </Text>
-                            <Text style={styles.dotSeparator}>•</Text>
-                            <Text
-                              style={styles.distanceValue}
-                              numberOfLines={1}
-                            >
-                              {caterer.locationText}
-                            </Text>
+                            <View style={styles.ratingBadgePill}>
+                              <Ionicons name="star" size={10} color="#D97706" />
+                              <Text style={styles.ratingNumber}>{caterer.rating}</Text>
+                            </View>
                           </View>
 
+                          {/* Experience Row */}
                           <View style={styles.cuisineTimeRow}>
-                            <Text style={styles.timeValue}>{caterer.expText}</Text>
+                            <Text style={styles.timeValue} numberOfLines={1}>
+                              {caterer.expText}
+                            </Text>
                           </View>
+
+                          {/* Dynamic Location under Experience */}
+                          {(caterer.rawLocation || caterer.locationText) ? (
+                            <View style={styles.cardLocationRow}>
+                              <Ionicons
+                                name="location-sharp"
+                                size={10}
+                                color="#6B7280"
+                                style={{ marginRight: 3 }}
+                              />
+                              <Text style={styles.cardLocationText} numberOfLines={1}>
+                                {caterer.rawLocation || caterer.locationText}
+                              </Text>
+                            </View>
+                          ) : null}
 
                           <View style={styles.cuisineContainer}>
                             <Text
@@ -2132,7 +2158,7 @@ export default function HomeScreen() {
                             >
                               {caterer.specialty}
                             </Text>
-                            {caterer.specialty && caterer.specialty.length > 22 && (
+                            {caterer.specialty && caterer.specialty.length > 20 && (
                               <TouchableOpacity
                                 onPress={() =>
                                   setExpandedCuisines((prev) => ({
@@ -2144,7 +2170,7 @@ export default function HomeScreen() {
                                 style={styles.moreLessBtn}
                               >
                                 <Text style={styles.moreLessText}>
-                                  {isExpanded ? ' less' : ' ...more'}
+                                  {isExpanded ? ' less' : ' ...'}
                                 </Text>
                               </TouchableOpacity>
                             )}
@@ -2152,7 +2178,7 @@ export default function HomeScreen() {
 
                           <View style={styles.cardBottomRow}>
                             <View style={styles.pricingRow}>
-                              <Text style={styles.perPlateLabel}>Starts @ </Text>
+                              <Text style={styles.perPlateLabel}>Starts </Text>
                               <Text style={styles.priceGreen}>
                                 ₹{caterer.priceValue}
                               </Text>
@@ -3640,18 +3666,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#6B7280',
   },
+
+  // ─── Simplified & Small Chef Card UI ───
   catererDeckCard: {
     width: HOME_CARD_WIDTH,
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    marginRight: 12,
+    borderRadius: 14,
+    marginRight: 10,
     borderWidth: 1,
-    borderColor: '#EFEFEF',
+    borderColor: '#F1F5F9',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2.5,
     overflow: 'hidden',
   },
   cardOffline: {
@@ -3661,13 +3689,13 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   foodImageContainer: {
-    height: 120,
+    height: 102,
     width: '100%',
     position: 'relative',
   },
   homeCardCoverContainer: {
     width: '100%',
-    height: 120,
+    height: 102,
     position: 'relative',
     backgroundColor: '#F1F5F9',
   },
@@ -3677,56 +3705,77 @@ const styles = StyleSheet.create({
   },
   homeCardCoverImage: {
     width: HOME_CARD_WIDTH,
-    height: 120,
+    height: 102,
     resizeMode: 'cover',
   },
   homeCardPaginationContainer: {
     position: 'absolute',
-    bottom: 5,
+    bottom: 4,
     left: 0,
     right: 0,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 3.5,
+    gap: 3,
     zIndex: 4,
   },
   homeCardPaginationDot: {
-    width: 4,
-    height: 4,
+    width: 3.5,
+    height: 3.5,
     borderRadius: 2,
     backgroundColor: 'rgba(255, 255, 255, 0.45)',
   },
   homeCardPaginationDotActive: {
-    width: 10,
-    height: 4,
+    width: 8,
+    height: 3.5,
     borderRadius: 2,
     backgroundColor: '#FFFFFF',
   },
   cardBestsellerTag: {
     position: 'absolute',
-    top: 7,
-    left: 7,
+    top: 6,
+    left: 6,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#15803D',
-    paddingHorizontal: 6,
+    paddingHorizontal: 5,
     paddingVertical: 2,
-    borderRadius: 8,
+    borderRadius: 6,
     zIndex: 5,
   },
   cardBestsellerText: {
     color: '#FFFFFF',
+    fontSize: 7.5,
+    fontWeight: '800',
+  },
+  // Dynamic Distance Banner Tag with U-Turn Icon
+  cardDistanceBannerTag: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(17, 24, 19, 0.85)',
+    paddingHorizontal: 6,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+    zIndex: 5,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  cardDistanceBannerText: {
+    color: '#FFFFFF',
     fontSize: 8,
     fontWeight: '800',
+    letterSpacing: 0.2,
   },
   cardFavButton: {
     position: 'absolute',
-    top: 7,
-    right: 7,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    top: 6,
+    right: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -3734,12 +3783,12 @@ const styles = StyleSheet.create({
   },
   chefAvatarPill: {
     position: 'absolute',
-    bottom: -11,
-    left: 10,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 2,
+    bottom: -10,
+    left: 8,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1.5,
     borderColor: '#FFFFFF',
     overflow: 'hidden',
     zIndex: 6,
@@ -3748,59 +3797,69 @@ const styles = StyleSheet.create({
   chefImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 18,
+    borderRadius: 15,
     resizeMode: 'cover',
   },
   cardBody: {
-    paddingTop: 16,
-    paddingHorizontal: 12,
-    paddingBottom: 12,
+    paddingTop: 13,
+    paddingHorizontal: 9,
+    paddingBottom: 9,
   },
-  catererTitle: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: '#1F2937',
-  },
-  ratingDistanceRow: {
+  cardHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 5.5,
+    justifyContent: 'space-between',
   },
-  ratingNumber: {
-    fontSize: 11,
+  catererTitle: {
+    fontSize: 12,
     fontWeight: '800',
     color: '#1F2937',
-    marginLeft: 3,
-  },
-  reviewsCount: {
-    fontSize: 10.5,
-    color: '#6B7280',
-    marginLeft: 2,
-  },
-  dotSeparator: {
-    fontSize: 10.5,
-    color: '#9CA3AF',
-    marginHorizontal: 4,
-  },
-  distanceValue: {
-    fontSize: 10.5,
-    color: '#6B7280',
     flex: 1,
+    marginRight: 4,
+  },
+  ratingBadgePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  ratingNumber: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#92400E',
+    marginLeft: 2,
   },
   cuisineTimeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 2.5,
+  },
+  timeValue: {
+    fontSize: 9.5,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  cardLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 1.5,
+  },
+  cardLocationText: {
+    fontSize: 9.5,
+    color: '#6B7280',
+    fontWeight: '500',
+    flex: 1,
   },
   cuisineContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    marginTop: 3,
+    marginTop: 2,
   },
   cuisineValue: {
-    fontSize: 10.5,
-    color: '#6B7280',
+    fontSize: 9,
+    color: '#9CA3AF',
     flexShrink: 1,
   },
   moreLessBtn: {
@@ -3808,62 +3867,58 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   moreLessText: {
-    fontSize: 10.5,
+    fontSize: 9,
     fontWeight: '700',
     color: '#15803D',
-  },
-  timeValue: {
-    fontSize: 10.5,
-    color: '#6B7280',
   },
   cardBottomRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 8,
+    marginTop: 6,
     borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    paddingTop: 8,
+    borderTopColor: '#F8FAFC',
+    paddingTop: 5,
   },
   pricingRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
   },
   priceGreen: {
-    fontSize: 13.5,
+    fontSize: 11.5,
     fontWeight: '900',
     color: '#2D6A4F',
   },
   perPlateLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#6B7280',
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#9CA3AF',
   },
   vegNonVegBadgeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   vegBadgeCircle: {
-    width: 14,
-    height: 14,
-    borderRadius: 3,
-    borderWidth: 1.2,
+    width: 12,
+    height: 12,
+    borderRadius: 2.5,
+    borderWidth: 1,
     borderColor: '#16A34A',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F0FDF4',
   },
   vegInnerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: '#16A34A',
   },
   nonVegBadgeCircle: {
-    width: 14,
-    height: 14,
-    borderRadius: 3,
-    borderWidth: 1.2,
+    width: 12,
+    height: 12,
+    borderRadius: 2.5,
+    borderWidth: 1,
     borderColor: '#DC2626',
     alignItems: 'center',
     justifyContent: 'center',
@@ -3874,9 +3929,9 @@ const styles = StyleSheet.create({
     height: 0,
     backgroundColor: 'transparent',
     borderStyle: 'solid',
-    borderLeftWidth: 3.5,
-    borderRightWidth: 3.5,
-    borderBottomWidth: 6,
+    borderLeftWidth: 3,
+    borderRightWidth: 3,
+    borderBottomWidth: 5,
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
     borderBottomColor: '#DC2626',
@@ -3888,17 +3943,17 @@ const styles = StyleSheet.create({
   },
   offlineBadgeHome: {
     position: 'absolute',
-    top: 7,
-    left: 7,
+    top: 6,
+    left: 6,
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 5,
     zIndex: 10,
   },
   offlineTextHome: {
     color: '#FFFFFF',
-    fontSize: 8,
+    fontSize: 7.5,
     fontWeight: '800',
   },
 
