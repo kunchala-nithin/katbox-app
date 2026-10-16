@@ -22,11 +22,13 @@ const router = express.Router();
 
 const storage = multer.memoryStorage();
 
+// One avatar + up to 20 banner images + up to 20 kitchen images.
+// Keep both per-file and total-file limits to protect memory usage.
 const upload = multer({
   storage,
   limits: {
     fileSize: 8 * 1024 * 1024,
-    files: 21,
+    files: 41,
   },
 });
 
@@ -37,6 +39,7 @@ router.post(
   upload.fields([
     { name: "avatar", maxCount: 1 },
     { name: "banners", maxCount: 20 },
+    { name: "kitchenImages", maxCount: 20 },
   ]),
   createOrUpdateChef
 );
@@ -51,10 +54,8 @@ router.delete("/my-chef", protect, deleteChef);
 router.post("/delete-image", protect, deleteChefImage);
 
 // Customer-facing chef list.
-// Pass the selected delivery coordinates to calculate distance:
+// Pass selected delivery coordinates to calculate distance:
 // GET /api/chefs?latitude=17.44&longitude=78.39&radiusKm=10
-// getChefs returns every visible chef, with chefs inside 10 km first,
-// farther chefs next, and chefs without GPS coordinates at the end.
 router.get("/", getChefs);
 
 // Admin routes are declared before parameterized chef routes.

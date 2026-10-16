@@ -42,7 +42,7 @@ import mongoose from "mongoose";
 
 
 
-type UploadKind = "avatar" | "banner";
+type UploadKind = "avatar" | "banner" | "kitchen";
 
 
 
@@ -147,6 +147,62 @@ const UPLOAD_PRESETS: Record<UploadKind, any> = {
 
 
         quality: "auto:good",
+
+
+
+        fetch_format: "auto",
+
+
+
+        flags: "progressive",
+
+
+
+      },
+
+
+
+    ],
+
+
+
+  },
+
+
+
+  kitchen: {
+
+
+
+    folder: "chefs/kitchens",
+
+
+
+    resource_type: "image",
+
+
+
+    transformation: [
+
+
+
+      {
+
+
+
+        width: 1200,
+
+
+
+        height: 1200,
+
+
+
+        crop: "limit",
+
+
+
+        quality: "auto:eco",
 
 
 
@@ -391,6 +447,34 @@ export const cleanupChefData = async (chefId: string, userId: string) => {
 
 
             try { await cloudinary.uploader.destroy(b.cloudinaryId); } catch (e) { }
+
+
+
+          }
+
+
+
+        }
+
+
+
+      }
+
+
+
+      if (chef.kitchenImages && chef.kitchenImages.length > 0) {
+
+
+
+        for (const image of chef.kitchenImages) {
+
+
+
+          if (image.cloudinaryId) {
+
+
+
+            try { await cloudinary.uploader.destroy(image.cloudinaryId); } catch (e) { }
 
 
 
@@ -938,6 +1022,14 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
 
 
 
+      existingKitchenImages,
+
+
+
+      deletedKitchenImageIds,
+
+
+
       removeAvatarOnSave,
 
 
@@ -987,6 +1079,10 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
 
 
     const bannerFiles = files["banners"] || [];
+
+
+
+    const kitchenImageFiles = files["kitchenImages"] || [];
 
 
 
@@ -1328,6 +1424,122 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
 
 
 
+    // Process removed kitchen images and retain only images still selected by the chef.
+
+
+
+    let deletedKitchenIds: string[] = [];
+
+
+
+    if (deletedKitchenImageIds) {
+
+
+
+      try {
+
+
+
+        deletedKitchenIds = JSON.parse(deletedKitchenImageIds);
+
+
+
+        for (const publicId of deletedKitchenIds) {
+
+
+
+          if (publicId) await cloudinary.uploader.destroy(publicId).catch(() => {});
+
+
+
+        }
+
+
+
+      } catch (error) {
+
+
+
+        console.log("Error parsing deletedKitchenImageIds", error);
+
+
+
+      }
+
+
+
+    }
+
+
+
+    let retainedKitchenImages: { url: string; cloudinaryId: string }[] = [];
+
+
+
+    if (existingKitchenImages) {
+
+
+
+      try {
+
+
+
+        retainedKitchenImages = JSON.parse(existingKitchenImages);
+
+
+
+      } catch (error) {
+
+
+
+        console.log("Error parsing existingKitchenImages", error);
+
+
+
+      }
+
+
+
+    }
+
+
+
+    const newlyUploadedKitchenImages: { url: string; cloudinaryId: string }[] = [];
+
+
+
+    for (const kitchenFile of kitchenImageFiles) {
+
+
+
+      const upload: any = await uploadFromBuffer(kitchenFile.buffer, "kitchen");
+
+
+
+      newlyUploadedKitchenImages.push({
+
+
+
+        url: upload.secure_url,
+
+
+
+        cloudinaryId: upload.public_id,
+
+
+
+      });
+
+
+
+    }
+
+
+
+    const finalKitchenImages = [...retainedKitchenImages, ...newlyUploadedKitchenImages];
+
+
+
 
 
 
@@ -1498,6 +1710,10 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
 
 
 
+      existingChef.kitchenImages = finalKitchenImages;
+
+
+
 
 
 
@@ -1665,6 +1881,10 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
 
 
         banners: finalBanners,
+
+
+
+        kitchenImages: finalKitchenImages,
 
 
 

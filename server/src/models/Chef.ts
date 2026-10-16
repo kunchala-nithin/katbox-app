@@ -6,6 +6,11 @@ export interface IBannerImage {
   cloudinaryId: string;
 }
 
+export interface IKitchenImage {
+  url: string;
+  cloudinaryId: string;
+}
+
 export type CouponServiceType = "catering" | "mealbox" | "homemade" | "quickbites";
 
 export interface ICouponItem {
@@ -55,6 +60,7 @@ export interface IChef extends Document {
 
   coupons: ICouponItem[];
   banners: IBannerImage[];
+  kitchenImages: IKitchenImage[];
   reviews: IReviewItem[];
   averageRating: number;
   totalReviews: number;
@@ -72,6 +78,14 @@ export interface IChef extends Document {
 }
 
 const bannerImageSchema = new Schema<IBannerImage>(
+  {
+    url: { type: String, required: true },
+    cloudinaryId: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
+const kitchenImageSchema = new Schema<IKitchenImage>(
   {
     url: { type: String, required: true },
     cloudinaryId: { type: String, default: "" },
@@ -192,6 +206,7 @@ const chefSchema = new Schema<IChef>(
 
     coupons: { type: [couponItemSchema], default: [] },
     banners: { type: [bannerImageSchema], default: [] },
+    kitchenImages: { type: [kitchenImageSchema], default: [] },
     reviews: { type: [reviewItemSchema], default: [] },
     averageRating: { type: Number, default: 4.8 },
     totalReviews: { type: Number, default: 0 },

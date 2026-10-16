@@ -41,6 +41,13 @@ interface BannerItem {
   isNew?: boolean;
 }
 
+interface KitchenImageItem {
+  id: string;
+  uri: string;
+  cloudinaryId?: string;
+  isNew?: boolean;
+}
+
 interface CouponItem {
   id: string;
   code: string;
@@ -131,6 +138,8 @@ const AddChefs = () => {
 
   const [banners, setBanners] = useState<BannerItem[]>([]);
   const [deletedBannerIds, setDeletedBannerIds] = useState<string[]>([]);
+  const [kitchenImages, setKitchenImages] = useState<KitchenImageItem[]>([]);
+  const [deletedKitchenImageIds, setDeletedKitchenImageIds] = useState<string[]>([]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -226,6 +235,20 @@ const AddChefs = () => {
               setBanners([]);
             }
 
+            if (c.kitchenImages && Array.isArray(c.kitchenImages)) {
+              setKitchenImages(
+                c.kitchenImages.map((image: any, index: number) => ({
+                  id: image.cloudinaryId || `kitchen-existing-${index}`,
+                  uri: image.url,
+                  cloudinaryId: image.cloudinaryId,
+                  isNew: false,
+                }))
+              );
+            } else {
+              setKitchenImages([]);
+            }
+
+            setDeletedKitchenImageIds([]);
             setDeletedBannerIds([]);
             setIsEditing(true);
             setIsEditable(false);
@@ -261,6 +284,8 @@ const AddChefs = () => {
     setCoupons([]);
     setBanners([]);
     setDeletedBannerIds([]);
+    setKitchenImages([]);
+    setDeletedKitchenImageIds([]);
     setIsEditing(false);
     setIsEditable(true);
     // ✅ NEW: reset bank / payout info
@@ -366,6 +391,38 @@ const AddChefs = () => {
     setBanners((prev) => prev.filter((b) => b.id !== id));
   };
 
+  const pickKitchenImages = async () => {
+    if (!isEditable) return;
+    const ok = await requestPermissions();
+    if (!ok) return;
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsMultipleSelection: true,
+      quality: 0.4,
+      selectionLimit: 20,
+    });
+
+    if (!result.canceled) {
+      const pickedImages = result.assets.map((asset, index) => ({
+        id: `kitchen-new-${Date.now()}-${index}-${Math.random()}`,
+        uri: asset.uri,
+        isNew: true,
+      }));
+      setKitchenImages((prev) => [...prev, ...pickedImages]);
+    }
+  };
+
+  const removeKitchenImage = (id: string, cloudinaryId?: string) => {
+    if (!isEditable) return;
+    if (cloudinaryId) {
+      setDeletedKitchenImageIds((prev) =>
+        prev.includes(cloudinaryId) ? prev : [...prev, cloudinaryId]
+      );
+    }
+    setKitchenImages((prev) => prev.filter((image) => image.id !== id));
+  };
+
   const resetCouponForm = () => {
     setCouponCode("");
     setCouponType("percent");
@@ -414,6 +471,12 @@ const AddChefs = () => {
         }));
       formData.append("existingBanners", JSON.stringify(existingBannersPayload));
       formData.append("deletedBannerIds", JSON.stringify(deletedBannerIds));
+
+      const existingKitchenImagesPayload = kitchenImages
+        .filter((image) => !image.isNew && image.cloudinaryId)
+        .map((image) => ({ url: image.uri, cloudinaryId: image.cloudinaryId }));
+      formData.append("existingKitchenImages", JSON.stringify(existingKitchenImagesPayload));
+      formData.append("deletedKitchenImageIds", JSON.stringify(deletedKitchenImageIds));
 
       await api.post("/api/chefs", formData, {
         headers: {
@@ -529,6 +592,23 @@ const AddChefs = () => {
       }));
     formData.append("existingBanners", JSON.stringify(existingBannersPayload));
     formData.append("deletedBannerIds", JSON.stringify(deletedBannerIds));
+
+    const existingKitchenImagesPayload = kitchenImages
+      .filter((image) => !image.isNew && image.cloudinaryId)
+      .map((image) => ({ url: image.uri, cloudinaryId: image.cloudinaryId }));
+    formData.append("existingKitchenImages", JSON.stringify(existingKitchenImagesPayload));
+    formData.append("deletedKitchenImageIds", JSON.stringify(deletedKitchenImageIds));
+
+    kitchenImages.forEach((image, idx) => {
+      if (image.isNew) {
+        const imageType = image.uri.split(".").pop()?.split("?")[0] || "jpg";
+        formData.append("kitchenImages", {
+          uri: image.uri,
+          name: `kitchen_${idx}.${imageType}`,
+          type: `image/${imageType}`,
+        } as any);
+      }
+    });
 
     banners.forEach((b, idx) => {
       if (b.isNew) {
@@ -727,6 +807,17 @@ const AddChefs = () => {
           );
         }
         setDeletedBannerIds([]);
+        if (Array.isArray(c.kitchenImages)) {
+          setKitchenImages(
+            c.kitchenImages.map((image: any, index: number) => ({
+              id: image.cloudinaryId || `kitchen-existing-${index}`,
+              uri: image.url,
+              cloudinaryId: image.cloudinaryId,
+              isNew: false,
+            }))
+          );
+        }
+        setDeletedKitchenImageIds([]);
       }
 
       setIsEditing(true);
@@ -915,11 +1006,12 @@ const AddChefs = () => {
             </View>
           </View>
 
-          {/* KITCHEN & BANNER IMAGES */}
+          {/* BANNER IMAGES */}
           <View style={styles.sectionCard}>
             <View style={styles.sectionTitleRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.sectionTitle}>Kitchen & Banner Images</Text>
+                <Text style={styles.sectionTitle}>Banner Images</Text>
+                <Text style={styles.sectionHint}>Images displayed on your chef profile banner</Text>
               </View>
               {isEditable && (
                 <TouchableOpacity
@@ -933,11 +1025,7 @@ const AddChefs = () => {
               )}
             </View>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.bannerScroll}
-            >
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bannerScroll}>
               {isEditable && (
                 <TouchableOpacity
                   style={styles.bannerUploadPlaceholder}
@@ -950,7 +1038,6 @@ const AddChefs = () => {
                   <Text style={styles.bannerUploadText}>Upload</Text>
                 </TouchableOpacity>
               )}
-
               {banners.map((b) => (
                 <View key={b.id} style={styles.bannerThumbnailWrap}>
                   <Image source={{ uri: b.uri }} style={styles.bannerThumbnail} />
@@ -958,6 +1045,54 @@ const AddChefs = () => {
                     <TouchableOpacity
                       style={styles.bannerRemoveBtn}
                       onPress={() => removeBanner(b.id, b.cloudinaryId)}
+                    >
+                      <Ionicons name="close" size={12} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* KITCHEN IMAGES */}
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionTitleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sectionTitle}>Kitchen Images</Text>
+                <Text style={styles.sectionHint}>Upload multiple photos of your kitchen and cooking space</Text>
+              </View>
+              {isEditable && (
+                <TouchableOpacity
+                  style={styles.addBannerBtn}
+                  onPress={pickKitchenImages}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="add" size={16} color="#166534" />
+                  <Text style={styles.addBannerBtnText}>Add Images</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bannerScroll}>
+              {isEditable && (
+                <TouchableOpacity
+                  style={styles.bannerUploadPlaceholder}
+                  onPress={pickKitchenImages}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.bannerUploadIconWrap}>
+                    <Ionicons name="images-outline" size={24} color="#166534" />
+                  </View>
+                  <Text style={styles.bannerUploadText}>Upload</Text>
+                </TouchableOpacity>
+              )}
+              {kitchenImages.map((image) => (
+                <View key={image.id} style={styles.bannerThumbnailWrap}>
+                  <Image source={{ uri: image.uri }} style={styles.bannerThumbnail} />
+                  {isEditable && (
+                    <TouchableOpacity
+                      style={styles.bannerRemoveBtn}
+                      onPress={() => removeKitchenImage(image.id, image.cloudinaryId)}
                     >
                       <Ionicons name="close" size={12} color="#FFFFFF" />
                     </TouchableOpacity>
