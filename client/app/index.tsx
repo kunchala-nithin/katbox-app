@@ -1,22 +1,55 @@
+import { router } from 'expo-router'
+import { useEffect } from 'react'
+import { Image, StatusBar, StyleSheet, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { getToken } from '@/src/lib/authStorage'
+import { isTokenExpired } from '@/src/lib/jwtUtils'
 
-import { Image, StyleSheet, View } from 'react-native'
+export default function Splash() {
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const token = await getToken()
+        if (token && !isTokenExpired(token)) {
+          router.replace('/(tabs)/Home')
+        } else {
+          router.replace('/SlidingScreens')
+        }
+      } catch {
+        router.replace('/SlidingScreens')
+      }
+    }, 2500)
 
-export default function Index() {
+    return () => clearTimeout(timer)
+  }, [])
+
   return (
-    <View style={styles.container}>
-      <Image
-        source={require('../assets/images/splash.png')}
-        resizeMode="cover"
-        style={styles.image}
+    <>
+      <StatusBar
+        translucent
+        backgroundColor="transparent"
+        barStyle="light-content"
       />
-    </View>
+
+      <SafeAreaView style={styles.safeArea} edges={[]}>
+        <View style={styles.container}>
+          <Image
+            source={require('../assets/images/splash.png')}
+            resizeMode="cover"
+            style={styles.image}
+          />
+        </View>
+      </SafeAreaView>
+    </>
   )
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+  },
   container: {
     flex: 1,
-    backgroundColor: '#082a18',
   },
   image: {
     width: '100%',
