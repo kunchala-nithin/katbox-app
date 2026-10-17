@@ -1486,11 +1486,22 @@ const Login = () => {
 
        */
 
-
+      // Temporary diagnostics: capture the real OAuth failure before
+      // showing the friendly alert. Do not log credentials or tokens.
+      console.error('GOOGLE OAUTH ERROR MESSAGE:', error?.message)
+      console.error('GOOGLE OAUTH ERROR CODE:', error?.code)
+      console.error('GOOGLE OAUTH ERROR DETAILS:', error?.errors)
+      try {
+        console.error(
+          'GOOGLE OAUTH ERROR FULL:',
+          JSON.stringify(error, Object.getOwnPropertyNames(error))
+        )
+      } catch (loggingError) {
+        console.error('Could not serialize Google OAuth error:', loggingError)
+        console.error('Google OAuth error object:', error)
+      }
 
       setLoading(false)
-
-
 
       console.error(
 
