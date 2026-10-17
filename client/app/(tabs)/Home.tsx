@@ -2267,12 +2267,11 @@ export default function HomeScreen() {
                             />
                           </TouchableOpacity>
 
-                          <View style={styles.chefAvatarPill}>
-                            <Image
-                              source={{ uri: caterer.avatar }}
-                              style={styles.chefImage}
-                            />
-                          </View>
+                          {/* ✅ REMOVED: Chef avatar pill (chef photo) is no longer
+                              rendered on the chef card as requested. The
+                              `chefAvatarPill` and `chefImage` styles remain
+                              defined in the stylesheet for backward compatibility
+                              but are unused in the card UI. */}
                         </View>
 
                         <View style={styles.cardBody}>
