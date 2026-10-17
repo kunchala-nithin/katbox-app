@@ -4,7 +4,7 @@ import { api } from '@/src/lib/api'
 
 import { Ionicons } from '@expo/vector-icons'
 
-import { useOAuth, useClerk } from '@clerk/clerk-expo'
+import { useAuth, useOAuth, useClerk } from '@clerk/clerk-expo'
 
 import { useRouter } from 'expo-router'
 
@@ -127,6 +127,8 @@ const Login = () => {
    */
 
 
+
+  const { isLoaded: isClerkLoaded } = useAuth()
 
   const { startOAuthFlow } = useOAuth({
 
@@ -425,6 +427,20 @@ const Login = () => {
       phoneRef.current?.focus()
 
 
+
+      return
+
+    }
+
+
+
+    if (!isClerkLoaded) {
+
+      alert(
+
+        'Authentication is still connecting. Please check your internet connection and try again in a moment.'
+
+      )
 
       return
 
@@ -1622,7 +1638,27 @@ const Login = () => {
 
 
 
-      if (
+      const lowerErrorMessage =
+
+        String(errorMessage).toLowerCase()
+
+      const isClerkNetworkOrOAuthInitializationError =
+
+        lowerErrorMessage.includes('network') ||
+
+        lowerErrorMessage.includes('failed to fetch') ||
+
+        lowerErrorMessage.includes('toString') ||
+
+        lowerErrorMessage.includes('request failed')
+
+      if (isClerkNetworkOrOAuthInitializationError) {
+
+        friendlyMessage =
+
+          'Google sign-in could not connect to Clerk. Check your internet connection. If this continues on the production build, verify that Clerk Production is reachable and its custom domain/DNS and SSL certificate are fully verified.'
+
+      } else if (
 
         errCode === 'ECONNABORTED' ||
 
@@ -1634,7 +1670,7 @@ const Login = () => {
 
         friendlyMessage =
 
-          'Our servers are waking up. Please tap “Continue with Google” once more — it will be instant this time.'
+          'KatBox could not reach its server. Please check your internet connection and try again.'
 
       } else if (httpStatus === 500) {
 
