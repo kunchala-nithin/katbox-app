@@ -380,6 +380,9 @@ export default function ChefProfileScreen() {
 
   const [expandedFaqs, setExpandedFaqs] = useState<{ [key: string]: boolean }>({});
 
+  // Logout confirmation modal state
+  const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
+
 
 
   const fetchProfileData = async () => {
@@ -712,191 +715,83 @@ export default function ChefProfileScreen() {
 
 
 
-  // 🔥 Complete KatBox Chef Logout Handler with Clerk Integration
-
+  // Simple KatBox logout confirmation
   const handleLogout = () => {
-
-    Alert.alert(
-
-      "Logout",
-
-      "Are you sure you want to sign out?",
-
-      [
-
-        { text: "Cancel", style: "cancel" },
-
-        {
-
-          text: "Logout",
-
-          style: "destructive",
-
-          onPress: async () => {
-
-            try {
-
-              setLoading(true);
-
-
-
-              // ✅ 1. Sign out from Clerk first
-
-              try {
-
-                await signOut();
-
-              } catch (clerkError) {
-
-                console.error("Clerk signOut error:", clerkError);
-
-                // Continue with local cleanup even if Clerk signOut fails
-
-              }
-
-
-
-              // ✅ 2. Clear Clerk's internal session via clerk object as fallback
-
-              try {
-
-                if (clerk && typeof clerk.signOut === "function") {
-
-                  await clerk.signOut();
-
-                }
-
-              } catch (clerkObjError) {
-
-                // Ignore — signOut from useAuth already handled it
-
-              }
-
-
-
-              // ✅ 3. Clear local auth storage
-
-              await removeToken();
-
-
-
-              // ✅ 4. Disconnect socket
-
-              if (socket && typeof socket.disconnect === "function") {
-
-                socket.disconnect();
-
-              }
-
-
-
-              // ✅ 5. Notify auth state change
-
-              notifyAuthChanged();
-
-
-
-              // ✅ 6. Navigate to login
-
-              router.replace("/login" as any);
-
-            } catch (err) {
-
-              console.error("KatBox Chef Logout error:", err);
-
-
-
-              // Fallback cleanup — attempt every step independently
-
-              try {
-
-                await removeToken();
-
-              } catch (storageError) {
-
-                console.error(
-
-                  "Failed to clear local auth storage:",
-
-                  storageError
-
-                );
-
-              }
-
-
-
-              try {
-
-                if (socket && typeof socket.disconnect === "function") {
-
-                  socket.disconnect();
-
-                }
-
-              } catch (socketError) {
-
-                console.error(
-
-                  "Failed to disconnect socket:",
-
-                  socketError
-
-                );
-
-              }
-
-
-
-              // Try Clerk signOut one more time
-
-              try {
-
-                await signOut();
-
-              } catch (clerkRetryError) {
-
-                console.error("Clerk signOut retry failed:", clerkRetryError);
-
-              }
-
-
-
-              notifyAuthChanged();
-
-
-
-              Alert.alert(
-
-                "Logout",
-
-                "Your local session has been cleared. Please sign in again."
-
-              );
-
-
-
-              router.replace("/login" as any);
-
-            } finally {
-
-              setLoading(false);
-
-            }
-
-          },
-
-        },
-
-      ],
-
-      { cancelable: true }
-
-    );
-
+    setLogoutModalVisible(true);
   };
 
+  // Preserve the existing Clerk and local-session cleanup flow
+  const confirmLogout = async () => {
+    setLogoutModalVisible(false);
 
+    try {
+      setLoading(true);
+
+      // 1. Sign out from Clerk first
+      try {
+        await signOut();
+      } catch (clerkError) {
+        console.error("Clerk signOut error:", clerkError);
+        // Continue with local cleanup even if Clerk signOut fails
+      }
+
+      // 2. Clear Clerk's internal session via clerk object as fallback
+      try {
+        if (clerk && typeof clerk.signOut === "function") {
+          await clerk.signOut();
+        }
+      } catch (clerkObjError) {
+        // Ignore — signOut from useAuth already handled it
+      }
+
+      // 3. Clear local auth storage
+      await removeToken();
+
+      // 4. Disconnect socket
+      if (socket && typeof socket.disconnect === "function") {
+        socket.disconnect();
+      }
+
+      // 5. Notify auth state change
+      notifyAuthChanged();
+
+      // 6. Navigate to login
+      router.replace("/login" as any);
+    } catch (err) {
+      console.error("KatBox Chef Logout error:", err);
+
+      // Fallback cleanup — attempt every step independently
+      try {
+        await removeToken();
+      } catch (storageError) {
+        console.error("Failed to clear local auth storage:", storageError);
+      }
+
+      try {
+        if (socket && typeof socket.disconnect === "function") {
+          socket.disconnect();
+        }
+      } catch (socketError) {
+        console.error("Failed to disconnect socket:", socketError);
+      }
+
+      // Try Clerk signOut one more time
+      try {
+        await signOut();
+      } catch (clerkRetryError) {
+        console.error("Clerk signOut retry failed:", clerkRetryError);
+      }
+
+      notifyAuthChanged();
+      Alert.alert(
+        "Logout",
+        "Your local session has been cleared. Please sign in again."
+      );
+      router.replace("/login" as any);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // 📞 Call support handler
 
@@ -2422,6 +2317,45 @@ export default function ChefProfileScreen() {
 
 
 
+      {/* Small KatBox logout confirmation modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={logoutModalVisible}
+        onRequestClose={() => setLogoutModalVisible(false)}
+      >
+        <View style={styles.logoutModalOverlay}>
+          <View style={styles.logoutModalCard}>
+            <View style={styles.logoutIconCircle}>
+              <Feather name="log-out" size={20} color="#DC2626" />
+            </View>
+
+            <Text style={styles.logoutModalTitle}>Log out?</Text>
+            <Text style={styles.logoutModalMessage}>
+              Are you sure you want to log out of KatBox?
+            </Text>
+
+            <View style={styles.logoutModalActions}>
+              <TouchableOpacity
+                style={styles.logoutCancelButton}
+                activeOpacity={0.8}
+                onPress={() => setLogoutModalVisible(false)}
+              >
+                <Text style={styles.logoutCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.logoutConfirmButton}
+                activeOpacity={0.8}
+                onPress={confirmLogout}
+              >
+                <Text style={styles.logoutConfirmText}>Log Out</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ✅ Chef FAQ Modal — simple, clean, user friendly */}
 
       <Modal
@@ -3917,6 +3851,87 @@ const styles = StyleSheet.create({
   },
 
 
+
+  logoutModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 28,
+  },
+  logoutModalCard: {
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 16,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#EAE8E3",
+    elevation: 6,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+  },
+  logoutIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#2D4A22",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  logoutModalTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: "#0F172A",
+    marginBottom: 5,
+  },
+  logoutModalMessage: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: "#64748B",
+    textAlign: "center",
+    marginBottom: 16,
+  },
+  logoutModalActions: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  logoutCancelButton: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D8DEE4",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFFFF",
+  },
+  logoutCancelText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  logoutConfirmButton: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#DC2626",
+  },
+  logoutConfirmText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
 
   modalOverlay: {
 

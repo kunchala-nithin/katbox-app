@@ -627,6 +627,43 @@ export const updateUserAddress =
 
 /**
  * ============================================================
+ * DELETE CURRENT USER ACCOUNT
+ * ============================================================
+ *
+ * Calls the authenticated backend endpoint first. Local session
+ * data is cleared only after the server confirms deletion.
+ */
+export const deleteAccount = async (): Promise<void> => {
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("You are not signed in. Please sign in again.");
+  }
+
+  try {
+    await api.delete("/auth/delete-account", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    await removeToken();
+  } catch (error: any) {
+    console.log(
+      "Error deleting Katbox account:",
+      error?.response?.data || error?.message || error
+    );
+
+    const message =
+      error?.response?.data?.message ||
+      "Unable to delete your account right now. Please try again.";
+
+    throw new Error(message);
+  }
+};
+
+/**
+ * ============================================================
  * REFRESH USER FROM BACKEND
  * ============================================================
  *

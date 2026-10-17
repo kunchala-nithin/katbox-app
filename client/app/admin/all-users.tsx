@@ -128,6 +128,7 @@ export default function AllUsersScreen() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [filterTab, setFilterTab] = useState<UserFilterTab>('All');
+  const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
 
   // ─── Per-user action state ───
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
@@ -291,50 +292,41 @@ export default function AllUsersScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to log out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              await signOut();
-              await removeToken();
-              triggerAuthChange();
-              router.replace('/login' as any);
-            } catch (err) {
-              console.error('Clerk/KatBox Logout error:', err);
+    setLogoutModalVisible(true);
+  };
 
-              try {
-                await removeToken();
-              } catch (storageError) {
-                console.error('Failed to clear local auth storage:', storageError);
-              }
+  const confirmLogout = async () => {
+    setLogoutModalVisible(false);
+    try {
+      setLoading(true);
+      await signOut();
+      await removeToken();
+      triggerAuthChange();
+      router.replace('/login' as any);
+    } catch (err) {
+      console.error('Clerk/KatBox Logout error:', err);
 
-              try {
-                triggerAuthChange();
-              } catch (authError) {
-                console.error('Failed to trigger auth state change:', authError);
-              }
+      try {
+        await removeToken();
+      } catch (storageError) {
+        console.error('Failed to clear local auth storage:', storageError);
+      }
 
-              Alert.alert(
-                'Logout',
-                'Your local session has been cleared. Please sign in again.'
-              );
+      try {
+        triggerAuthChange();
+      } catch (authError) {
+        console.error('Failed to trigger auth state change:', authError);
+      }
 
-              router.replace('/login' as any);
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ],
-      { cancelable: true }
-    );
+      Alert.alert(
+        'Logout',
+        'Your local session has been cleared. Please sign in again.'
+      );
+
+      router.replace('/login' as any);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ─── Filtered list ───
@@ -778,6 +770,46 @@ export default function AllUsersScreen() {
           }
         />
       )}
+
+      {/* ─── KATBOX LOGOUT CONFIRMATION ─── */}
+      <Modal
+        visible={logoutModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLogoutModalVisible(false)}
+      >
+        <View style={styles.logoutModalBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFillObject}
+            onPress={() => setLogoutModalVisible(false)}
+          />
+          <View style={styles.logoutModalCard}>
+            <View style={styles.logoutIconCircle}>
+              <Ionicons name="log-out-outline" size={22} color="#F87171" />
+            </View>
+            <Text style={styles.logoutModalTitle}>Log out?</Text>
+            <Text style={styles.logoutModalMessage}>
+              Are you sure you want to log out of KatBox?
+            </Text>
+            <View style={styles.logoutModalActions}>
+              <TouchableOpacity
+                style={styles.logoutCancelBtn}
+                activeOpacity={0.85}
+                onPress={() => setLogoutModalVisible(false)}
+              >
+                <Text style={styles.logoutCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.logoutConfirmBtn}
+                activeOpacity={0.85}
+                onPress={confirmLogout}
+              >
+                <Text style={styles.logoutConfirmBtnText}>Log Out</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ─── USER DETAIL / ORDER HISTORY MODAL ─── */}
       <Modal
@@ -1864,6 +1896,83 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#F9FAFB',
     letterSpacing: -0.3,
+  },
+
+  logoutModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.68)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 28,
+  },
+  logoutModalCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#142119',
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 22,
+    paddingBottom: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(74, 222, 128, 0.18)',
+    alignItems: 'center',
+  },
+  logoutIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(248, 113, 113, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(248, 113, 113, 0.24)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  logoutModalTitle: {
+    color: '#F9FAFB',
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 7,
+  },
+  logoutModalMessage: {
+    color: '#AAB7AE',
+    fontSize: 12.5,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  logoutModalActions: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  logoutCancelBtn: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#34443A',
+    backgroundColor: '#1A2A20',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoutCancelBtnText: {
+    color: '#E2E8E4',
+    fontSize: 12.5,
+    fontWeight: '800',
+  },
+  logoutConfirmBtn: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 11,
+    backgroundColor: '#DC2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoutConfirmBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '900',
   },
 
   modalDoneBtn: {

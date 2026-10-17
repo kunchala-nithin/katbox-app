@@ -945,6 +945,64 @@ router.get(
 
 /*
  * ============================================================
+ * DELETE CURRENT USER ACCOUNT
+ * ============================================================
+ *
+ * DELETE /auth/delete-account
+ *
+ * The authenticated JWT determines which account is deleted.
+ * The client cannot supply another user's ID.
+ */
+router.delete(
+  "/delete-account",
+  protect,
+  async (req: AuthRequest, res) => {
+    try {
+      const userId =
+        req.user?.userId ||
+        req.user?._id ||
+        req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized",
+        });
+      }
+
+      const deletedUser = await User.findByIdAndDelete(userId);
+
+      if (!deletedUser) {
+        return res.status(404).json({
+          success: false,
+          message: "Account not found or already deleted",
+        });
+      }
+
+      console.log(
+        `🗑️ Katbox account deleted: ${deletedUser._id}`
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Your Katbox account has been deleted successfully.",
+      });
+    } catch (error: any) {
+      console.error(
+        "❌ Account deletion error:",
+        error?.message || error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to delete your account right now. Please try again.",
+      });
+    }
+  }
+);
+
+/*
+ * ============================================================
  * UPDATE USER PROFILE
  * ============================================================
  *

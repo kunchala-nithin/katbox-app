@@ -22,6 +22,7 @@ import {
   getUser,
   refreshUser,
   removeToken,
+  deleteAccount,
   saveSession,
   StoredUser,
 } from "@/src/lib/authStorage";
@@ -157,7 +158,7 @@ const FAQ_CATEGORIES: FAQCategory[] = [
       },
       {
         q: "How do I delete my Katbox account?",
-        a: "Email katbox.in@gmail.com from your registered email with subject \"Delete My Account.\" Processed within 7 business days.",
+        a: "You can permanently delete your account directly from Profile settings. Tap the settings icon at the top, choose Delete account, and confirm. This action cannot be undone.",
       },
     ],
   },
@@ -188,6 +189,11 @@ export default function ProfileScreen() {
   const [editName, setEditName] = useState<string>("");
   const [editAddress, setEditAddress] = useState<string>("");
   const [savingProfile, setSavingProfile] = useState<boolean>(false);
+
+  // Premium KatBox logout confirmation modal state
+  const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
+  const [settingsDropdownVisible, setSettingsDropdownVisible] = useState<boolean>(false);
+  const [deletingAccount, setDeletingAccount] = useState<boolean>(false);
 
   // Help & Support expansion state
   const [helpExpanded, setHelpExpanded] = useState<boolean>(false);
@@ -293,117 +299,152 @@ export default function ProfileScreen() {
   };
 
   // 🔥 Complete KatBox Logout Handler with Clerk Integration
+  // Open the branded confirmation modal instead of the native Alert popup.
   const handleLogout = () => {
+    setLogoutModalVisible(true);
+  };
+
+  const confirmLogout = async () => {
+    setLogoutModalVisible(false);
+    try {
+      setLoading(true);
+
+      // ✅ 1) Sign out of Clerk FIRST via useAuth().signOut()
+      // This clears the OAuth session so future Google sign-in attempts work.
+      try {
+        await signOut();
+      } catch (clerkSignOutErr) {
+        console.error("Clerk signOut error:", clerkSignOutErr);
+        // Proceed with local logout even if Clerk sign-out fails.
+      }
+
+      // ✅ 2) Fallback: also call clerk.signOut() directly.
+      try {
+        if (clerk && typeof clerk.signOut === "function") {
+          await clerk.signOut();
+        }
+      } catch (clerkObjErr) {
+        console.error("Clerk instance signOut error (fallback):", clerkObjErr);
+      }
+
+      // ✅ 3) Clear your own app session
+      await removeToken();
+
+      // ✅ 4) Disconnect the socket
+      if (socket && typeof socket.disconnect === "function") {
+        socket.disconnect();
+      }
+
+      // ✅ 5) Notify auth listeners
+      notifyAuthChanged();
+
+      // ✅ 6) Navigate to login
+      router.replace("/login" as any);
+    } catch (err) {
+      console.error("KatBox Logout error:", err);
+
+      // Best-effort cleanup on the error path too
+      try {
+        await signOut();
+      } catch (clerkErr) {
+        console.error("Clerk signOut error during fallback:", clerkErr);
+      }
+
+      try {
+        if (clerk && typeof clerk.signOut === "function") {
+          await clerk.signOut();
+        }
+      } catch (clerkObjErr) {
+        console.error("Clerk instance signOut error during fallback:", clerkObjErr);
+      }
+
+      try {
+        await removeToken();
+      } catch (storageError) {
+        console.error("Failed to clear local auth storage:", storageError);
+      }
+
+      try {
+        if (socket && typeof socket.disconnect === "function") {
+          socket.disconnect();
+        }
+      } catch (socketError) {
+        console.error("Failed to disconnect socket:", socketError);
+      }
+
+      notifyAuthChanged();
+      Alert.alert("Logout", "Your local session has been cleared. Please sign in again.");
+      router.replace("/login" as any);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Permanently delete the currently authenticated Katbox account.
+  const handleDeleteAccount = () => {
+    setSettingsDropdownVisible(false);
+
     Alert.alert(
-      "Logout",
-      "Are you sure you want to sign out?",
+      "Delete Katbox Account?",
+      "Are you sure you want to delete your account? This action is permanent and cannot be undone. Your Katbox user profile will be deleted from MongoDB and you will be logged out.",
       [
-        { text: "Cancel", style: "cancel" },
         {
-          text: "Logout",
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "OK, Delete Account",
           style: "destructive",
-          onPress: async () => {
-            try {
-              setLoading(true);
-
-              // ✅ 1) Sign out of Clerk FIRST via useAuth().signOut()
-              //    This clears the OAuth session so future
-              //    "Continue with Google" taps won't throw
-              //    "You're already signed in."
-              try {
-                await signOut();
-              } catch (clerkSignOutErr) {
-                console.error("Clerk signOut error:", clerkSignOutErr);
-                // Do NOT rethrow — proceed with local logout anyway
-              }
-
-              // ✅ 2) Fallback: also call clerk.signOut() directly.
-              //    Some Clerk versions require this to fully clear
-              //    the internal session object.
-              try {
-                if (clerk && typeof clerk.signOut === "function") {
-                  await clerk.signOut();
-                }
-              } catch (clerkObjErr) {
-                console.error(
-                  "Clerk instance signOut error (fallback):",
-                  clerkObjErr
-                );
-              }
-
-              // ✅ 3) Clear your own app session
-              await removeToken();
-
-              // ✅ 4) Disconnect the socket
-              if (socket && typeof socket.disconnect === "function") {
-                socket.disconnect();
-              }
-
-              // ✅ 5) Notify auth listeners
-              notifyAuthChanged();
-
-              // ✅ 6) Navigate to login
-              router.replace("/login" as any);
-            } catch (err) {
-              console.error("KatBox Logout error:", err);
-
-              // Best-effort cleanup on the error path too
-              try {
-                await signOut();
-              } catch (clerkErr) {
-                console.error(
-                  "Clerk signOut error during fallback:",
-                  clerkErr
-                );
-              }
-
-              try {
-                if (clerk && typeof clerk.signOut === "function") {
-                  await clerk.signOut();
-                }
-              } catch (clerkObjErr) {
-                console.error(
-                  "Clerk instance signOut error during fallback:",
-                  clerkObjErr
-                );
-              }
-
-              try {
-                await removeToken();
-              } catch (storageError) {
-                console.error(
-                  "Failed to clear local auth storage:",
-                  storageError
-                );
-              }
-
-              try {
-                if (socket && typeof socket.disconnect === "function") {
-                  socket.disconnect();
-                }
-              } catch (socketError) {
-                console.error(
-                  "Failed to disconnect socket:",
-                  socketError
-                );
-              }
-
-              notifyAuthChanged();
-
-              Alert.alert(
-                "Logout",
-                "Your local session has been cleared. Please sign in again."
-              );
-
-              router.replace("/login" as any);
-            } finally {
-              setLoading(false);
-            }
+          onPress: () => {
+            void confirmDeleteAccount();
           },
         },
       ],
       { cancelable: true }
     );
+  };
+
+  const confirmDeleteAccount = async () => {
+    if (deletingAccount) return;
+
+    setDeletingAccount(true);
+    try {
+      await deleteAccount();
+
+      try {
+        await signOut();
+      } catch (clerkSignOutErr) {
+        console.error("Clerk signOut error after account deletion:", clerkSignOutErr);
+      }
+
+      try {
+        if (clerk && typeof clerk.signOut === "function") {
+          await clerk.signOut();
+        }
+      } catch (clerkObjErr) {
+        console.error("Clerk fallback signOut error after account deletion:", clerkObjErr);
+      }
+
+      if (socket && typeof socket.disconnect === "function") {
+        socket.disconnect();
+      }
+
+      notifyAuthChanged();
+      setUser(null);
+
+      Alert.alert(
+        "Account Deleted",
+        "Your Katbox account has been deleted successfully."
+      );
+      router.replace("/login" as any);
+    } catch (error: any) {
+      Alert.alert(
+        "Unable to Delete Account",
+        error?.message || "Please try again later."
+      );
+    } finally {
+      setDeletingAccount(false);
+    }
   };
 
   // 📞 Call support handler — opens the phone dialer
@@ -807,15 +848,55 @@ export default function ProfileScreen() {
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.headerIconBtn}
-            activeOpacity={0.7}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Profile settings"
+            onPress={() => setSettingsDropdownVisible((visible) => !visible)}
           >
-            <Ionicons
-              name="notifications-outline"
+            <Feather
+              name="settings"
               size={20}
               color="#0F172A"
             />
-            <View style={styles.unreadDotBadge} />
           </TouchableOpacity>
+
+          {settingsDropdownVisible && (
+            <>
+              <TouchableOpacity
+                style={styles.settingsDropdownDismiss}
+                activeOpacity={1}
+                onPress={() => setSettingsDropdownVisible(false)}
+              />
+              <View style={styles.settingsDropdown}>
+                <View style={styles.settingsDropdownHeading}>
+                  <View style={styles.settingsDropdownIcon}>
+                    <Feather name="shield" size={15} color="#1B4332" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.settingsDropdownTitle}>Account settings</Text>
+                    <Text style={styles.settingsDropdownSubtitle}>Manage your Katbox account</Text>
+                  </View>
+                </View>
+                <View style={styles.settingsDropdownDivider} />
+                <TouchableOpacity
+                  style={styles.deleteAccountDropdownItem}
+                  activeOpacity={0.75}
+                  onPress={handleDeleteAccount}
+                  disabled={deletingAccount}
+                >
+                  {deletingAccount ? (
+                    <ActivityIndicator size="small" color="#DC2626" />
+                  ) : (
+                    <Feather name="trash-2" size={17} color="#DC2626" />
+                  )}
+                  <Text style={styles.deleteAccountDropdownText}>
+                    {deletingAccount ? "Deleting account..." : "Delete account"}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={15} color="#F87171" />
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
         </View>
       </View>
 
@@ -1656,6 +1737,43 @@ export default function ProfileScreen() {
         </View>
       </ScrollView>
 
+      {/* Simple KatBox Logout Confirmation Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={logoutModalVisible}
+        statusBarTranslucent={true}
+        onRequestClose={() => setLogoutModalVisible(false)}
+      >
+        <View style={styles.logoutModalBackdrop}>
+          <View style={styles.logoutModalCard}>
+            <View style={styles.logoutIconOuter}>
+              <Feather name="log-out" size={22} color="#DC2626" />
+            </View>
+            <Text style={styles.logoutTitle}>Log out?</Text>
+            <Text style={styles.logoutDescription}>
+              Are you sure you want to log out of KatBox?
+            </Text>
+            <View style={styles.logoutActions}>
+              <TouchableOpacity
+                style={styles.logoutCancelButton}
+                activeOpacity={0.8}
+                onPress={() => setLogoutModalVisible(false)}
+              >
+                <Text style={styles.logoutCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.logoutConfirmButton}
+                activeOpacity={0.85}
+                onPress={confirmLogout}
+              >
+                <Text style={styles.logoutConfirmButtonText}>Log Out</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ✅ FAQ Modal — simple, clean, user friendly */}
       <Modal
         animationType="slide"
@@ -1771,9 +1889,25 @@ export default function ProfileScreen() {
                                 { backgroundColor: category.color },
                               ]}
                             />
-                            <Text style={styles.faqAnswerText}>
-                              {item.a}
-                            </Text>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.faqAnswerText}>
+                                {item.a}
+                              </Text>
+                              {item.q === "How do I delete my Katbox account?" && (
+                                <TouchableOpacity
+                                  style={styles.faqDeleteAccountButton}
+                                  activeOpacity={0.8}
+                                  onPress={handleDeleteAccount}
+                                  disabled={deletingAccount}
+                                >
+                                  <Feather name="trash-2" size={15} color="#DC2626" />
+                                  <Text style={styles.faqDeleteAccountButtonText}>
+                                    {deletingAccount ? "Deleting account..." : "Delete my account"}
+                                  </Text>
+                                  <Ionicons name="chevron-forward" size={15} color="#DC2626" />
+                                </TouchableOpacity>
+                              )}
+                            </View>
                           </View>
                         )}
                       </View>
@@ -2000,6 +2134,94 @@ const styles = StyleSheet.create({
     backgroundColor: "#EF4444",
     borderWidth: 1.5,
     borderColor: "#FFFFFF",
+  },
+  settingsDropdownDismiss: {
+    position: "absolute",
+    top: -8,
+    right: -12,
+    width: 360,
+    height: 900,
+    zIndex: 20,
+  },
+  settingsDropdown: {
+    position: "absolute",
+    top: 48,
+    right: 0,
+    width: 258,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    elevation: 12,
+    zIndex: 21,
+  },
+  settingsDropdownHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 4,
+  },
+  settingsDropdownIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    backgroundColor: "#ECFDF5",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  settingsDropdownTitle: {
+    color: "#0F172A",
+    fontSize: 12.5,
+    fontWeight: "900",
+  },
+  settingsDropdownSubtitle: {
+    color: "#64748B",
+    fontSize: 10.5,
+    marginTop: 3,
+    fontWeight: "500",
+  },
+  settingsDropdownDivider: {
+    height: 1,
+    backgroundColor: "#F1F5F9",
+    marginVertical: 10,
+  },
+  deleteAccountDropdownItem: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 9,
+    borderRadius: 11,
+    backgroundColor: "#FEF2F2",
+  },
+  deleteAccountDropdownText: {
+    flex: 1,
+    color: "#B91C1C",
+    fontSize: 12.5,
+    fontWeight: "800",
+  },
+  faqDeleteAccountButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    backgroundColor: "#FFF7F7",
+  },
+  faqDeleteAccountButtonText: {
+    color: "#DC2626",
+    fontSize: 12,
+    fontWeight: "800",
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -2505,6 +2727,85 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginTop: 4,
     letterSpacing: 0.5,
+  },
+
+  /* ── Simple KatBox Logout Confirmation Modal ── */
+  logoutModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 28,
+  },
+  logoutModalCard: {
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: "#102318",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(252, 211, 77, 0.35)",
+    padding: 20,
+    alignItems: "center",
+    elevation: 10,
+  },
+  logoutIconOuter: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(252, 211, 77, 0.12)",
+    marginBottom: 12,
+  },
+  logoutTitle: {
+    color: "#FFFFFF",
+    fontSize: 19,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 7,
+  },
+  logoutDescription: {
+    color: "#CBD5D1",
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "500",
+    textAlign: "center",
+    marginBottom: 18,
+  },
+  logoutActions: {
+    width: "100%",
+    flexDirection: "row",
+    gap: 10,
+  },
+  logoutConfirmButton: {
+    flex: 1,
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#DC2626",
+    borderRadius: 10,
+    paddingVertical: 10,
+  },
+  logoutConfirmButtonText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  logoutCancelButton: {
+    flex: 1,
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+    paddingVertical: 10,
+  },
+  logoutCancelButtonText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
   },
 
   /* ── FAQ Modal Styles ── */
