@@ -136,6 +136,15 @@ const Login = () => {
 
   })
 
+  // Keep the latest Clerk loading state available inside async login handlers.
+  // A ref is necessary because the value captured by an async handler does not
+  // automatically update while that handler is waiting.
+  const clerkLoadedRef = useRef(isClerkLoaded)
+
+  useEffect(() => {
+    clerkLoadedRef.current = isClerkLoaded
+  }, [isClerkLoaded])
+
 
 
   /*
@@ -434,30 +443,36 @@ const Login = () => {
 
 
 
-    if (!isClerkLoaded) {
+    // Production Clerk can take a moment to initialize on a cold app launch.
+    // Wait briefly for the provider instead of immediately showing an alert.
+    if (!clerkLoadedRef.current) {
+      setLoading(true)
+      console.log('⏳ Waiting for Clerk Production to finish initializing...')
 
-      alert(
+      let attempts = 0
+      while (!clerkLoadedRef.current && attempts < 50) {
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        attempts += 1
+      }
 
-        'Authentication is still connecting. Please check your internet connection and try again in a moment.'
+      setLoading(false)
 
-      )
-
-      return
-
+      if (!clerkLoadedRef.current) {
+        console.error(
+          '❌ Clerk did not finish initializing within 10 seconds. Check the Production publishable key, Clerk custom-domain DNS/SSL, and network access.'
+        )
+        alert(
+          'KatBox authentication is taking too long to connect. Please check your internet connection and try again. If this continues, the Production Clerk connection needs to be checked.'
+        )
+        return
+      }
     }
 
-
-
     try {
-
       setLoading(true)
 
-
-
       console.log(
-
         '🔐 Starting Google OAuth...'
-
       )
 
 
