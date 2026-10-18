@@ -1370,67 +1370,34 @@ const Login = () => {
 
 
         /*
-
          * ------------------------------------------------------
-
-         * NAVIGATION IS OWNED BY app/layout.tsx
-
+         * NAVIGATE DIRECTLY AFTER SAVING THE KATBOX SESSION
          * ------------------------------------------------------
-
          *
-
-         * We deliberately DO NOT call router.replace() here.
-
+         * The session is saved before this point and the root
+         * layout is notified first. Its login-transition guard
+         * temporarily pauses route decisions while it re-reads
+         * the saved JWT. We can therefore replace the login route
+         * directly without allowing the layout to bounce the
+         * user back to login.tsx.
          *
-
-         * Why?
-
-         *
-
-         * The RootLayout's auth-state listener runs
-
-         * checkAuth() asynchronously after notifyAuthChanged().
-
-         * During that window, `isAuthenticated` in the layout is
-
-         * still false. If we navigate now, the layout's
-
-         * navigation guard would bounce the user straight back
-
-         * to /login the instant `segments` changes — that is
-
-         * the exact race condition that was causing the
-
-         * intermittent "Google Sign-In failed" behaviour.
-
-         *
-
-         * Instead, we simply return. The layout guard detects
-
-         * `isAuthenticated === true` on the /login public route
-
-         * and routes the user by role:
-
-         *
-
-         *     Admin    -> /admin/all-users
-
-         *     Chef     -> /chefManagement/add-chefs
-
-         *     Customer -> /(tabs)/Home
-
+         * Keep the existing role routing:
+         *   Admin    -> /admin/all-users
+         *   Chef     -> /chefManagement/add-chefs
+         *   Customer -> /(tabs)/Home
          */
+        const authenticatedUser = res.data.user
+        let destination = '/(tabs)/Home'
 
+        if (authenticatedUser.isAdmin) {
+          destination = '/admin/all-users'
+        } else if (authenticatedUser.isChef) {
+          destination = '/chefManagement/add-chefs'
+        }
 
+        console.log('🚀 Replacing login route with:', destination)
 
-        console.log(
-
-          '✅ Login successful — layout will handle role-based navigation.'
-
-        )
-
-
-
+        router.replace(destination as any)
         return
 
       }
