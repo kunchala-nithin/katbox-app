@@ -497,9 +497,7 @@ const Login = () => {
 
 
 
-      const redirectUrl =
-
-        Linking.createURL('/oauth-callback')
+      const redirectUrl = 'clerk://com.katbox.app.callback'
 
 
 
