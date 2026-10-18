@@ -974,13 +974,6 @@ export default function HomeMadeCaterers() {
                     <Text style={styles.ratingBadgeOverlayText}>{item.rating}</Text>
                   </View>
 
-                  {/* Overlapping Chef Avatar */}
-                  <View style={styles.avatarOverlayWrapper}>
-                    <Image
-                      source={{ uri: item.avatar }}
-                      style={styles.avatarCircleImage}
-                    />
-                  </View>
                 </View>
 
                 {/* 2. CARD CONTENT DETAILS */}
@@ -1075,13 +1068,6 @@ export default function HomeMadeCaterers() {
             {selectedChef && (
               <Animated.View style={{ transform: [{ scale: cardScale }] }}>
                 <View style={styles.mergedChefHeader}>
-                  <View style={styles.mergedAvatarWrapper}>
-                    <Image
-                      source={{ uri: selectedChef.avatar }}
-                      style={styles.mergedAvatar}
-                    />
-                  </View>
-
                   <View style={styles.mergedRating}>
                     <Ionicons name="star" size={13} color="#FBBF24" />
                     <Text style={styles.mergedRatingText}>{selectedChef.rating}</Text>
@@ -1642,33 +1628,8 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
 
-  avatarOverlayWrapper: {
-    position: "absolute",
-    bottom: -19,
-    left: 12,
-    width: 49,
-    height: 49,
-    borderRadius: 24.5,
-    borderWidth: 2,
-    borderColor: "#FFFFFF",
-    backgroundColor: "#FFFFFF",
-    overflow: "hidden",
-    zIndex: 6,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  avatarCircleImage: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 24.5,
-    resizeMode: "cover",
-  },
-
   cardContent: {
-    paddingTop: 23,
+    paddingTop: 10,
     paddingHorizontal: 11,
     paddingBottom: 9,
   },
@@ -1806,18 +1767,6 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     backgroundColor: "#FFFFFF",
   },
-  mergedAvatarWrapper: {
-    position: "absolute",
-    top: 16,
-    left: 20,
-    borderRadius: 40,
-    padding: 3,
-    backgroundColor: "#FFF",
-    zIndex: 2,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  mergedAvatar: { width: 64, height: 64, borderRadius: 32 },
   mergedRating: {
     position: "absolute",
     right: 60,

@@ -1365,39 +1365,29 @@ const Login = () => {
 
 
 
-        setLoading(false)
-
-
-
         /*
          * ------------------------------------------------------
-         * NAVIGATE DIRECTLY AFTER SAVING THE KATBOX SESSION
+         * KEEP THE LOADING STATE DURING THE AUTH TRANSITION
          * ------------------------------------------------------
          *
-         * The session is saved before this point and the root
-         * layout is notified first. Its login-transition guard
-         * temporarily pauses route decisions while it re-reads
-         * the saved JWT. We can therefore replace the login route
-         * directly without allowing the layout to bounce the
-         * user back to login.tsx.
+         * Do not set loading to false here. Keeping the loading
+         * overlay visible prevents the login form from flashing
+         * while app/_layout.tsx re-reads the saved KatBox JWT.
          *
-         * Keep the existing role routing:
+         * Do not call router.replace() from this screen. The root
+         * layout owns authenticated navigation and chooses the
+         * correct destination from the saved MongoDB user role:
          *   Admin    -> /admin/all-users
          *   Chef     -> /chefManagement/add-chefs
          *   Customer -> /(tabs)/Home
+         *
+         * This avoids competing navigation calls between login.tsx
+         * and app/_layout.tsx.
          */
-        const authenticatedUser = res.data.user
-        let destination = '/(tabs)/Home'
+        console.log(
+          '🚀 Session saved. Waiting for app/_layout.tsx to navigate.'
+        )
 
-        if (authenticatedUser.isAdmin) {
-          destination = '/admin/all-users'
-        } else if (authenticatedUser.isChef) {
-          destination = '/chefManagement/add-chefs'
-        }
-
-        console.log('🚀 Replacing login route with:', destination)
-
-        router.replace(destination as any)
         return
 
       }

@@ -460,13 +460,15 @@ function InitialLayout() {
       /*
        * IMPORTANT FIX:
        *
-       * Put authentication back into the "checking" state.
+       * Keep the current screen mounted while the new KatBox JWT
+       * is being checked. login.tsx keeps its loading overlay visible
+       * after saveSession(), so leaving isAuthenticated unchanged
+       * avoids rendering a blank root layout during this short wait.
        *
-       * Because the render logic below returns null whenever
-       * isAuthenticated === null, the login screen cannot
-       * flash while checkAuth() is reading the new Katbox JWT.
+       * checkAuth() below will update isAuthenticated to true once
+       * it confirms the saved JWT. The navigation guard will then
+       * send the user directly to the correct role-based destination.
        */
-      setIsAuthenticated(null)
 
       try {
         /*
