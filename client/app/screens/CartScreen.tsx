@@ -21,9 +21,12 @@ import {
 } from "react-native-safe-area-context";
 import { BlurView } from "expo-blur";
 import api from "@/src/lib/api";
+
+import { getUser, refreshUser } from "@/src/lib/authStorage";
 import { useNavigationStore } from "@/src/store/navigationStore";
 import { Ionicons } from "@expo/vector-icons";
 import CartScreenSkeleton from "@/src/components/skeletons/CartScreenSkeleton";
+import { calculateDeliveryQuote } from "@/src/lib/deliveryPricing";
 
 // Guarded import implementation to prevent runtime crash stacks if module isn't loaded
 let AudioModule: any = null;
@@ -106,6 +109,10 @@ export default function CartScreen() {
   const [cartHasItem, setCartHasItem] = useState(false);
   const [isCartLoading, setIsCartLoading] = useState(true);
   const [cartData, setCartData] = useState<any>(null);
+  const [distanceDeliveryFee, setDistanceDeliveryFee] = useState<number | null>(null);
+  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
+  const [isDeliveryPricingLoading, setIsDeliveryPricingLoading] = useState(false);
+  const [deliveryPricingError, setDeliveryPricingError] = useState<string | null>(null);
   const [discount, setDiscount] = useState(0);
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
   const [coupons, setCoupons] = useState<any[]>([]);
@@ -343,6 +350,79 @@ export default function CartScreen() {
     }, [])
   );
 
+  // Live distance-based quote; the backend recalculates the authoritative fee.
+  // Prefer the address attached to this cart, then fall back to the latest
+  // saved active address if an older cart has no address coordinates embedded.
+  useEffect(() => {
+    let cancelled = false;
+    const resolveQuote = async () => {
+      if (!cartData) {
+        setDistanceDeliveryFee(null);
+        setDeliveryDistanceKm(null);
+        setDeliveryPricingError(null);
+        setIsDeliveryPricingLoading(false);
+        return;
+      }
+
+      const targetChefId = String(cartData?.chefId || cartData?.restaurant?._id || params.chefId || "");
+      const targetChefName = String(cartData?.chefName || cartData?.restaurant?.name || params.chefName || "");
+      let address = cartData?.orderDetails?.activeAddress;
+
+      if (
+        !address ||
+        address.latitude === undefined || address.latitude === null ||
+        address.longitude === undefined || address.longitude === null
+      ) {
+        try {
+          const cachedUser = await getUser();
+          address = cachedUser?.activeAddress || address;
+          if (!address || address.latitude == null || address.longitude == null) {
+            const freshUser = await refreshUser();
+            address = freshUser?.activeAddress || address;
+          }
+        } catch (addressError) {
+          console.log("Cart: unable to load saved active address for delivery pricing:", addressError);
+        }
+      }
+
+      if (cancelled) return;
+      setIsDeliveryPricingLoading(true);
+      setDeliveryPricingError(null);
+      try {
+        const quote = await calculateDeliveryQuote(
+          api,
+          targetChefId,
+          targetChefName,
+          address?.latitude,
+          address?.longitude
+        );
+        if (cancelled) return;
+        setDistanceDeliveryFee(quote.distanceDeliveryFee);
+        setDeliveryDistanceKm(quote.distanceKm);
+      } catch (error: any) {
+        if (cancelled) return;
+        setDistanceDeliveryFee(null);
+        setDeliveryDistanceKm(null);
+        setDeliveryPricingError(error?.message || "Unable to calculate the delivery fee.");
+      } finally {
+        if (!cancelled) setIsDeliveryPricingLoading(false);
+      }
+    };
+
+    resolveQuote();
+    return () => { cancelled = true; };
+  }, [
+    cartData?._id,
+    cartData?.chefId,
+    cartData?.chefName,
+    cartData?.restaurant?._id,
+    cartData?.restaurant?.name,
+    cartData?.orderDetails?.activeAddress?.latitude,
+    cartData?.orderDetails?.activeAddress?.longitude,
+    params.chefId,
+    params.chefName,
+  ]);
+
   const toggleInlineCouponsView = () => {
     if (expandedCoupons) {
       Animated.timing(inlineCouponExpandAnim, {
@@ -565,7 +645,14 @@ export default function CartScreen() {
     return 0;
   };
 
-  const deliveryPrice = getDeliveryPrice(orderDetails?.delivery);
+  const cateringPackageFee =
+    Number(cartData?.deliveryPrice) > 0
+      ? Number(cartData.deliveryPrice)
+      : getDeliveryPrice(orderDetails?.delivery);
+  const deliveryPrice =
+    (isHomemadeFlow || isMealBoxFlow)
+      ? (distanceDeliveryFee ?? 0)
+      : cateringPackageFee + (distanceDeliveryFee ?? 0);
 
   const totalAddonsPriceCombined = cartAddons.reduce((sum: number, entry: any) => {
     return sum + Number(entry.price || 0) * Number(entry.count || 0) * plates;
@@ -735,7 +822,7 @@ export default function CartScreen() {
         orderDetails,
         type: cartData?.type,
         finalPrice: pricePerPlate,
-        deliveryPrice,
+        deliveryPrice: cateringPackageFee,
         extraItems: cartData?.extraItems,
         couponCode: code,
         discount: computedDiscount,
@@ -952,6 +1039,14 @@ export default function CartScreen() {
   const groupedPreviewDayItemsMap = getGroupedMealBoxItemsBySection(currentDaySelectionsArray);
 
   const handlePlaceOrderNavigation = () => {
+    if (isDeliveryPricingLoading || distanceDeliveryFee === null) {
+      Alert.alert(
+        "Delivery Fee Unavailable",
+        deliveryPricingError || "Please select a delivery address with a valid map location and make sure the chef has saved a kitchen location."
+      );
+      return;
+    }
+
     // ✅ Ensure QuickBites is its own service type all the way to checkout
     const derivedServiceTypeLocal = isQuickBitesFlow
       ? "quickbites"
@@ -989,6 +1084,9 @@ export default function CartScreen() {
           pricePerPlate: pricePerPlate,
           subtotal: subtotal,
           deliveryPrice: deliveryPrice,
+          deliveryBaseFee: cateringPackageFee,
+          distanceDeliveryFee: distanceDeliveryFee,
+          deliveryDistanceKm: deliveryDistanceKm,
           discount: discount,
           appliedCoupon: appliedCoupon || "",
           totalAmount: finalTotal,
@@ -1012,6 +1110,9 @@ export default function CartScreen() {
         chefName: cartData?.chefName || restaurant?.name || params.chefName || "Nithin Samrat",
         subtotal: subtotal,
         deliveryPrice: deliveryPrice,
+        deliveryBaseFee: 0,
+        distanceDeliveryFee: distanceDeliveryFee,
+        deliveryDistanceKm: deliveryDistanceKm,
         discount: discount,
         appliedCoupon: appliedCoupon || "",
         totalAmount: finalTotal,
@@ -2064,10 +2165,22 @@ export default function CartScreen() {
                   <Text style={styles.breakupValue}>₹{subtotal}</Text>
                 </View>
                 <View style={styles.breakupRow}>
-                  <Text style={styles.breakupLabel}>Delivery & Kitchen Charges</Text>
-                  <View style={styles.freeBadgePill}>
-                    <Text style={styles.freeBadgePillText}>FREE</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.breakupLabel}>Delivery Fee</Text>
+                    {deliveryDistanceKm !== null && (
+                      <Text style={{ color: "#71847B", fontSize: 11, marginTop: 2 }}>
+                        {deliveryDistanceKm.toFixed(1)} km · ₹40 up to 5 km, then +₹10/km
+                      </Text>
+                    )}
+                    {isDeliveryPricingLoading && (
+                      <Text style={{ color: "#71847B", fontSize: 11, marginTop: 2 }}>
+                        Calculating delivery fee…
+                      </Text>
+                    )}
                   </View>
+                  <Text style={styles.breakupValue}>
+                    {distanceDeliveryFee === null ? "—" : `₹${distanceDeliveryFee}`}
+                  </Text>
                 </View>
                 {discount > 0 && (
                   <View style={styles.breakupRow}>
@@ -2114,9 +2227,22 @@ export default function CartScreen() {
                 </View>
                 <View style={styles.breakupRow}>
                   <Text style={styles.breakupLabel}>
-                    Delivery ({orderDetails?.delivery || "Doorstep"})
+                    Delivery Package ({orderDetails?.delivery || "Doorstep"})
                   </Text>
-                  <Text style={styles.breakupValue}>₹{deliveryPrice}</Text>
+                  <Text style={styles.breakupValue}>₹{cateringPackageFee}</Text>
+                </View>
+                <View style={styles.breakupRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.breakupLabel}>Distance Delivery Fee</Text>
+                    {deliveryDistanceKm !== null && (
+                      <Text style={{ color: "#71847B", fontSize: 11, marginTop: 2 }}>
+                        {deliveryDistanceKm.toFixed(1)} km · ₹40 up to 5 km, then +₹10/km
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={styles.breakupValue}>
+                    {distanceDeliveryFee === null ? "—" : `₹${distanceDeliveryFee}`}
+                  </Text>
                 </View>
                 {discount > 0 && (
                   <View style={styles.breakupRow}>

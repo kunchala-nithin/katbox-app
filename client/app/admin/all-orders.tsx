@@ -1085,6 +1085,8 @@ export default function AdminAllOrdersScreen() {
   const totalAmountNum = Number(activeOrder?.totalAmount || 0);
   const subtotalNum = Number(activeOrder?.subtotal || totalAmountNum);
   const deliveryPriceNum = Number(activeOrder?.deliveryPrice || 0);
+  const deliveryDistanceKmNum = Number(activeOrder?.deliveryDistanceKm || 0);
+  const distanceDeliveryFeeNum = Number(activeOrder?.deliveryFee ?? activeOrder?.distanceDeliveryFee ?? 0);
   const discountNum = Number(activeOrder?.discount || 0);
   const pricePerPlateNum = Number(activeOrder?.pricePerPlate || 0);
   const guestsCount = Number(activeOrder?.guests || 0);
@@ -2469,6 +2471,20 @@ export default function AdminAllOrdersScreen() {
                         {deliveryPriceNum === 0 ? 'FREE' : `+₹${deliveryPriceNum}`}
                       </Text>
                     </View>
+                    {(deliveryDistanceKmNum > 0 || distanceDeliveryFeeNum > 0) && (
+                      <>
+                        {deliveryDistanceKmNum > 0 && (
+                          <View style={styles.priceDescriptionRow}>
+                            <Text style={styles.priceDescriptionLabel}>Delivery distance</Text>
+                            <Text style={styles.priceDescriptionValue}>{deliveryDistanceKmNum.toFixed(2)} km</Text>
+                          </View>
+                        )}
+                        <View style={styles.priceDescriptionRow}>
+                          <Text style={styles.priceDescriptionLabel}>Distance delivery fee</Text>
+                          <Text style={styles.priceDescriptionValue}>+₹{distanceDeliveryFeeNum}</Text>
+                        </View>
+                      </>
+                    )}
                     {discountNum > 0 && (
                       <View style={styles.priceDescriptionRow}>
                         <Text style={styles.priceDescriptionLabel}>

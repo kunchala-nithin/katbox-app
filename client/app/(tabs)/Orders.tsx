@@ -1763,6 +1763,8 @@ export default function MyOrdersScreen() {
       const total = selectedOrderDetails.totalAmount || 0;
       const subtotal = selectedOrderDetails.subtotal || total;
       const deliveryPrice = selectedOrderDetails.deliveryPrice ?? 0;
+      const deliveryDistanceKm = Number(selectedOrderDetails.deliveryDistanceKm ?? 0);
+      const distanceDeliveryFee = Number(selectedOrderDetails.deliveryFee ?? selectedOrderDetails.distanceDeliveryFee ?? 0);
       const discount = selectedOrderDetails.discount || 0;
       const paymentMethod = (selectedOrderDetails.paymentMethod || "UPI / Online").toUpperCase();
       const paymentStatus = selectedOrderDetails.paymentStatus || "PAID";
@@ -1803,6 +1805,8 @@ export default function MyOrdersScreen() {
       });
       invoiceText += `\nSubtotal: ₹${subtotal}\n`;
       invoiceText += `Delivery: ${deliveryPrice === 0 ? "FREE" : `₹${deliveryPrice}`}\n`;
+      if (deliveryDistanceKm > 0) invoiceText += `Delivery distance: ${deliveryDistanceKm.toFixed(2)} km\n`;
+      if (deliveryDistanceKm > 0 || distanceDeliveryFee > 0) invoiceText += `Distance delivery fee: ₹${distanceDeliveryFee}\n`;
       if (discount > 0) invoiceText += `Discount: -₹${discount}\n`;
       invoiceText += `Taxes (GST Included): ₹0.00\n`;
       invoiceText += `TOTAL: ₹${total}\n`;
@@ -2042,6 +2046,23 @@ export default function MyOrdersScreen() {
                 {invDeliveryPrice === 0 ? "FREE" : `₹${invDeliveryPrice}`}
               </Text>
             </View>
+            {(Number(selectedOrderDetails.deliveryDistanceKm ?? 0) > 0 ||
+              Number(selectedOrderDetails.deliveryFee ?? selectedOrderDetails.distanceDeliveryFee ?? 0) > 0) && (
+              <>
+                {Number(selectedOrderDetails.deliveryDistanceKm ?? 0) > 0 && (
+                  <View style={styles.invoiceCalcRow}>
+                    <Text style={styles.invoiceCalcLabel}>Delivery distance</Text>
+                    <Text style={styles.invoiceCalcValue}>{Number(selectedOrderDetails.deliveryDistanceKm).toFixed(2)} km</Text>
+                  </View>
+                )}
+                <View style={styles.invoiceCalcRow}>
+                  <Text style={styles.invoiceCalcLabel}>Distance delivery fee</Text>
+                  <Text style={styles.invoiceCalcValue}>
+                    ₹{Number(selectedOrderDetails.deliveryFee ?? selectedOrderDetails.distanceDeliveryFee ?? 0)}
+                  </Text>
+                </View>
+              </>
+            )}
 
             {invDiscount > 0 && (
               <View style={styles.invoiceCalcRow}>

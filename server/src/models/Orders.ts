@@ -212,6 +212,15 @@ export interface IBaseOrder extends Document {
 
   deliveryPrice: number;
 
+  /** Haversine straight-line distance between customer and chef, in km. */
+  deliveryDistanceKm?: number;
+
+  /** Distance-based portion of the delivery fee (₹40 up to 5 km, then +₹10/km rounded up). */
+  distanceDeliveryFee?: number;
+
+  /** Version marker for the delivery-pricing formula used at order creation. */
+  deliveryPricingRuleVersion?: string;
+
   discount: number;
 
   appliedCoupon?: string;
@@ -673,6 +682,13 @@ const BaseOrderSchema: Schema = new Schema(
     subtotal: { type: Number, required: true, default: 0 },
 
     deliveryPrice: { type: Number, default: 0 },
+
+    // Distance-based delivery pricing fields. Additive and backward compatible.
+    deliveryDistanceKm: { type: Number, default: undefined, min: 0 },
+
+    distanceDeliveryFee: { type: Number, default: undefined, min: 0 },
+
+    deliveryPricingRuleVersion: { type: String, default: undefined },
 
     discount: { type: Number, default: 0 },
 

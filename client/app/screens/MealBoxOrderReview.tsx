@@ -22,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import api from '@/src/lib/api';
+
 import {
   getUser,
   refreshUser,
@@ -29,6 +30,7 @@ import {
   SavedAddress,
   ActiveAddress,
 } from '@/src/lib/authStorage';
+import { calculateDeliveryQuote } from '@/src/lib/deliveryPricing';
 
 // Enable LayoutAnimation for Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -135,6 +137,10 @@ const MealBoxOrderReview = () => {
 
   // ─── Active + Saved Addresses (same source as Home.tsx) ───
   const [activeAddress, setActiveAddress] = useState<ActiveAddress | null>(null);
+  const [distanceDeliveryFee, setDistanceDeliveryFee] = useState<number | null>(null);
+  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
+  const [isDeliveryPricingLoading, setIsDeliveryPricingLoading] = useState(false);
+  const [deliveryPricingError, setDeliveryPricingError] = useState<string | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string>('');
 
@@ -263,6 +269,36 @@ const MealBoxOrderReview = () => {
       loadUser();
     }, [])
   );
+
+  // Calculate a live delivery quote for the selected map address. Cart and
+  // checkout recalculate this quote, and the backend remains authoritative.
+  useEffect(() => {
+    let cancelled = false;
+    setIsDeliveryPricingLoading(true);
+    setDeliveryPricingError(null);
+    calculateDeliveryQuote(
+      api,
+      String(chefId || ""),
+      String(chefName || ""),
+      activeAddress?.latitude,
+      activeAddress?.longitude
+    )
+      .then((quote) => {
+        if (cancelled) return;
+        setDistanceDeliveryFee(quote.distanceDeliveryFee);
+        setDeliveryDistanceKm(quote.distanceKm);
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        setDistanceDeliveryFee(null);
+        setDeliveryDistanceKm(null);
+        setDeliveryPricingError(error?.message || "Unable to calculate the delivery fee.");
+      })
+      .finally(() => {
+        if (!cancelled) setIsDeliveryPricingLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [chefId, chefName, activeAddress?.latitude, activeAddress?.longitude]);
 
   const instructionTags = [
     { id: 'less', label: 'Less spicy', icon: '💨' },
@@ -580,6 +616,13 @@ const MealBoxOrderReview = () => {
   };
 
   const handleReviewOrderSubmit = async () => {
+    if (isDeliveryPricingLoading || distanceDeliveryFee === null) {
+      Alert.alert(
+        "Delivery Fee Unavailable",
+        deliveryPricingError || "Please select a delivery address with a valid map location and make sure the chef has saved a kitchen location."
+      );
+      return;
+    }
     try {
       const scheduledDatesListFormatted = customFlexDatesList.map(item => {
         return `${item.dayName}, ${item.dayNumber} ${item.monthName}`;
@@ -593,6 +636,8 @@ const MealBoxOrderReview = () => {
         chefName: chefName,
         totalItems: activeDaysToRender.length,
         totalPrice: Number(planPrice),
+        deliveryPrice: distanceDeliveryFee ?? 0,
+        deliveryDistanceKm: deliveryDistanceKm,
         menu: {
           id: planId,
           name: planName,
@@ -724,6 +769,13 @@ const MealBoxOrderReview = () => {
                 <View style={styles.mealPriceWrapper}>
                   <Text style={styles.mealPricing}>
                     ₹{planPrice} <Text style={styles.mealPricingSubText}>{displayPricingUnitLabel}</Text>
+                  </Text>
+                  <Text style={styles.mealMetadata}>
+                    {isDeliveryPricingLoading
+                      ? "Calculating delivery fee…"
+                      : distanceDeliveryFee === null
+                      ? "Delivery fee unavailable"
+                      : `Delivery ₹${distanceDeliveryFee}${deliveryDistanceKm !== null ? ` · ${deliveryDistanceKm.toFixed(1)} km` : ""}`}
                   </Text>
                 </View>
               </View>

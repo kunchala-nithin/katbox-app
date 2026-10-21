@@ -22,6 +22,7 @@ import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
 import api from '@/src/lib/api';
+
 import {
   getUser,
   refreshUser,
@@ -29,6 +30,7 @@ import {
   SavedAddress,
   ActiveAddress,
 } from '@/src/lib/authStorage';
+import { calculateDeliveryQuote } from '@/src/lib/deliveryPricing';
 
 // Enable LayoutAnimation for Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -224,6 +226,10 @@ const HomeMadeOrderReview = () => {
 
   // Active + Saved Addresses (same source as Home.tsx)
   const [activeAddress, setActiveAddress] = useState<ActiveAddress | null>(null);
+  const [distanceDeliveryFee, setDistanceDeliveryFee] = useState<number | null>(null);
+  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
+  const [isDeliveryPricingLoading, setIsDeliveryPricingLoading] = useState(false);
+  const [deliveryPricingError, setDeliveryPricingError] = useState<string | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string>('');
 
@@ -247,6 +253,36 @@ const HomeMadeOrderReview = () => {
     params.phone ? String(params.phone).replace(/[^0-9]/g, '').slice(-10) : ''
   );
   const [alternatePhoneNumber, setAlternatePhoneNumber] = useState<string>('');
+
+  // Calculate the customer-facing delivery quote from the selected map address
+  // and the chef's saved GeoJSON coordinates. Backend recalculates on order save.
+  useEffect(() => {
+    let cancelled = false;
+    setIsDeliveryPricingLoading(true);
+    setDeliveryPricingError(null);
+    calculateDeliveryQuote(
+      api,
+      String(chefId || ""),
+      String(chefName || ""),
+      activeAddress?.latitude,
+      activeAddress?.longitude
+    )
+      .then((quote) => {
+        if (cancelled) return;
+        setDistanceDeliveryFee(quote.distanceDeliveryFee);
+        setDeliveryDistanceKm(quote.distanceKm);
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        setDistanceDeliveryFee(null);
+        setDeliveryDistanceKm(null);
+        setDeliveryPricingError(error?.message || "Unable to calculate the delivery fee.");
+      })
+      .finally(() => {
+        if (!cancelled) setIsDeliveryPricingLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [chefId, chefName, activeAddress?.latitude, activeAddress?.longitude]);
 
   // ─── Delivery Date & Slot UI-only selection state (no booking logic) ───
   // Default selection = first NON-today date (tomorrow).
@@ -422,8 +458,8 @@ const HomeMadeOrderReview = () => {
     return { computedTotalItems: count, computedTotalPrice: price };
   }, [editableItems]);
 
-  // Price breakdown (homemade items typically have a flat small delivery fee)
-  const DELIVERY_FEE = 0;
+  // Price breakdown: ₹40 up to 5 km, then +₹10/km, then +₹10 per additional km or part.
+  const DELIVERY_FEE = distanceDeliveryFee ?? 0;
   const TAX_FEE = 0;
   const grandTotal = computedTotalPrice + DELIVERY_FEE + TAX_FEE;
 
@@ -516,6 +552,13 @@ const HomeMadeOrderReview = () => {
 
   const handlePlaceOrder = async () => {
     if (!isFormValid || isSubmitting) return;
+    if (isDeliveryPricingLoading || distanceDeliveryFee === null) {
+      Alert.alert(
+        "Delivery Fee Unavailable",
+        deliveryPricingError || "Please select a delivery address with a valid map location and make sure the chef has saved a kitchen location."
+      );
+      return;
+    }
     try {
       setIsSubmitting(true);
 
@@ -570,7 +613,9 @@ const HomeMadeOrderReview = () => {
         // ✅ NEW: persist chef/vendor image on the Cart document.
         chefImage: chefImage,
         totalItems: computedTotalItems,
-        totalPrice: grandTotal,
+        totalPrice: computedTotalPrice,
+        deliveryPrice: DELIVERY_FEE,
+        deliveryDistanceKm: deliveryDistanceKm,
         items: editableItems.map((it) => ({
           id: it.id,
           name: it.name,
@@ -1174,8 +1219,22 @@ const HomeMadeOrderReview = () => {
             </View>
 
             <View style={styles.billRow}>
-              <Text style={styles.billRowLabel}>Delivery Fee</Text>
-              <Text style={styles.billRowValueFree}>FREE</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.billRowLabel}>Delivery Fee</Text>
+                {deliveryDistanceKm !== null && (
+                  <Text style={{ color: "#71847B", fontSize: 11, marginTop: 2 }}>
+                    {deliveryDistanceKm.toFixed(1)} km · ₹40 up to 5 km, then +₹10/km
+                  </Text>
+                )}
+                {isDeliveryPricingLoading && (
+                  <Text style={{ color: "#71847B", fontSize: 11, marginTop: 2 }}>
+                    Calculating delivery fee…
+                  </Text>
+                )}
+              </View>
+              <Text style={styles.billRowValue}>
+                {distanceDeliveryFee === null ? "—" : `₹${distanceDeliveryFee}`}
+              </Text>
             </View>
 
             <View style={styles.billRow}>

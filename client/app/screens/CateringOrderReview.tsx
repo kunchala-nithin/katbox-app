@@ -18,6 +18,7 @@ import {
   StatusBar,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from "react-native";
 import { Ionicons, Feather } from "@expo/vector-icons";
 import { Calendar, DateData } from "react-native-calendars";
@@ -26,6 +27,7 @@ import { useLocalSearchParams, router } from "expo-router";
 import { BlurView } from "expo-blur";
 import { useFocusEffect } from "@react-navigation/native";
 import { api } from "@/src/lib/api";
+
 import {
   getUser,
   refreshUser,
@@ -38,6 +40,7 @@ import AddressMapModal, {
   AddressMapConfirmPayload,
 } from "@/src/components/AddressMapModal";
 import { useNavigationStore } from "@/src/store/navigationStore";
+import { calculateDeliveryQuote } from "@/src/lib/deliveryPricing";
 
 const { width, height } = Dimensions.get("window");
 
@@ -296,6 +299,10 @@ export default function ChefOrderReviewScreen() {
 
   // ─── Dynamic Active + Saved Addresses (same source as Home.tsx) ───
   const [activeAddress, setActiveAddress] = useState<ActiveAddress | null>(null);
+  const [distanceDeliveryFee, setDistanceDeliveryFee] = useState<number | null>(null);
+  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
+  const [isDeliveryPricingLoading, setIsDeliveryPricingLoading] = useState(false);
+  const [deliveryPricingError, setDeliveryPricingError] = useState<string | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string>("");
   const [isLoadingAddress, setIsLoadingAddress] = useState<boolean>(true);
@@ -397,6 +404,35 @@ export default function ChefOrderReviewScreen() {
     }, [])
   );
 
+  // Live Haversine quote for the currently selected delivery address.
+  useEffect(() => {
+    let cancelled = false;
+    setIsDeliveryPricingLoading(true);
+    setDeliveryPricingError(null);
+    calculateDeliveryQuote(
+      api,
+      String(effectiveChefId || ""),
+      String(effectiveChefName || ""),
+      activeAddress?.latitude,
+      activeAddress?.longitude
+    )
+      .then((quote) => {
+        if (cancelled) return;
+        setDistanceDeliveryFee(quote.distanceDeliveryFee);
+        setDeliveryDistanceKm(quote.distanceKm);
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        setDistanceDeliveryFee(null);
+        setDeliveryDistanceKm(null);
+        setDeliveryPricingError(error?.message || "Unable to calculate the delivery fee.");
+      })
+      .finally(() => {
+        if (!cancelled) setIsDeliveryPricingLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [effectiveChefId, effectiveChefName, activeAddress?.latitude, activeAddress?.longitude]);
+
   // PREFILL ALL FIELDS WHEN COMING BACK FROM CART EDIT
   useEffect(() => {
     if (orderDetails && Object.keys(orderDetails).length > 0) {
@@ -457,7 +493,7 @@ export default function ChefOrderReviewScreen() {
   };
 
   const deliveryPrice = getDeliveryPrice(delivery);
-  const totalPrice = (guests * finalPlatePrice) + deliveryPrice;
+  const totalPrice = (guests * finalPlatePrice) + deliveryPrice + (distanceDeliveryFee ?? 0);
 
   // ────────────────────────────────────────────────
   // Occasion options — Puja image replaced with a
@@ -904,6 +940,13 @@ export default function ChefOrderReviewScreen() {
 
   const reviewOrder = async () => {
     if (!isFormComplete) return;
+    if (isDeliveryPricingLoading || distanceDeliveryFee === null) {
+      Alert.alert(
+        "Delivery Fee Unavailable",
+        deliveryPricingError || "Please select a delivery address with a valid map location and make sure the chef has saved a kitchen location."
+      );
+      return;
+    }
 
     const basePrice = menu?.price || 0;
     const extraPriceTotal = Number(params.extraPrice) || 0;
@@ -1747,6 +1790,18 @@ export default function ChefOrderReviewScreen() {
                 <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Guests</Text>
                   <Text style={styles.totalValue}>{guests}</Text>
+                </View>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Delivery Package ({delivery || "Standard"})</Text>
+                  <Text style={styles.totalValue}>₹{deliveryPrice}</Text>
+                </View>
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>
+                    Distance Fee{deliveryDistanceKm !== null ? ` (${deliveryDistanceKm.toFixed(1)} km)` : ""}
+                  </Text>
+                  <Text style={styles.totalValue}>
+                    {distanceDeliveryFee === null ? "—" : `₹${distanceDeliveryFee}`}
+                  </Text>
                 </View>
                 <View style={styles.totalDivider} />
                 <View style={styles.totalRow}>

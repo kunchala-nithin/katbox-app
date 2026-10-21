@@ -402,6 +402,8 @@ export default function OrderConfirmationScreen() {
 
   const subtotal = dbOrder ? dbOrder.subtotal : Number(params.subtotal) || Number(totalAmount);
   const deliveryPrice = dbOrder ? dbOrder.deliveryPrice : Number(params.deliveryPrice) || 0;
+  const deliveryDistanceKm = Number(dbOrder?.deliveryDistanceKm ?? params.deliveryDistanceKm ?? 0);
+  const distanceDeliveryFee = Number(dbOrder?.deliveryFee ?? dbOrder?.distanceDeliveryFee ?? params.deliveryFee ?? params.distanceDeliveryFee ?? 0);
   const discount = dbOrder ? dbOrder.discount : Number(params.discount) || 0;
   const paymentMethod = dbOrder?.paymentMethod || (params.paymentMethod as string) || "cod";
 
@@ -1277,6 +1279,20 @@ export default function OrderConfirmationScreen() {
                 <Text style={styles.breakdownLabelText}>Delivery</Text>
                 <Text style={styles.breakdownValueText}>₹{deliveryPrice}</Text>
               </View>
+              {(deliveryDistanceKm > 0 || distanceDeliveryFee > 0) && (
+                <>
+                  {deliveryDistanceKm > 0 && (
+                    <View style={styles.priceBreakdownRow}>
+                      <Text style={styles.breakdownLabelText}>Delivery distance</Text>
+                      <Text style={styles.breakdownValueText}>{deliveryDistanceKm.toFixed(2)} km</Text>
+                    </View>
+                  )}
+                  <View style={styles.priceBreakdownRow}>
+                    <Text style={styles.breakdownLabelText}>Distance delivery fee</Text>
+                    <Text style={styles.breakdownValueText}>₹{distanceDeliveryFee}</Text>
+                  </View>
+                </>
+              )}
               {discount > 0 && (
                 <View style={styles.priceBreakdownRow}>
                   <Text style={styles.breakdownLabelText}>Discount</Text>
