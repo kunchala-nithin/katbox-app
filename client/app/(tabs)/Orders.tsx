@@ -1804,9 +1804,10 @@ export default function MyOrdersScreen() {
         invoiceText += `  ${name} (Qty: ${qty}) - ${price}\n`;
       });
       invoiceText += `\nSubtotal: ₹${subtotal}\n`;
-      invoiceText += `Delivery: ${deliveryPrice === 0 ? "FREE" : `₹${deliveryPrice}`}\n`;
-      if (deliveryDistanceKm > 0) invoiceText += `Delivery distance: ${deliveryDistanceKm.toFixed(2)} km\n`;
-      if (deliveryDistanceKm > 0 || distanceDeliveryFee > 0) invoiceText += `Distance delivery fee: ₹${distanceDeliveryFee}\n`;
+      if (!isHomemade) {
+        invoiceText += `Delivery: ${deliveryPrice === 0 ? "FREE" : `₹${deliveryPrice}`}\\n`;
+        if (deliveryDistanceKm > 0) invoiceText += `Delivery distance: ${deliveryDistanceKm.toFixed(2)} km\\n`;
+      }
       if (discount > 0) invoiceText += `Discount: -₹${discount}\n`;
       invoiceText += `Taxes (GST Included): ₹0.00\n`;
       invoiceText += `TOTAL: ₹${total}\n`;
@@ -2038,30 +2039,21 @@ export default function MyOrdersScreen() {
               <Text style={styles.invoiceCalcValue}>₹{invSubtotal}</Text>
             </View>
 
-            <View style={styles.invoiceCalcRow}>
-              <Text style={styles.invoiceCalcLabel}>
-                {isCatering ? `Delivery & Setup (${invDeliveryTypeLabel || "Standard"})` : "Delivery Charges"}
-              </Text>
-              <Text style={[styles.invoiceCalcValue, invDeliveryPrice === 0 && { color: "#16A34A" }]}>
-                {invDeliveryPrice === 0 ? "FREE" : `₹${invDeliveryPrice}`}
-              </Text>
-            </View>
-            {(Number(selectedOrderDetails.deliveryDistanceKm ?? 0) > 0 ||
-              Number(selectedOrderDetails.deliveryFee ?? selectedOrderDetails.distanceDeliveryFee ?? 0) > 0) && (
-              <>
-                {Number(selectedOrderDetails.deliveryDistanceKm ?? 0) > 0 && (
-                  <View style={styles.invoiceCalcRow}>
-                    <Text style={styles.invoiceCalcLabel}>Delivery distance</Text>
-                    <Text style={styles.invoiceCalcValue}>{Number(selectedOrderDetails.deliveryDistanceKm).toFixed(2)} km</Text>
-                  </View>
-                )}
-                <View style={styles.invoiceCalcRow}>
-                  <Text style={styles.invoiceCalcLabel}>Distance delivery fee</Text>
-                  <Text style={styles.invoiceCalcValue}>
-                    ₹{Number(selectedOrderDetails.deliveryFee ?? selectedOrderDetails.distanceDeliveryFee ?? 0)}
-                  </Text>
-                </View>
-              </>
+            {!isHomemade && (
+              <View style={styles.invoiceCalcRow}>
+                <Text style={styles.invoiceCalcLabel}>
+                  {isCatering ? `Delivery & Setup (${invDeliveryTypeLabel || "Standard"})` : "Delivery Charges"}
+                </Text>
+                <Text style={[styles.invoiceCalcValue, invDeliveryPrice === 0 && { color: "#16A34A" }]}>
+                  {invDeliveryPrice === 0 ? "FREE" : `₹${invDeliveryPrice}`}
+                </Text>
+              </View>
+            )}
+            {!isHomemade && Number(selectedOrderDetails.deliveryDistanceKm ?? 0) > 0 && (
+              <View style={styles.invoiceCalcRow}>
+                <Text style={styles.invoiceCalcLabel}>Delivery distance</Text>
+                <Text style={styles.invoiceCalcValue}>{Number(selectedOrderDetails.deliveryDistanceKm).toFixed(2)} km</Text>
+              </View>
             )}
 
             {invDiscount > 0 && (
@@ -2685,14 +2677,25 @@ export default function MyOrdersScreen() {
               <Text style={styles.orderSummaryValue}>₹{detailSubtotal}</Text>
             </View>
 
-            <View style={styles.orderSummaryRow}>
-              <Text style={styles.orderSummaryLabel}>
-                Delivery Charges{detailDeliveryTypeLabel ? ` (${detailDeliveryTypeLabel})` : ""}
-              </Text>
-              <Text style={[styles.orderSummaryValue, detailDeliveryPrice === 0 && { color: "#16A34A", fontWeight: "800" }]}>
-                {detailDeliveryPrice === 0 ? "FREE" : `₹${detailDeliveryPrice}`}
-              </Text>
-            </View>
+            {!isHomemade && (
+              <View style={styles.orderSummaryRow}>
+                <Text style={styles.orderSummaryLabel}>
+                  Delivery Charges{detailDeliveryTypeLabel ? ` (${detailDeliveryTypeLabel})` : ""}
+                </Text>
+                <Text style={[styles.orderSummaryValue, detailDeliveryPrice === 0 && { color: "#16A34A", fontWeight: "800" }]}>
+                  {detailDeliveryPrice === 0 ? "FREE" : `₹${detailDeliveryPrice}`}
+                </Text>
+              </View>
+            )}
+
+            {!isHomemade && Number(selectedOrderDetails.deliveryDistanceKm ?? 0) > 0 && (
+              <View style={styles.orderSummaryRow}>
+                <Text style={styles.orderSummaryLabel}>Delivery Distance</Text>
+                <Text style={styles.orderSummaryValue}>
+                  {Number(selectedOrderDetails.deliveryDistanceKm).toFixed(2)} km
+                </Text>
+              </View>
+            )}
 
             {detailDiscount > 0 && (
               <View style={styles.orderSummaryRow}>

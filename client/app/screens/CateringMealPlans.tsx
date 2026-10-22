@@ -48,7 +48,7 @@ const LAYOUT_ANIM_CONFIG = LayoutAnimation.create(
   LayoutAnimation.Properties.opacity
 );
 
-export default function HomeChefDetail() {
+export default function CateringMealPlans() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { currentContext, setNavigationContext } = useNavigationStore();
@@ -291,7 +291,7 @@ export default function HomeChefDetail() {
 
     setNavigationContext({
       serviceType: "homemade",
-      previousScreen: "HomeChefDetail",
+      previousScreen: "CateringMealPlans",
       restaurantOrChef: chefObject,
       menu: {
         ...menu,

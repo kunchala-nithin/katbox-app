@@ -44,6 +44,11 @@ const TAB_CONFIG: Record<
     icon: 'person-outline',
     activeIcon: 'person',
   },
+  'KatBox Assistant': {
+    label: 'KatBox Assistant',
+    icon: 'chatbubbles-outline',
+    activeIcon: 'chatbubbles',
+  },
 }
 
 type RoleState =
@@ -305,6 +310,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="Home" />
       <Tabs.Screen name="Orders" />
       <Tabs.Screen name="Profile" />
+      <Tabs.Screen name="KatBox Assistant" />
     </Tabs>
   )
 }

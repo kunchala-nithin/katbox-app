@@ -25,6 +25,7 @@ export default function ScreensLayout() {
       <Stack.Screen name="CheckOutScreen" />
       <Stack.Screen name="OrderConfirmationScreen" />
       <Stack.Screen name="HomeMadeOrderReview" />
+       <Stack.Screen name="KatBoxAssistant" />
     </Stack>
 
   )

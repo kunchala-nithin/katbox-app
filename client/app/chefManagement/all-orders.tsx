@@ -1326,9 +1326,11 @@ export default function AllOrdersScreen() {
     }
   };
 
-  const isHomemadeFlow = activeOrder?.serviceType === 'homemade' || activeOrder?.serviceType === 'quickbites';
-  const isCateringFlow = activeOrder?.serviceType === 'catering';
-  const isMealBoxFlow = activeOrder?.serviceType === 'mealbox' || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
+  const normalizedActiveServiceType = String(activeOrder?.serviceType || '').toLowerCase().replace(/[-_\s]/g, '');
+  const isQuickBitesService = normalizedActiveServiceType === 'quickbites';
+  const isHomemadeFlow = normalizedActiveServiceType === 'homemade' || isQuickBitesService;
+  const isCateringFlow = normalizedActiveServiceType === 'catering';
+  const isMealBoxFlow = normalizedActiveServiceType === 'mealbox' || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
 
   const customerPhone =
     activeOrder?.userPhone ||
@@ -1361,8 +1363,7 @@ export default function AllOrdersScreen() {
   const totalAmountNum = Number(activeOrder?.totalAmount || 0);
   const subtotalNum = Number(activeOrder?.subtotal || totalAmountNum);
   const deliveryPriceNum = Number(activeOrder?.deliveryPrice || 0);
-  const deliveryDistanceKmNum = Number(activeOrder?.deliveryDistanceKm || 0);
-  const distanceDeliveryFeeNum = Number(activeOrder?.deliveryFee ?? activeOrder?.distanceDeliveryFee ?? 0);
+  const deliveryDistanceKmNum = Number(activeOrder?.deliveryDistanceKm ?? activeOrder?.distanceKm ?? 0);
   const discountNum = Number(activeOrder?.discount || 0);
   const pricePerPlateNum = Number(activeOrder?.pricePerPlate || 0);
   const guestsCount = Number(activeOrder?.guests || 0);
@@ -2679,26 +2680,20 @@ export default function AllOrdersScreen() {
                       </View>
                     )}
 
-                    <View style={styles.priceDescriptionRow}>
-                      <Text style={styles.priceDescriptionLabel}>Delivery & Kitchen</Text>
-                      <Text style={[styles.priceDescriptionValue, deliveryPriceNum === 0 && styles.freeTextHighlight]}>
-                        {deliveryPriceNum === 0 ? 'FREE' : `+₹${deliveryPriceNum}`}
-                      </Text>
-                    </View>
+                    {!isHomemadeFlow && (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>Delivery & Kitchen{resolvedDeliveryTypeLabel ? ` (${resolvedDeliveryTypeLabel})` : ''}</Text>
+                        <Text style={[styles.priceDescriptionValue, deliveryPriceNum === 0 && styles.freeTextHighlight]}>
+                          {deliveryPriceNum === 0 ? 'FREE' : `+₹${deliveryPriceNum}`}
+                        </Text>
+                      </View>
+                    )}
 
-                    {(deliveryDistanceKmNum > 0 || distanceDeliveryFeeNum > 0) && (
-                      <>
-                        {deliveryDistanceKmNum > 0 && (
-                          <View style={styles.priceDescriptionRow}>
-                            <Text style={styles.priceDescriptionLabel}>Delivery distance</Text>
-                            <Text style={styles.priceDescriptionValue}>{deliveryDistanceKmNum.toFixed(2)} km</Text>
-                          </View>
-                        )}
-                        <View style={styles.priceDescriptionRow}>
-                          <Text style={styles.priceDescriptionLabel}>Distance delivery fee</Text>
-                          <Text style={styles.priceDescriptionValue}>+₹{distanceDeliveryFeeNum}</Text>
-                        </View>
-                      </>
+                    {(isCateringFlow || isMealBoxFlow) && deliveryDistanceKmNum > 0 && (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>Delivery Distance</Text>
+                        <Text style={styles.priceDescriptionValue}>{deliveryDistanceKmNum.toFixed(2)} km</Text>
+                      </View>
                     )}
 
                     {discountNum > 0 && (
