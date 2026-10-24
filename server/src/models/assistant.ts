@@ -1,9 +1,4 @@
 // src/models/assistant.ts
-//
-// Extended assistant conversation schema. Older persisted messages with
-// only { id, text, sender, createdAt } remain fully valid — `kind`
-// defaults to "text" and `payload` is optional.
-
 import mongoose, { Document, Schema } from "mongoose";
 
 export type AssistantSender = "user" | "assistant";
@@ -57,8 +52,6 @@ const assistantMessageSchema = new Schema<IAssistantMessage>(
       ],
       default: "text",
     },
-    // Mixed payload carries hub/form/result metadata. Kept optional so
-    // messages saved before this schema change still load correctly.
     payload: { type: Schema.Types.Mixed, default: undefined },
     createdAt: { type: Date, default: Date.now },
   },
@@ -72,6 +65,9 @@ const assistantConversationSchema = new Schema<IAssistantConversation>(
   },
   { timestamps: true }
 );
+
+// ✅ Auto-delete conversations 2 days (172800 seconds) after the last update
+assistantConversationSchema.index({ updatedAt: 1 }, { expireAfterSeconds: 172800 });
 
 export default mongoose.models.AssistantConversation ||
   mongoose.model<IAssistantConversation>(
