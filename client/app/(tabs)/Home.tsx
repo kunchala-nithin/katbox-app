@@ -2444,7 +2444,7 @@ export default function HomeScreen() {
       <TouchableOpacity
         style={styles.floatingAssistantBtn}
         activeOpacity={0.85}
-        onPress={() => router.push('/screens/KatBoxAssistant' as any)}
+        onPress={() => router.push('/(tabs)/KatBoxAssistant' as any)}
         accessibilityLabel="Open KatBox Assistant"
       >
         <Ionicons name="sparkles" size={22} color="#FFFFFF" />
