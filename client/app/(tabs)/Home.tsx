@@ -2440,6 +2440,16 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
+      {/* ✅ FLOATING KATBOX ASSISTANT BUTTON */}
+      <TouchableOpacity
+        style={styles.floatingAssistantBtn}
+        activeOpacity={0.85}
+        onPress={() => router.push('/screens/KatBoxAssistant' as any)}
+        accessibilityLabel="Open KatBox Assistant"
+      >
+        <Ionicons name="sparkles" size={22} color="#FFFFFF" />
+      </TouchableOpacity>
+
       {/* ─── NOTIFICATIONS POPUP PANEL ─── */}
       <Modal
         visible={isNotificationsVisible}
@@ -4756,5 +4766,26 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     color: '#64748B',
     marginTop: 1,
+  },
+
+  // ✅ NEW: Floating KatBox Assistant Button
+  floatingAssistantBtn: {
+    position: 'absolute',
+    right: 20,
+    // Positioning above the standard bottom tab bar (which is typically ~60-80px tall).
+    // 90px ensures it sits safely above the Home/Orders/Profile tabs without overlapping.
+    bottom: Platform.OS === 'ios' ? 100 : 90,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#2D6A4F',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 8,
+    zIndex: 99,
   },
 });

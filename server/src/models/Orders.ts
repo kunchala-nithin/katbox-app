@@ -772,6 +772,11 @@ const BaseOrderSchema: Schema = new Schema(
 
     razorpayOrderId: { type: String, default: "" },
 
+    // YouPI-PG experimental payment references; isolated from Razorpay fields.
+    youpiPaymentId: { type: String, default: "" },
+
+    youpiDeliveryIds: { type: [String], default: [] },
+
     razorpayPaymentId: { type: String, default: "" },
 
     razorpaySignature: { type: String, default: "" },
