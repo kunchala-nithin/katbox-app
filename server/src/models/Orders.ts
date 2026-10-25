@@ -293,6 +293,12 @@ export interface IBaseOrder extends Document {
 
   paymentCaptured?: boolean;
 
+  /** YouPI hosted checkout payment reference. */
+  youpiPaymentId?: string;
+
+  /** Recent signed webhook delivery IDs, used to ignore gateway retries. */
+  youpiDeliveryIds?: string[];
+
   paidAt?: Date;
 
 
@@ -772,16 +778,15 @@ const BaseOrderSchema: Schema = new Schema(
 
     razorpayOrderId: { type: String, default: "" },
 
-    // YouPI-PG experimental payment references; isolated from Razorpay fields.
-    youpiPaymentId: { type: String, default: "" },
-
-    youpiDeliveryIds: { type: [String], default: [] },
-
     razorpayPaymentId: { type: String, default: "" },
 
     razorpaySignature: { type: String, default: "" },
 
     paymentCaptured: { type: Boolean, default: false },
+
+    youpiPaymentId: { type: String, default: "" },
+
+    youpiDeliveryIds: { type: [String], default: [] },
 
     paidAt: { type: Date },
 

@@ -15,6 +15,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Linking,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -745,7 +746,7 @@ export default function CheckOutScreen() {
     }).start(() => setDeliveryInfoVisible(false));
   };
 
-  const submitAdvanceProofAndPlaceOrder = async (proofType: "utr" | "screenshot", proofValue: string | null) => {
+  const submitAdvanceProofAndPlaceOrder = async (proofType: "utr" | "screenshot" | "youpi", proofValue: string | null) => {
     if (loading) return;
 
     // ✅ STRICT: UTR must be exactly 12 digits (UPI RRN format in India)
@@ -809,7 +810,7 @@ export default function CheckOutScreen() {
     formData.append("totalAmount", String(totalAmount));
     formData.append("advancePaidAmount", String(advanceAmount));
     formData.append("balanceAmountToCollect", String(balanceAmount));
-    formData.append("paymentMethod", selectedPaymentMethod);
+    formData.append("paymentMethod", proofType === "youpi" ? "youpi-upi" : selectedPaymentMethod);
 
     // ✅ NEW: Persist delivery type on the order document for all flows.
     //    NOTE: This is the ONLY place `deliveryType` is appended. Do NOT
@@ -947,21 +948,42 @@ export default function CheckOutScreen() {
 
       if (res.data && res.data.success) {
         const createdOrder = res.data.order;
-        if (params.cartId) {
-          try {
-            await api.delete(`/api/cart/${params.cartId}`);
-          } catch (e) {
-            console.log("Cart cleanup non-critical error", e);
-          }
-        }
-        setShowScannerModal(false);
-        router.push({
-          pathname: "/screens/OrderConfirmationScreen",
-          params: {
+        if (proofType === "youpi") {
+          // Create the hosted YouPI session only after the KatBox order exists.
+          // The backend derives the payable amount from the stored 40% advance.
+          const paymentRes = await api.post("/api/payments/youpi/create", {
             orderId: createdOrder.orderId,
-            serviceType, // ✅ forward so confirmation renders correct flow
-          },
-        });
+          });
+          const checkoutUrl = String(paymentRes.data?.checkoutUrl || "");
+          if (!paymentRes.data?.success || !checkoutUrl) {
+            throw new Error(paymentRes.data?.message || "Could not start YouPI checkout.");
+          }
+          setShowScannerModal(false);
+          if (params.cartId) {
+            try { await api.delete(`/api/cart/${params.cartId}`); }
+            catch (e) { console.log("Cart cleanup non-critical error", e); }
+          }
+          router.push({
+            pathname: "/screens/OrderConfirmationScreen",
+            params: { orderId: createdOrder.orderId, serviceType, paymentMethod: "youpi-upi", paymentStatus: "Verification Pending" },
+          });
+          // Open hosted checkout after routing so the order remains visible if
+          // the customer returns from their UPI app/browser.
+          await Linking.openURL(checkoutUrl);
+        } else {
+          if (params.cartId) {
+            try {
+              await api.delete(`/api/cart/${params.cartId}`);
+            } catch (e) {
+              console.log("Cart cleanup non-critical error", e);
+            }
+          }
+          setShowScannerModal(false);
+          router.push({
+            pathname: "/screens/OrderConfirmationScreen",
+            params: { orderId: createdOrder.orderId, serviceType },
+          });
+        }
       } else {
         Alert.alert("Order Error", res.data?.message || "Failed to place order.");
       }
@@ -993,8 +1015,9 @@ export default function CheckOutScreen() {
   const handleConfirmPlaceOrder = () => {
     closeConfirmModal(() => {
       setTimeout(() => {
-        setTimeLeft(300);
-        setShowScannerModal(true);
+        // YouPI replaces the manual UTR/screenshot step. The signed backend
+        // webhook, not the return URL, is the source of payment confirmation.
+        submitAdvanceProofAndPlaceOrder("youpi", null);
       }, 100);
     });
   };
@@ -1792,23 +1815,23 @@ export default function CheckOutScreen() {
         {/* 5. Cash on Delivery (COD) Option with 40% Advance (Active) */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => setSelectedPaymentMethod("cod")}
+          onPress={() => setSelectedPaymentMethod("youpi-upi")}
           style={[
             styles.paymentOptionCard,
-            selectedPaymentMethod === "cod" && styles.paymentOptionCardActive,
+            selectedPaymentMethod === "youpi-upi" && styles.paymentOptionCardActive,
           ]}
         >
           <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-            <View style={[styles.radioCircle, selectedPaymentMethod === "cod" && styles.radioCircleActive]}>
-              {selectedPaymentMethod === "cod" && <View style={styles.radioInnerDot} />}
+            <View style={[styles.radioCircle, selectedPaymentMethod === "youpi-upi" && styles.radioCircleActive]}>
+              {selectedPaymentMethod === "youpi-upi" && <View style={styles.radioInnerDot} />}
             </View>
             <View style={styles.paymentIconBox}>
               <Ionicons name="cash-outline" size={20} color="#0F382A" />
             </View>
             <View style={{ marginLeft: 12, flex: 1 }}>
-              <Text style={styles.paymentOptionTitle}>Cash on Delivery (40% Advance)</Text>
+              <Text style={styles.paymentOptionTitle}>UPI Online via YouPI (40% Advance)</Text>
               <Text style={styles.paymentOptionSubtitle}>
-                Pay ₹{advanceAmount} (40%) advance online, ₹{balanceAmount} upon delivery
+                Pay ₹{advanceAmount} (40%) securely via UPI now; collect ₹{balanceAmount} (60%) on delivery
               </Text>
             </View>
           </View>
@@ -2068,7 +2091,7 @@ export default function CheckOutScreen() {
                       color="#FAF8F5"
                       style={{ marginRight: 6 }}
                     />
-                    <Text style={styles.confirmOkBtnText}>Scan & Pay Advance</Text>
+                    <Text style={styles.confirmOkBtnText}>Pay 40% Advance with YouPI</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -2148,7 +2171,7 @@ export default function CheckOutScreen() {
 
               <View style={styles.fullScreenScannerSubtitleRow}>
                 <Text style={styles.fullScreenScannerSubtitle}>
-                  Choose how you want to submit your payment proof
+                  You will securely pay the 40% advance through YouPI. The remaining 60% is collected on delivery.
                 </Text>
               </View>
 
