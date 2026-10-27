@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import api from "@/src/lib/api";
 import {
   AssistantLanguage,
@@ -453,6 +454,8 @@ const makeOrdersMessage = (header: string, orders: any[]): AssistantMessage => (
 // ─── Component ──────────────────────────────────────────────────────────
 export default function KatBoxAssistant() {
   const { width } = useWindowDimensions();
+  // ✅ Safe-area insets ensure the header never hides behind the notch/camera
+  const insets = useSafeAreaInsets();
 
   const [language, setLanguage] = useState<AssistantLanguage>("English");
   const [input, setInput] = useState("");
@@ -1182,7 +1185,7 @@ export default function KatBoxAssistant() {
   );
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" backgroundColor={COLORS.surface} />
       <KeyboardAvoidingView style={styles.keyboardContainer} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}>
         <View style={styles.header}>

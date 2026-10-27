@@ -2440,14 +2440,14 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
-      {/* ✅ FLOATING KATBOX ASSISTANT BUTTON */}
+      {/* ✅ FLOATING KATBOX ASSISTANT BUTTON (Now a Robot Assistant) */}
       <TouchableOpacity
         style={styles.floatingAssistantBtn}
         activeOpacity={0.85}
         onPress={() => router.push('/(tabs)/KatBoxAssistant' as any)}
         accessibilityLabel="Open KatBox Assistant"
       >
-        <Ionicons name="sparkles" size={22} color="#FFFFFF" />
+        <MaterialCommunityIcons name="robot-happy" size={26} color="#FFFFFF" />
       </TouchableOpacity>
 
       {/* ─── NOTIFICATIONS POPUP PANEL ─── */}
