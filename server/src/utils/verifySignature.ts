@@ -7,7 +7,8 @@ interface VerifySignatureParams {
 }
 
 /**
- * Validates Razorpay Payment Signature using Cryptographic HMAC-SHA256
+ * Verify Razorpay's checkout signature using the backend-only key secret.
+ * Uses a constant-time comparison and rejects malformed/missing signatures.
  */
 export const verifyRazorpaySignature = ({
   razorpayOrderId,
@@ -15,17 +16,18 @@ export const verifyRazorpaySignature = ({
   razorpaySignature,
 }: VerifySignatureParams): boolean => {
   const secret = process.env.RAZORPAY_KEY_SECRET || "";
+  if (!secret || !razorpayOrderId || !razorpayPaymentId || !razorpaySignature) return false;
 
-  if (!secret) {
-    console.error("CRITICAL ERROR: Missing RAZORPAY_KEY_SECRET in environment variables.");
-    return false;
-  }
-
-  // HMAC SHA256 payload = razorpay_order_id + "|" + razorpay_payment_id
   const generatedSignature = crypto
     .createHmac("sha256", secret)
     .update(`${razorpayOrderId}|${razorpayPaymentId}`)
     .digest("hex");
 
-  return generatedSignature === razorpaySignature;
+  const provided = String(razorpaySignature).trim();
+  if (!/^[a-fA-F0-9]{64}$/.test(provided)) return false;
+
+  const expectedBuffer = Buffer.from(generatedSignature, "hex");
+  const providedBuffer = Buffer.from(provided, "hex");
+  return expectedBuffer.length === providedBuffer.length &&
+    crypto.timingSafeEqual(expectedBuffer, providedBuffer);
 };
