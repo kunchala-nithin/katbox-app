@@ -15,7 +15,6 @@ import paymentRoutes from "./routes/payments.routes";
 import bannerRoutes from "./routes/banner.routes";
 import websiteMessageRoutes from "./routes/websiteMessage.routes";
 import assistantRoutes from "./routes/assistant.routes";
-import { receiveYoupiWebhook } from "./controllers/youpi.controller";
 
 dotenv.config();
 
@@ -34,9 +33,7 @@ export const io = new Server(server, {
 // Middleware
 app.use(cors());
 
-// IMPORTANT: YouPI signature verification requires the original, unparsed bytes.
-// This route must be registered before express.json().
-app.post("/api/payments/youpi/webhook", express.raw({ type: "application/json" }), receiveYoupiWebhook);
+// The YouPI raw webhook route has been removed since we migrated to Razorpay.
 
 app.use(express.json());
 
