@@ -14,14 +14,12 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
-  StatusBar,
-  Linking,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import * as ImagePicker from "expo-image-picker";
+import RazorpayCheckout from "react-native-razorpay";
 import { useFocusEffect } from "@react-navigation/native";
 
 import api from "@/src/lib/api";
@@ -32,7 +30,6 @@ import {
   ActiveAddress,
   SavedAddress,
 } from "@/src/lib/authStorage";
-// ✅ NEW: read the active delivery location (lat/lng) from the global store
 import { useDeliveryLocationStore } from "@/src/store/deliveryLocationStore";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -45,7 +42,6 @@ const formatAddressDisplay = (addr: ActiveAddress | SavedAddress | null | undefi
   return addr.fullAddress || "";
 };
 
-// ✅ NEW: Format an absolute Date into a friendly "4:30 PM" string
 const formatTimeShortLocal = (d: Date | null): string => {
   if (!d) return "";
   try {
@@ -59,7 +55,6 @@ const formatTimeShortLocal = (d: Date | null): string => {
   }
 };
 
-// ✅ Delivery option info with respective emojis (mirrors CartScreen)
 const DELIVERY_OPTION_INFO: Record<
   string,
   { emoji: string; title: string; description: string; includes: string[] }
@@ -67,8 +62,7 @@ const DELIVERY_OPTION_INFO: Record<
   Standard: {
     emoji: "📦",
     title: "Standard Delivery",
-    description:
-      "Order delivered to your building gate or apartment entrance.",
+    description: "Order delivered to your building gate or apartment entrance.",
     includes: [
       "Delivery to building gate / entrance",
       "Best for apartments & gated communities",
@@ -78,8 +72,7 @@ const DELIVERY_OPTION_INFO: Record<
   Doorstep: {
     emoji: "🚪",
     title: "Doorstep Delivery",
-    description:
-      "Delivered to your doorstep, any floor, no extra hassle.",
+    description: "Delivered to your doorstep, any floor, no extra hassle.",
     includes: [
       "Delivery right to your door",
       "Any floor covered",
@@ -89,8 +82,7 @@ const DELIVERY_OPTION_INFO: Record<
   "Doorstep + Service": {
     emoji: "🛎️",
     title: "Doorstep + Service",
-    description:
-      "End to end support: our staff will deliver, take care of setup, and serve for 3 hours.",
+    description: "End to end support: our staff will deliver, take care of setup, and serve for 3 hours.",
     includes: [
       "Doorstep delivery on any floor",
       "Full setup by our staff",
@@ -99,7 +91,6 @@ const DELIVERY_OPTION_INFO: Record<
   },
 };
 
-// ✅ Simple spice label → emoji mapping (mirrors CartScreen)
 const resolveSpiceEmoji = (label: string): string => {
   const l = String(label || "").toLowerCase();
   if (l.includes("less")) return "❄️";
@@ -109,35 +100,26 @@ const resolveSpiceEmoji = (label: string): string => {
   return "🍽️";
 };
 
-// ✅ NEW: UTR — strict 12-digit numeric sanitizer (UPI RRN format in India)
-const UTR_MAX_DIGITS = 12;
-const sanitizeUtrInput = (raw: string): string => {
-  const digitsOnly = String(raw || "").replace(/[^0-9]/g, "");
-  return digitsOnly.slice(0, UTR_MAX_DIGITS);
-};
-
 export default function CheckOutScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
 
-  // ✅ NEW: read delivery location (lat/lng) from global store — single source of truth
   const deliveryLocation = useDeliveryLocationStore((s) => s.deliveryLocation);
 
   const [loading, setLoading] = useState(false);
 
   const serviceType = (params.serviceType as string) || "mealbox";
-  // ✅ QuickBites detection — separate flow flag, but same UI as homemade.
   const isQuickBitesFlow = serviceType === "quickbites";
   const isCateringFlow = serviceType === "catering";
   const isHomemadeFlow = serviceType === "homemade" || isQuickBitesFlow;
-  // ✅ NEW: Explicit mealbox flow flag — used to gate upcomingDeliveries logic.
   const isMealBoxFlowExplicit = serviceType === "mealbox";
 
   const totalAmount = (params.totalAmount as string) || "687";
   const numericTotal = Number(totalAmount) || 0;
-  
-  const advanceAmount = Math.round(numericTotal * 0.40 * 100) / 100;
-  const balanceAmount = Math.round((numericTotal - advanceAmount) * 100) / 100;
+
+  // ✅ Razorpay: full amount is paid online (no 40% advance split)
+  const advanceAmount = numericTotal;
+  const balanceAmount = 0;
 
   const subtotal = Number(params.subtotal) || Number(totalAmount);
   const deliveryPrice = Number(params.deliveryPrice) || 0;
@@ -167,28 +149,19 @@ export default function CheckOutScreen() {
   const durationType = (params.durationType as string) || "Flexible Days (2 Days Running)";
   const deliveryDate = (params.deliveryDate as string) || "Mon, 20 May – Tue, 21 May";
   const deliveryTimeSlot = (params.deliveryTimeSlot as string) || "7:00 PM - 9:00 PM";
-  // ✅ Homemade-only: top-level delivery slot param (may be empty for mealbox/catering).
-  //    This IS the authoritative cart.deliverySlot value from Prompt 1's cart flow —
-  //    CartScreen forwards cart.deliverySlot as params.deliverySlot.
   const deliverySlotParam = (params.deliverySlot as string) || "";
 
-  // ✅ Homemade resolution — prefer the top-level slot; fall back to deliveryTimeSlot
   const homemadeResolvedDate = deliveryDate || "";
   const homemadeResolvedSlot = deliverySlotParam || deliveryTimeSlot || "";
 
-  // ✅ Detect QuickBites flow either from the serviceType OR from an explicit param.
   const isQuickBites =
     isQuickBitesFlow ||
     String((params.isQuickBites as string) || "").toLowerCase() === "true";
 
-  // ✅ Compute a fresh, live estimated delivery time for QuickBites.
-  // Anchored to "now" so the label stays accurate even if the user took
-  // several minutes on the review screen.
   const liveEstimatedDeliveryAt = useMemo(() => {
     if (isQuickBites) {
       return new Date(Date.now() + 75 * 60 * 1000);
     }
-    // Fall back to any client-provided absolute ms timestamp
     const rawMs = (params.estimatedDeliveryAtMs as string) || "";
     const parsedMs = Number(rawMs);
     if (Number.isFinite(parsedMs) && parsedMs > 0) {
@@ -197,7 +170,6 @@ export default function CheckOutScreen() {
     return null;
   }, [isQuickBites, params.estimatedDeliveryAtMs]);
 
-  // ✅ Compute the dynamic delivery date/slot labels for display
   const dynamicHomemadeDateLabel = useMemo(() => {
     if (!isHomemadeFlow) return homemadeResolvedDate;
     if (isQuickBites) {
@@ -212,7 +184,6 @@ export default function CheckOutScreen() {
   const dynamicHomemadeSlotLabel = useMemo(() => {
     if (!isHomemadeFlow) return homemadeResolvedSlot;
     if (isQuickBites && liveEstimatedDeliveryAt) {
-      // ✅ Just the clock time, e.g. "4:30 PM"
       return formatTimeShortLocal(liveEstimatedDeliveryAt);
     }
     return homemadeResolvedSlot;
@@ -230,53 +201,14 @@ export default function CheckOutScreen() {
   const [newStreet, setNewStreet] = useState("");
   const [newCity, setNewCity] = useState("");
 
-  // SCANNER, UTR & SCREENSHOT VERIFICATION STATE
-  const [showScannerModal, setShowScannerModal] = useState(false);
-  const [verificationMode, setVerificationMode] = useState<"utr" | "screenshot">("utr");
-  const [utrNumber, setUtrNumber] = useState("");
-  const [paymentScreenshotUri, setPaymentScreenshotUri] = useState<string | null>(null);
-
-  // ✅ NEW: Delivery option info popup (flag + explanation) state
   const [deliveryInfoVisible, setDeliveryInfoVisible] = useState(false);
   const deliveryInfoAnim = useRef(new Animated.Value(0)).current;
 
-  // ✅ NEW: Special instructions collapsible state
   const [specialInstructionsExpanded, setSpecialInstructionsExpanded] = useState(false);
   const specialInstructionsAnim = useRef(new Animated.Value(0)).current;
 
-  // ✅ NEW: Fetched cart data for the current cartId (source of truth for
-  // Prompt 1's cart.specialInstructions sub-doc). We deliberately do NOT
-  // duplicate this into params or into a second store — we read the cart
-  // document once via the existing /api/cart endpoint and keep it local.
   const [cartDoc, setCartDoc] = useState<any>(null);
 
-  // 5-MINUTE COUNTDOWN TIMER STATE (300 seconds)
-  const [timeLeft, setTimeLeft] = useState(300);
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setInterval>;
-    if (showScannerModal && timeLeft > 0) {
-      timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            setShowScannerModal(false);
-            Alert.alert("Time Expired", "Payment session timed out. Please select your payment method again.");
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } else if (!showScannerModal) {
-      setTimeLeft(300);
-    }
-    return () => clearInterval(timer);
-  }, [showScannerModal, timeLeft]);
-
-  // ✅ NEW: Load the authoritative cart document for this checkout session.
-  // This is the SAME /api/cart endpoint CartScreen already uses (no new API,
-  // no second source of truth). We pick the cart that matches params.cartId
-  // when available; otherwise the most recent in-cart document.
   useEffect(() => {
     let cancelled = false;
     const loadCartDoc = async () => {
@@ -304,33 +236,6 @@ export default function CheckOutScreen() {
       cancelled = true;
     };
   }, [params.cartId]);
-
-  // ✅ Simple real-timer format (MM:SS, zero-padded)
-  const formatTimer = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins < 10 ? "0" : ""}${mins}:${secs < 10 ? "0" : ""}${secs}`;
-  };
-
-  // ✅ NEW: Confirm-before-cancel handler for the scanner modal
-  const handleRequestCloseScannerModal = () => {
-    Alert.alert(
-      "Cancel Payment?",
-      "Are you sure you want to cancel this advance payment? Your progress will be lost.",
-      [
-        { text: "No", style: "cancel" },
-        {
-          text: "Yes, Cancel",
-          style: "destructive",
-          onPress: () => {
-            setShowScannerModal(false);
-            setTimeLeft(300);
-          },
-        },
-      ],
-      { cancelable: true }
-    );
-  };
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const confirmScale = useRef(new Animated.Value(0.85)).current;
@@ -448,9 +353,6 @@ export default function CheckOutScreen() {
     }
   }, [rawItems]);
 
-  // Group the two expanded component rows of a combo into one checkout card.
-  // Keep parsedItems unchanged because the order API still receives both
-  // component rows and their combo metadata.
   const checkoutDisplayItems = useMemo(() => {
     const sourceItems = Array.isArray(parsedItems) ? parsedItems : [];
     const displayItems: any[] = [];
@@ -526,16 +428,9 @@ export default function CheckOutScreen() {
     });
   };
 
-  // ✅ upcomingDeliveriesList is computed ONLY for the mealbox flow.
-  //    For catering / homemade / quickbites it intentionally returns [].
-  //    This is the single source of upcoming dates that gets persisted on
-  //    the order document via the `upcomingDeliveries` formData field.
   const upcomingDeliveriesList: string[] = useMemo(() => {
     if (isCateringFlow || isHomemadeFlow) return [];
 
-    // Expo Router params may arrive as strings, while older cart documents
-    // can contain JSON-stringified values inside the Mixed orderDetails field.
-    // Parse safely, including a second encoding layer from older app versions.
     const parseArray = (value: any): any[] | null => {
       let parsed = value;
       for (let attempt = 0; attempt < 3 && typeof parsed === "string"; attempt += 1) {
@@ -565,8 +460,6 @@ export default function CheckOutScreen() {
     const formattedDates = formatDateItems(parseArray(params.scheduledDatesFormatted) || []);
     if (formattedDates.length > 0) return formattedDates;
 
-    // Do not return an empty formatted array early: the detailed list can
-    // still contain the user's selected dates and must be used as fallback.
     const listedDates = formatDateItems(parseArray(params.scheduledDatesList) || []);
     if (listedDates.length > 0) return listedDates;
 
@@ -574,7 +467,8 @@ export default function CheckOutScreen() {
     return [];
   }, [params.scheduledDatesFormatted, params.scheduledDatesList, deliveryDate, isCateringFlow, isHomemadeFlow]);
 
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("cod");
+  // ✅ FIX: Initialize to null so no card is selected on load.
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -584,23 +478,6 @@ export default function CheckOutScreen() {
     Animated.spring(slideAnim, { toValue, friction: 8, tension: 40, useNativeDriver: false }).start();
   };
 
-  const pickPaymentScreenshot = async () => {
-    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permissionResult.granted) {
-      Alert.alert("Permission Required", "Please allow access to your photo library to upload payment screenshot.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      setPaymentScreenshotUri(result.assets[0].uri);
-    }
-  };
-
-  // ✅ NEW: Dynamic delivery option resolution (mirrors CartScreen)
   const resolvedDeliveryOption: string = useMemo(() => {
     return String(deliveryType || "").trim();
   }, [deliveryType]);
@@ -609,13 +486,7 @@ export default function CheckOutScreen() {
     ? DELIVERY_OPTION_INFO[resolvedDeliveryOption] || null
     : null;
 
-  // ✅ NEW: Special instructions resolution.
-  // Priority:
-  //   1) Prompt 1's authoritative cart.specialInstructions sub-doc (fetched by cartId).
-  //   2) Fallback: reconstruct from params.orderDetails (legacy catering-style data),
-  //      exactly as before — nothing removed.
   const resolvedSpecialInstruction = useMemo(() => {
-    // ✅ 1) Read Prompt 1's authoritative cart sub-doc first.
     const cartSub = cartDoc?.specialInstructions;
     if (cartSub && (cartSub.spice || cartSub.noOnionsGarlic || cartSub.notes)) {
       const spiceRaw = String(cartSub.spice || "").toLowerCase().trim();
@@ -641,7 +512,6 @@ export default function CheckOutScreen() {
       };
     }
 
-    // ✅ 2) Fallback: existing legacy reconstruction from params.orderDetails.
     let orderDetails: any = null;
     const rawOrderDetails = params.orderDetails;
     if (rawOrderDetails) {
@@ -691,7 +561,6 @@ export default function CheckOutScreen() {
     };
   }, [cartDoc, params.orderDetails]);
 
-  // ✅ NEW: Toggle special instructions collapsible
   const toggleSpecialInstructions = () => {
     if (specialInstructionsExpanded) {
       Animated.timing(specialInstructionsAnim, {
@@ -726,7 +595,6 @@ export default function CheckOutScreen() {
     outputRange: [0, 0.5, 1],
   });
 
-  // ✅ NEW: show / hide delivery info popup
   const showDeliveryInfo = () => {
     setDeliveryInfoVisible(true);
     deliveryInfoAnim.setValue(0);
@@ -746,278 +614,210 @@ export default function CheckOutScreen() {
     }).start(() => setDeliveryInfoVisible(false));
   };
 
-  const submitAdvanceProofAndPlaceOrder = async (proofType: "utr" | "screenshot" | "youpi", proofValue: string | null) => {
+  const handleRazorpayPayment = async () => {
     if (loading) return;
-
-    // ✅ STRICT: UTR must be exactly 12 digits (UPI RRN format in India)
-    if (proofType === "utr") {
-      const cleanUtr = String(proofValue || "").replace(/[^0-9]/g, "");
-      if (cleanUtr.length !== UTR_MAX_DIGITS) {
-        Alert.alert(
-          "Invalid UTR",
-          `Please enter the complete ${UTR_MAX_DIGITS}-digit UTR / UPI reference number.`
-        );
-        return;
-      }
-    }
-    if (proofType === "screenshot" && !proofValue) {
-      Alert.alert("Missing Screenshot", "Please upload a screenshot of your successful advance payment.");
-      return;
-    }
-
-    // ✅ Build the initial delivery schedules for the mealbox flow.
-    //    Each upcoming date becomes its own schedule entry with its own
-    //    status + timeline. Only the mealbox flow has a non-empty list.
-    const initialDeliverySchedules = upcomingDeliveriesList.map((dDate: string) => ({
-      date: dDate,
-      status: "Scheduled",
-      timeSlot: deliveryTimeSlot || "7:00 PM - 9:00 PM",
-      address: addressDetails,
-      statusTimeline: [
-        { status: "Scheduled", timestamp: new Date(), note: `Delivery scheduled for ${dDate}` },
-      ],
-    }));
-
-    // ✅ NEW: Resolve lat/lng — prefer global store, fall back to locally-loaded activeAddress
-    const resolvedLatitude =
-      deliveryLocation?.latitude !== undefined && deliveryLocation?.latitude !== null
-        ? deliveryLocation.latitude
-        : (activeAddress?.latitude ?? 0);
-    const resolvedLongitude =
-      deliveryLocation?.longitude !== undefined && deliveryLocation?.longitude !== null
-        ? deliveryLocation.longitude
-        : (activeAddress?.longitude ?? 0);
-    const resolvedDeliveryFullAddress =
-      deliveryLocation?.fullAddress || activeAddress?.fullAddress || addressDetails;
-
-    const formData = new FormData();
-    formData.append("userId", userId);
-    formData.append("userName", userName);
-    // ✅ Persist QuickBites as its own serviceType on the order document
-    formData.append("serviceType", serviceType);
-    formData.append("menuName", menuName);
-    formData.append("menuImage", menuImage);
-    formData.append("addressDetails", addressDetails);
-    formData.append("deliveryAddress", addressDetails);
-    // ✅ NEW: attach delivery latitude / longitude (goes into order.deliveryAddress on the backend)
-    formData.append("latitude", String(resolvedLatitude));
-    formData.append("longitude", String(resolvedLongitude));
-    formData.append("deliveryAddressFull", resolvedDeliveryFullAddress);
-    formData.append("subtotal", String(subtotal));
-    formData.append("deliveryPrice", String(deliveryPrice));
-    formData.append("discount", String(discount));
-    formData.append("appliedCoupon", appliedCoupon || "");
-    formData.append("totalAmount", String(totalAmount));
-    formData.append("advancePaidAmount", String(advanceAmount));
-    formData.append("balanceAmountToCollect", String(balanceAmount));
-    formData.append("paymentMethod", proofType === "youpi" ? "youpi-upi" : selectedPaymentMethod);
-
-    // ✅ NEW: Persist delivery type on the order document for all flows.
-    //    NOTE: This is the ONLY place `deliveryType` is appended. Do NOT
-    //    append it again inside the catering branch below — duplicate keys
-    //    cause multer/Express to deliver the value as an Array, which
-    //    Mongoose then rejects with "Cast to string failed".
-    formData.append("deliveryType", resolvedDeliveryOption || "");
-
-    // ✅ NEW: Persist special instructions on the order document for all flows.
-    //    Legacy fields preserved exactly as before (backward compatibility).
-    if (resolvedSpecialInstruction.hasAny) {
-      formData.append("specialInstruction", JSON.stringify({
-        tag: resolvedSpecialInstruction.tag || "",
-        label: resolvedSpecialInstruction.label || "",
-        text: resolvedSpecialInstruction.text || "",
-      }));
-      formData.append("specialInstructionTag", resolvedSpecialInstruction.tag || "");
-      formData.append("specialInstructionLabel", resolvedSpecialInstruction.label || "");
-      formData.append("specialInstructionText", resolvedSpecialInstruction.text || "");
-    }
-
-    // ✅ NEW (Prompt 2): Forward Prompt 1's authoritative cart fields to the
-    //    backend under their Prompt 1 names, for homemade / quickbites only.
-    //    - quickDeliverySlot     ← params.deliverySlot (= cart.deliverySlot)
-    //    - specialInstructions   ← cart.specialInstructions sub-doc
-    //    We do NOT remove any legacy fields above; this is additive only.
-    if (isHomemadeFlow) {
-      const authoritativeQuickDeliverySlot =
-        (deliverySlotParam && String(deliverySlotParam).trim()) ||
-        (dynamicHomemadeSlotLabel && String(dynamicHomemadeSlotLabel).trim()) ||
-        "";
-      formData.append("quickDeliverySlot", authoritativeQuickDeliverySlot);
-
-      if (cartDoc?.specialInstructions) {
-        formData.append(
-          "specialInstructions",
-          JSON.stringify({
-            spice: cartDoc.specialInstructions.spice || "",
-            noOnionsGarlic: !!cartDoc.specialInstructions.noOnionsGarlic,
-            notes: cartDoc.specialInstructions.notes || "",
-          })
-        );
-      } else if (resolvedSpecialInstruction.hasAny) {
-        // Fallback: mirror the resolved values back into the Prompt 1 shape so
-        // the backend always has a consistent specialInstructions sub-doc.
-        formData.append(
-          "specialInstructions",
-          JSON.stringify({
-            spice: resolvedSpecialInstruction.tag || "",
-            noOnionsGarlic: !!resolvedSpecialInstruction.noOnion,
-            notes: resolvedSpecialInstruction.text || "",
-          })
-        );
-      }
-    }
-
-    if (proofType === "utr") {
-      // ✅ Send the sanitized 12-digit UTR
-      const cleanUtr = String(proofValue || "").replace(/[^0-9]/g, "").slice(0, UTR_MAX_DIGITS);
-      formData.append("utrNumber", cleanUtr);
-    } else if (proofType === "screenshot" && proofValue) {
-      const filename = proofValue.split("/").pop() || "payment_screenshot.jpg";
-      const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : `image/jpeg`;
-      formData.append("screenshot", {
-        uri: proofValue,
-        name: filename,
-        type,
-      } as any);
-    }
-
-    if (isCateringFlow) {
-      formData.append("chefId", chefId);
-      formData.append("chefName", chefName || restaurantName);
-      formData.append("restaurantName", restaurantName);
-      formData.append("restaurantImage", restaurantImage);
-      formData.append("guests", String(guests));
-      formData.append("occasion", occasion);
-      formData.append("eventDate", eventDate);
-      formData.append("eventTime", eventTime);
-      // ✅ NOTE: deliveryType is ALREADY appended once above (the general
-      //    `formData.append("deliveryType", resolvedDeliveryOption || "");`).
-      //    We intentionally do NOT append it here again — duplicates cause
-      //    Express/multer to deliver the value as an Array, and Mongoose
-      //    then rejects the save with:
-      //      "Cast to string failed for value [ 'Standard', 'Standard' ]".
-      formData.append("pricePerPlate", String(pricePerPlate));
-      if (parsedSelections) formData.append("selections", JSON.stringify(parsedSelections));
-      if (parsedAddons) formData.append("addons", JSON.stringify(parsedAddons));
-    } else if (isHomemadeFlow) {
-      formData.append("chefId", chefId);
-      formData.append("chefName", chefName);
-      formData.append("items", JSON.stringify(parsedItems));
-      // ✅ Homemade / QuickBites sends the resolved delivery date & slot
-      formData.append("deliveryDate", dynamicHomemadeDateLabel || "Today");
-      formData.append("deliveryTimeSlot", dynamicHomemadeSlotLabel || "30–45 min");
-      // ✅ New top-level deliverySlot param for order controller to persist
-      formData.append("deliverySlot", dynamicHomemadeSlotLabel || "30–45 min");
-
-      // ✅ Forward the QuickBites flag and the absolute delivery timestamp
-      formData.append("isQuickBites", isQuickBites ? "true" : "false");
-      formData.append("deliveryWindowMinutes", isQuickBites ? "75" : "0");
-      if (liveEstimatedDeliveryAt) {
-        formData.append("estimatedDeliveryAtMs", String(liveEstimatedDeliveryAt.getTime()));
-      }
-    } else {
-      // ✅ MEALBOX FLOW — this is the ONLY branch that persists upcoming
-      //    deliveries and the per-date deliverySchedules on the order.
-      formData.append("chefId", chefId);
-      formData.append("chefName", chefName);
-      formData.append("durationType", durationType);
-      formData.append("deliveryTimeSlot", deliveryTimeSlot);
-      formData.append("deliveryDate", deliveryDate);
-      // ✅ upcomingDeliveriesList is the array of upcoming dates that must
-      //    be persisted on the order so that:
-      //      • OrderConfirmationScreen can render them dynamically.
-      //      • Orders tab can render them as separate delivery cards.
-      //      • Admin & Chef all-orders screens can render them with their
-      //        respective per-date status.
-      formData.append("upcomingDeliveries", JSON.stringify(upcomingDeliveriesList));
-      // Backward-compatible aliases let the controller recover the same dates
-      // if an older backend build still reads the cart field names.
-      formData.append("scheduledDatesFormatted", JSON.stringify(upcomingDeliveriesList));
-      formData.append("scheduledDatesList", JSON.stringify(upcomingDeliveriesList));
-      formData.append("deliverySchedules", JSON.stringify(initialDeliverySchedules));
-      if (parsedSelections) formData.append("selections", JSON.stringify(parsedSelections));
-      if (parsedItems) formData.append("items", JSON.stringify(parsedItems));
-    }
 
     try {
       setLoading(true);
-      const res = await api.post("/api/orders/create", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+
+      const createRes = await api.post("/api/payments/create-order", {
+        amount: numericTotal,
+        currency: "INR",
+        receipt: `rcpt_${Date.now().toString().slice(-8)}`,
+        notes: {
+          serviceType,
+          userId,
+          chefId,
+        },
       });
 
-      if (res.data && res.data.success) {
-        const createdOrder = res.data.order;
-        if (proofType === "youpi") {
-          // Create the hosted YouPI session only after the KatBox order exists.
-          // The backend derives the payable amount from the stored 40% advance.
-          const paymentRes = await api.post("/api/payments/youpi/create", {
-            orderId: createdOrder.orderId,
-          });
-          const checkoutUrl = String(paymentRes.data?.checkoutUrl || "");
-          if (!paymentRes.data?.success || !checkoutUrl) {
-            throw new Error(paymentRes.data?.message || "Could not start YouPI checkout.");
-          }
-          setShowScannerModal(false);
-          if (params.cartId) {
-            try { await api.delete(`/api/cart/${params.cartId}`); }
-            catch (e) { console.log("Cart cleanup non-critical error", e); }
-          }
-          router.push({
-            pathname: "/screens/OrderConfirmationScreen",
-            params: { orderId: createdOrder.orderId, serviceType, paymentMethod: "youpi-upi", paymentStatus: "Verification Pending" },
-          });
-          // Open hosted checkout after routing so the order remains visible if
-          // the customer returns from their UPI app/browser.
-          await Linking.openURL(checkoutUrl);
-        } else {
-          if (params.cartId) {
-            try {
-              await api.delete(`/api/cart/${params.cartId}`);
-            } catch (e) {
-              console.log("Cart cleanup non-critical error", e);
-            }
-          }
-          setShowScannerModal(false);
-          router.push({
-            pathname: "/screens/OrderConfirmationScreen",
-            params: { orderId: createdOrder.orderId, serviceType },
-          });
-        }
-      } else {
-        Alert.alert("Order Error", res.data?.message || "Failed to place order.");
+      if (!createRes.data?.success || !createRes.data?.razorpayOrderId) {
+        throw new Error(createRes.data?.message || "Failed to initialize Razorpay order.");
       }
-    } catch (error: any) {
-      // ✅ IMPROVED LOGGING: surface the actual backend 500 error body so we
-      // can debug the exact cause directly from the terminal.
-      console.error("Error creating order:", error);
-      console.error("Backend status:", error?.response?.status);
-      console.error(
-        "Backend response data:",
-        JSON.stringify(error?.response?.data, null, 2)
-      );
-      console.error("Backend error message:", error?.response?.data?.error);
-      console.error("Backend errorName:", error?.response?.data?.errorName);
-      console.error("Backend errorStack:", error?.response?.data?.errorStack);
+
+      const {
+        razorpayOrderId,
+        keyId,
+        amount: paiseAmount,
+      } = createRes.data;
+
+      if (!keyId) {
+        throw new Error(
+          "Razorpay key is not configured. Please add RAZORPAY_KEY_ID to your server environment."
+        );
+      }
+
+      const razorpayOptions = {
+        description: `Order for ${menuName}`,
+        image: "https://your-app-logo-url.com/logo.png",
+        currency: "INR",
+        key: keyId,
+        amount: paiseAmount,
+        name: "KatBox",
+        order_id: razorpayOrderId,
+        prefill: {
+          name: userName || "",
+          contact: "",
+          email: "",
+        },
+        theme: { color: "#166534" },
+        modal: {
+          ondismiss: () => {
+            setLoading(false);
+          },
+        },
+      };
+
+      let razorpayResult: any;
+      try {
+        razorpayResult = await RazorpayCheckout.open(razorpayOptions);
+      } catch (sdkErr: any) {
+        console.log("Razorpay SDK result:", sdkErr);
+        setLoading(false);
+        if (
+          String(sdkErr?.code || "").toLowerCase().includes("payment_cancelled") ||
+          String(sdkErr?.description || "").toLowerCase().includes("cancel")
+        ) {
+          return;
+        }
+        Alert.alert(
+          "Payment Failed",
+          sdkErr?.description || sdkErr?.message || "Payment could not be completed."
+        );
+        return;
+      }
+
+      if (!razorpayResult?.razorpay_payment_id || !razorpayResult?.razorpay_order_id) {
+        setLoading(false);
+        Alert.alert("Payment Failed", "Payment could not be completed. Please try again.");
+        return;
+      }
+
+      const verifyPayload = {
+        razorpay_order_id: razorpayResult.razorpay_order_id,
+        razorpay_payment_id: razorpayResult.razorpay_payment_id,
+        razorpay_signature: razorpayResult.razorpay_signature,
+        orderPayload: {
+          userId,
+          userName,
+          userPhone: "",
+          chefId,
+          chefName,
+          serviceType,
+          menuName,
+          menuImage,
+          durationType,
+          deliveryTimeSlot,
+          deliverySlot: isHomemadeFlow ? dynamicHomemadeSlotLabel : "",
+          addressDetails,
+          deliveryAddress: addressDetails,
+          deliveryDate,
+          upcomingDeliveries: JSON.stringify(upcomingDeliveriesList),
+          scheduledDatesFormatted: JSON.stringify(upcomingDeliveriesList),
+          scheduledDatesList: JSON.stringify(upcomingDeliveriesList),
+          subtotal: String(subtotal),
+          deliveryPrice: String(deliveryPrice),
+          discount: String(discount),
+          appliedCoupon: appliedCoupon || "",
+          totalAmount: String(numericTotal),
+          paymentMethod: "razorpay",
+          selections: parsedSelections ? JSON.stringify(parsedSelections) : null,
+          items: JSON.stringify(parsedItems),
+          restaurantName,
+          restaurantImage,
+          occasion,
+          guests: String(guests),
+          eventDate,
+          eventTime,
+          deliveryType: resolvedDeliveryOption || "",
+          pricePerPlate: String(pricePerPlate),
+          addons: JSON.stringify(parsedAddons),
+          isQuickBites: isQuickBites ? "true" : "false",
+          estimatedDeliveryAtMs: liveEstimatedDeliveryAt
+            ? String(liveEstimatedDeliveryAt.getTime())
+            : "",
+          deliveryWindowMinutes: isQuickBites ? "75" : "0",
+          latitude: String(
+            deliveryLocation?.latitude !== undefined && deliveryLocation?.latitude !== null
+              ? deliveryLocation.latitude
+              : activeAddress?.latitude ?? 0
+          ),
+          longitude: String(
+            deliveryLocation?.longitude !== undefined && deliveryLocation?.longitude !== null
+              ? deliveryLocation.longitude
+              : activeAddress?.longitude ?? 0
+          ),
+          specialInstruction: resolvedSpecialInstruction.hasAny
+            ? JSON.stringify({
+                tag: resolvedSpecialInstruction.tag || "",
+                label: resolvedSpecialInstruction.label || "",
+                text: resolvedSpecialInstruction.text || "",
+              })
+            : "",
+          specialInstructionTag: resolvedSpecialInstruction.tag || "",
+          specialInstructionLabel: resolvedSpecialInstruction.label || "",
+          specialInstructionText: resolvedSpecialInstruction.text || "",
+          quickDeliverySlot: isHomemadeFlow ? dynamicHomemadeSlotLabel : "",
+          specialInstructions:
+            isHomemadeFlow && cartDoc?.specialInstructions
+              ? JSON.stringify({
+                  spice: cartDoc.specialInstructions.spice || "",
+                  noOnionsGarlic: !!cartDoc.specialInstructions.noOnionsGarlic,
+                  notes: cartDoc.specialInstructions.notes || "",
+                })
+              : "",
+        },
+      };
+
+      const verifyRes = await api.post("/api/payments/verify", verifyPayload);
+
+      if (!verifyRes.data?.success || !verifyRes.data?.order) {
+        throw new Error(verifyRes.data?.message || "Payment verification failed.");
+      }
+
+      const createdOrder = verifyRes.data.order;
+
+      if (params.cartId) {
+        try {
+          await api.delete(`/api/cart/${params.cartId}`);
+        } catch (e) {
+          console.log("Cart cleanup non-critical error", e);
+        }
+      }
+
+      setShowConfirmModal(false);
+      setLoading(false);
+
+      router.push({
+        pathname: "/screens/OrderConfirmationScreen",
+        params: {
+          orderId: createdOrder.orderId,
+          serviceType,
+          paymentMethod: "razorpay",
+          paymentStatus: "Paid",
+        },
+      });
+    } catch (err: any) {
+      console.log("Razorpay payment error:", err);
+      console.log("Backend status:", err?.response?.status);
+      console.log("Backend response:", JSON.stringify(err?.response?.data, null, 2));
+      setLoading(false);
+      setShowConfirmModal(false);
 
       Alert.alert(
-        "Order Error",
-        error?.response?.data?.error ||
-          error?.response?.data?.message ||
-          error?.message ||
-          "Failed to place order. Please try again."
+        "Payment Error",
+        err?.response?.data?.message ||
+          err?.response?.data?.error ||
+          err?.message ||
+          "Something went wrong while processing your payment. Please try again."
       );
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleConfirmPlaceOrder = () => {
     closeConfirmModal(() => {
       setTimeout(() => {
-        // YouPI replaces the manual UTR/screenshot step. The signed backend
-        // webhook, not the return URL, is the source of payment confirmation.
-        submitAdvanceProofAndPlaceOrder("youpi", null);
+        handleRazorpayPayment();
       }, 100);
     });
   };
@@ -1042,6 +842,50 @@ export default function CheckOutScreen() {
   const groupedPreviewDayItemsMap = getGroupedMealBoxItemsBySection(currentDaySelectionsArray);
 
   const HEADER_HEIGHT = insets.top + 60;
+
+  // ✅ Helper to render a payment card consistently.
+  const renderPaymentCard = (
+    key: string,
+    title: string,
+    subtitle: string,
+    icon: React.ReactNode,
+    recommended: boolean = false
+  ) => {
+    const isSelected = selectedPaymentMethod === "razorpay";
+    return (
+      <TouchableOpacity
+        key={key}
+        activeOpacity={0.9}
+        onPress={() => {
+          setSelectedPaymentMethod("razorpay");
+          openConfirmModal();
+        }}
+        style={[
+          styles.paymentOptionCard,
+          isSelected && styles.paymentOptionCardActive,
+        ]}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+          <View style={[styles.radioCircle, isSelected && styles.radioCircleActive]}>
+            {isSelected && <View style={styles.radioInnerDot} />}
+          </View>
+          <View style={styles.paymentIconBox}>{icon}</View>
+          <View style={{ marginLeft: 12, flex: 1 }}>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text style={styles.paymentOptionTitle}>{title}</Text>
+              {recommended && (
+                <View style={styles.recommendedPill}>
+                  <Text style={styles.recommendedPillText}>Recommended</Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.paymentOptionSubtitle}>{subtitle}</Text>
+          </View>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color="#5B756C" />
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <SafeAreaView style={[styles.container]} edges={["left", "right"]}>
@@ -1090,7 +934,6 @@ export default function CheckOutScreen() {
               </View>
             </View>
 
-            {/* ✅ HOMEMADE / QUICKBITES DELIVERY DATE & SLOT STRIP */}
             {(dynamicHomemadeDateLabel || dynamicHomemadeSlotLabel) ? (
               <View style={styles.homemadeDeliveryStripContainer}>
                 {!!dynamicHomemadeDateLabel && (
@@ -1127,7 +970,6 @@ export default function CheckOutScreen() {
               </View>
             ) : null}
 
-            {/* ✅ NEW: Simple delivery option line with emoji + info icon (for homemade flow too) */}
             {!!resolvedDeliveryOption && (
               <View style={styles.deliveryOptionRowInline}>
                 <Text style={styles.deliveryOptionEmojiInline}>
@@ -1268,7 +1110,6 @@ export default function CheckOutScreen() {
               </View>
             </View>
 
-            {/* ✅ NEW: Simple Special Instructions row for homemade flow */}
             {resolvedSpecialInstruction.hasAny && (
               <View style={styles.simpleSpecialInstrWrapper}>
                 <TouchableOpacity
@@ -1369,7 +1210,6 @@ export default function CheckOutScreen() {
                 </Text>
                 <Text style={styles.modernChefSubtitle}>Chef: {restaurantName}</Text>
 
-                {/* ✅ NEW: Simple delivery option line below chef name with emoji + info icon */}
                 {!!resolvedDeliveryOption && (
                   <View style={styles.deliveryOptionRowInline}>
                     <Text style={styles.deliveryOptionEmojiInline}>
@@ -1431,7 +1271,6 @@ export default function CheckOutScreen() {
               </Text>
             </View>
 
-            {/* ✅ NEW: Simple Special Instructions row for catering flow */}
             {resolvedSpecialInstruction.hasAny && (
               <View style={styles.simpleSpecialInstrWrapper}>
                 <TouchableOpacity
@@ -1546,7 +1385,6 @@ export default function CheckOutScreen() {
                 </Text>
                 <Text style={styles.modernChefSubtitle}>Chef: {chefName}</Text>
 
-                {/* ✅ NEW: Simple delivery option line below chef name with emoji + info icon */}
                 {!!resolvedDeliveryOption && (
                   <View style={styles.deliveryOptionRowInline}>
                     <Text style={styles.deliveryOptionEmojiInline}>
@@ -1625,7 +1463,6 @@ export default function CheckOutScreen() {
               </View>
             )}
 
-            {/* ✅ NEW: Simple Special Instructions row for mealbox flow */}
             {resolvedSpecialInstruction.hasAny && (
               <View style={styles.simpleSpecialInstrWrapper}>
                 <TouchableOpacity
@@ -1731,112 +1568,46 @@ export default function CheckOutScreen() {
         {/* Choose a Payment Method Section */}
         <Text style={styles.choosePaymentHeaderLabel}>Choose a payment method</Text>
 
-        {/* 1. UPI Payment Option (Disabled) */}
-        <TouchableOpacity
-          activeOpacity={0.9}
-          disabled={true}
-          style={[styles.paymentOptionCard, styles.disabledPaymentCard]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, opacity: 0.5 }}>
-            <View style={[styles.radioCircle]} />
-            <View style={styles.paymentIconBox}>
-              <MaterialCommunityIcons name="qrcode-scan" size={20} color="#0F382A" />
-            </View>
-            <View style={{ marginLeft: 12, flex: 1 }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Text style={styles.paymentOptionTitle}>UPI</Text>
-                <View style={styles.recommendedPill}>
-                  <Text style={styles.recommendedPillText}>Recommended</Text>
-                </View>
-              </View>
-              <Text style={styles.paymentOptionSubtitle}>Pay using any UPI App (Temporarily Unavailable)</Text>
-            </View>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
-        </TouchableOpacity>
+        {/* 1. UPI Payment Option */}
+        {renderPaymentCard(
+          "card-upi",
+          "UPI",
+          "Pay using any UPI App",
+          <MaterialCommunityIcons name="qrcode-scan" size={20} color="#0F382A" />,
+          true
+        )}
 
-        {/* 2. Cards Option (Disabled) */}
-        <TouchableOpacity
-          activeOpacity={0.9}
-          disabled={true}
-          style={[styles.paymentOptionCard, styles.disabledPaymentCard]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, opacity: 0.5 }}>
-            <View style={[styles.radioCircle]} />
-            <View style={styles.paymentIconBox}>
-              <Ionicons name="card-outline" size={20} color="#0F382A" />
-            </View>
-            <View style={{ marginLeft: 12, flex: 1 }}>
-              <Text style={styles.paymentOptionTitle}>Cards</Text>
-              <Text style={styles.paymentOptionSubtitle}>Visa, Mastercard, RuPay & more (Temporarily Unavailable)</Text>
-            </View>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
-        </TouchableOpacity>
+        {/* 2. Cards Option */}
+        {renderPaymentCard(
+          "card-cards",
+          "Cards",
+          "Visa, Mastercard, RuPay & more",
+          <Ionicons name="card-outline" size={20} color="#0F382A" />
+        )}
 
-        {/* 3. Net Banking Option (Disabled) */}
-        <TouchableOpacity
-          activeOpacity={0.9}
-          disabled={true}
-          style={[styles.paymentOptionCard, styles.disabledPaymentCard]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, opacity: 0.5 }}>
-            <View style={[styles.radioCircle]} />
-            <View style={styles.paymentIconBox}>
-              <Ionicons name="business-outline" size={20} color="#0F382A" />
-            </View>
-            <View style={{ marginLeft: 12, flex: 1 }}>
-              <Text style={styles.paymentOptionTitle}>Net Banking</Text>
-              <Text style={styles.paymentOptionSubtitle}>All major banks available (Temporarily Unavailable)</Text>
-            </View>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
-        </TouchableOpacity>
+        {/* 3. Net Banking Option */}
+        {renderPaymentCard(
+          "card-netbanking",
+          "Net Banking",
+          "All major banks available",
+          <Ionicons name="business-outline" size={20} color="#0F382A" />
+        )}
 
-        {/* 4. Wallets Option (Disabled) */}
-        <TouchableOpacity
-          activeOpacity={0.9}
-          disabled={true}
-          style={[styles.paymentOptionCard, styles.disabledPaymentCard]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1, opacity: 0.5 }}>
-            <View style={[styles.radioCircle]} />
-            <View style={styles.paymentIconBox}>
-              <Ionicons name="wallet-outline" size={20} color="#0F382A" />
-            </View>
-            <View style={{ marginLeft: 12, flex: 1 }}>
-              <Text style={styles.paymentOptionTitle}>Wallets</Text>
-              <Text style={styles.paymentOptionSubtitle}>PhonePe, Paytm, Amazon Pay & more (Temporarily Unavailable)</Text>
-            </View>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#5B756C" style={{ opacity: 0.5 }} />
-        </TouchableOpacity>
+        {/* 4. Wallets Option */}
+        {renderPaymentCard(
+          "card-wallets",
+          "Wallets",
+          "PhonePe, Paytm, Amazon Pay & more",
+          <Ionicons name="wallet-outline" size={20} color="#0F382A" />
+        )}
 
-        {/* 5. Cash on Delivery (COD) Option with 40% Advance (Active) */}
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={() => setSelectedPaymentMethod("youpi-upi")}
-          style={[
-            styles.paymentOptionCard,
-            selectedPaymentMethod === "youpi-upi" && styles.paymentOptionCardActive,
-          ]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-            <View style={[styles.radioCircle, selectedPaymentMethod === "youpi-upi" && styles.radioCircleActive]}>
-              {selectedPaymentMethod === "youpi-upi" && <View style={styles.radioInnerDot} />}
-            </View>
-            <View style={styles.paymentIconBox}>
-              <Ionicons name="cash-outline" size={20} color="#0F382A" />
-            </View>
-            <View style={{ marginLeft: 12, flex: 1 }}>
-              <Text style={styles.paymentOptionTitle}>UPI Online via YouPI (40% Advance)</Text>
-              <Text style={styles.paymentOptionSubtitle}>
-                Pay ₹{advanceAmount} (40%) securely via UPI now; collect ₹{balanceAmount} (60%) on delivery
-              </Text>
-            </View>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#5B756C" />
-        </TouchableOpacity>
+        {/* 5. Pay Online (Full Amount) Option */}
+        {renderPaymentCard(
+          "card-full",
+          "Pay Online (Full Amount)",
+          `Pay ₹${numericTotal} securely via Razorpay`,
+          <Ionicons name="cash-outline" size={20} color="#0F382A" />
+        )}
 
         {/* Bottom Trust Badge Footer Banner */}
         <View style={styles.trustBadgeFooterContainer}>
@@ -1877,7 +1648,7 @@ export default function CheckOutScreen() {
         >
           <View style={styles.modalIndicatorBar} />
           <Text style={styles.breakupHeaderTitle}>Price Breakdown</Text>
-          
+
           {isCateringFlow ? (
             <>
               <View style={styles.breakupLineRow}>
@@ -1939,22 +1710,11 @@ export default function CheckOutScreen() {
           <View style={styles.breakupDividerLine} />
 
           <View style={styles.breakupLineRow}>
-            <Text style={styles.breakupLineLabel}>40% Advance to Pay Now</Text>
-            <Text style={[styles.breakupLineValue, { color: "#166538" }]}>₹{advanceAmount}</Text>
-          </View>
-          <View style={styles.breakupLineRow}>
-            <Text style={styles.breakupLineLabel}>Balance Upon Delivery</Text>
-            <Text style={styles.breakupLineValue}>₹{balanceAmount}</Text>
-          </View>
-
-          <View style={styles.breakupDividerLine} />
-
-          <View style={styles.breakupLineRow}>
             <Text style={[styles.breakupLineLabel, { fontWeight: "800", color: "#0B261D" }]}>
               Total Payable
             </Text>
             <Text style={[styles.breakupLineValue, { fontWeight: "900", color: "#0F382A" }]}>
-              ₹{totalAmount}
+              ₹{numericTotal}
             </Text>
           </View>
         </Animated.View>
@@ -1963,13 +1723,13 @@ export default function CheckOutScreen() {
       {/* Floating Bottom Action Bar */}
       <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View>
-          <Text style={styles.bottomAmountPayableLabel}>Advance (40%) Due Now</Text>
+          <Text style={styles.bottomAmountPayableLabel}>Amount Payable</Text>
           <TouchableOpacity
             onPress={toggleDetails}
             activeOpacity={0.8}
             style={{ flexDirection: "row", alignItems: "center" }}
           >
-            <Text style={styles.bottomAmountValue}>₹{advanceAmount}</Text>
+            <Text style={styles.bottomAmountValue}>₹{numericTotal}</Text>
             <View style={styles.viewDetailsBadgeContainer}>
               <Text style={styles.viewDetailsBadgeText}>View Details</Text>
               <Ionicons
@@ -2011,7 +1771,7 @@ export default function CheckOutScreen() {
         <Text style={{ color: "#0F382A", fontWeight: "700" }}>Terms & Conditions</Text>
       </Text>
 
-      {/* ================= ORDER CONFIRMATION MODAL ================= */}
+      {/* ================= ORDER CONFIRMATION MODAL (RAZORPAY) ================= */}
       <Modal
         visible={showConfirmModal}
         transparent
@@ -2045,17 +1805,16 @@ export default function CheckOutScreen() {
             ]}
           >
             <View style={styles.confirmIconCircle}>
-              <Ionicons name="receipt-outline" size={28} color="#FAF8F5" />
+              <Ionicons name="card-outline" size={28} color="#FAF8F5" />
             </View>
 
-            <Text style={styles.confirmTitle}>Confirm Advance Payment</Text>
+            <Text style={styles.confirmTitle}>Confirm Secure Payment</Text>
 
             <Text style={styles.confirmSubtitle}>
-              You need to pay an advance amount of{" "}
-              <Text style={{ fontWeight: "900", color: "#166538" }}>₹{advanceAmount} (40%)</Text> online now.
-              {"\n"}
-              Balance amount of{" "}
-              <Text style={{ fontWeight: "800", color: "#0B261D" }}>₹{balanceAmount} (60%)</Text> will be collected upon delivery.
+              You will be redirected to the Razorpay secure checkout to
+              pay{" "}
+              <Text style={{ fontWeight: "900", color: "#166538" }}>₹{numericTotal}</Text>{" "}
+              now. Your order will be confirmed instantly after payment.
             </Text>
 
             <View style={styles.confirmSummaryStrip}>
@@ -2086,304 +1845,17 @@ export default function CheckOutScreen() {
                 ) : (
                   <>
                     <Ionicons
-                      name="qr-code-outline"
+                      name="shield-checkmark-outline"
                       size={16}
                       color="#FAF8F5"
                       style={{ marginRight: 6 }}
                     />
-                    <Text style={styles.confirmOkBtnText}>Pay 40% Advance with YouPI</Text>
+                    <Text style={styles.confirmOkBtnText}>Pay ₹{numericTotal} Securely</Text>
                   </>
                 )}
               </TouchableOpacity>
             </View>
           </Animated.View>
-        </View>
-      </Modal>
-
-      {/* ================= SCANNER & VERIFICATION PROOF MODAL =================
-          ✅ FULL SCREEN MODAL — occupies the ENTIRE device viewport edge-to-edge.
-          - `presentationStyle="fullScreen"` makes the modal render as a true
-            full-screen overlay (no rounded sheet corners, no bottom-sheet gap).
-          - `statusBarTranslucent` allows the modal content to extend behind the
-            status bar so the top green header truly touches the top edge.
-          - `animationType="slide"` keeps the original slide-up transition.
-          - Inside, the container is `flex: 1` with `backgroundColor: "#FAF8F5"`
-            so it fills every pixel of the screen.
-          - Padding uses `insets.top` and `insets.bottom` so content respects
-            device notches, home indicators, and safe areas without leaving any
-            uncovered strip of background. */}
-      <Modal
-        visible={showScannerModal}
-        transparent={false}
-        animationType="slide"
-        presentationStyle="fullScreen"
-        statusBarTranslucent
-        onRequestClose={handleRequestCloseScannerModal}
-      >
-        <StatusBar barStyle="dark-content" backgroundColor="#FAF8F5" translucent />
-        <View style={styles.fullScreenScannerContainer}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={styles.fullScreenScannerKeyboardView}
-          >
-            {/* Full-screen top header (respects safe-area top) */}
-            <View
-              style={[
-                styles.fullScreenScannerHeader,
-                { paddingTop: Math.max(insets.top, 12) },
-              ]}
-            >
-              <TouchableOpacity
-                style={styles.fullScreenScannerCloseBtn}
-                onPress={handleRequestCloseScannerModal}
-                activeOpacity={0.85}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="close" size={22} color="#0B261D" />
-              </TouchableOpacity>
-
-              <Text style={styles.fullScreenScannerHeaderTitle}>
-                Scan & Pay Advance
-              </Text>
-
-              {/* Placeholder so the title is perfectly centered */}
-              <View style={{ width: 40 }} />
-            </View>
-
-            {/* Full-screen scrollable body */}
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={[
-                styles.fullScreenScannerScrollContent,
-                { paddingBottom: Math.max(insets.bottom, 24) + 24 },
-              ]}
-              keyboardShouldPersistTaps="handled"
-            >
-              <Text style={styles.fullScreenScannerAmountLabel}>
-                Advance amount due now
-              </Text>
-              <Text style={styles.fullScreenScannerAmountValue}>
-                ₹{advanceAmount}
-              </Text>
-              <Text style={styles.fullScreenScannerAmountHint}>
-                Balance ₹{balanceAmount} (60%) will be collected upon delivery.
-              </Text>
-
-              <View style={styles.fullScreenScannerSubtitleRow}>
-                <Text style={styles.fullScreenScannerSubtitle}>
-                  You will securely pay the 40% advance through YouPI. The remaining 60% is collected on delivery.
-                </Text>
-              </View>
-
-              {/* Toggle Switch between UTR and Screenshot */}
-              <View style={styles.verificationModeToggleRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.verificationModeTab,
-                    verificationMode === "utr" && styles.verificationModeTabActive,
-                  ]}
-                  onPress={() => setVerificationMode("utr")}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.verificationModeTabText,
-                      verificationMode === "utr" &&
-                        styles.verificationModeTabTextActive,
-                    ]}
-                  >
-                    Enter UTR Number
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.verificationModeTab,
-                    verificationMode === "screenshot" &&
-                      styles.verificationModeTabActive,
-                  ]}
-                  onPress={() => setVerificationMode("screenshot")}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.verificationModeTabText,
-                      verificationMode === "screenshot" &&
-                        styles.verificationModeTabTextActive,
-                    ]}
-                  >
-                    Upload Screenshot
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.fullScreenScannerCenterBlock}>
-                <View style={styles.scannerFrameContainer}>
-                  <Image
-                    source={require("@/assets/images/scanner.png")}
-                    style={styles.scannerImageStyle}
-                    resizeMode="contain"
-                  />
-                </View>
-
-                {/* ✅ Simple, real-timer pill below the image card */}
-                <View style={styles.realTimerPill}>
-                  <Ionicons name="time-outline" size={14} color="#166534" />
-                  <Text style={styles.realTimerText}>
-                    {formatTimer(timeLeft)}
-                  </Text>
-                  <Text style={styles.realTimerLabel}>left</Text>
-                </View>
-              </View>
-
-              {verificationMode === "utr" ? (
-                <>
-                  <View style={styles.scannerUtrNoticeBox}>
-                    <Ionicons
-                      name="information-circle-outline"
-                      size={16}
-                      color="#166538"
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={styles.scannerUtrNoticeText}>
-                      After paying via your UPI app, enter the 12-digit UTR /
-                      UPI reference number below for verification.
-                    </Text>
-                  </View>
-
-                  <View style={styles.addressInputGroup}>
-                    <View style={styles.utrLabelRow}>
-                      <Text style={styles.addressInputLabel}>
-                        UTR / Transaction Reference No.
-                      </Text>
-                      <Text style={styles.utrCounterText}>
-                        {utrNumber.length}/12
-                      </Text>
-                    </View>
-                    <TextInput
-                      style={[
-                        styles.addressTextInput,
-                        utrNumber.length === UTR_MAX_DIGITS &&
-                          styles.utrInputComplete,
-                      ]}
-                      placeholder="e.g. 435261789012"
-                      placeholderTextColor="#9EA8A3"
-                      value={utrNumber}
-                      onChangeText={(text) => {
-                        // ✅ Strict: strip non-digits AND hard cap at 12 digits
-                        const sanitized = sanitizeUtrInput(text);
-                        setUtrNumber(sanitized);
-                      }}
-                      keyboardType="numeric"
-                      maxLength={UTR_MAX_DIGITS}
-                      returnKeyType="done"
-                    />
-                    {utrNumber.length > 0 && utrNumber.length < UTR_MAX_DIGITS && (
-                      <Text style={styles.utrHelperText}>
-                        Enter the remaining {UTR_MAX_DIGITS - utrNumber.length}{" "}
-                        digit
-                        {UTR_MAX_DIGITS - utrNumber.length === 1 ? "" : "s"}.
-                      </Text>
-                    )}
-                    {utrNumber.length === UTR_MAX_DIGITS && (
-                      <Text style={styles.utrSuccessText}>
-                        ✓ Valid 12-digit UTR format
-                      </Text>
-                    )}
-                  </View>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.addAddressSolidCTA,
-                      utrNumber.length !== UTR_MAX_DIGITS && { opacity: 0.55 },
-                    ]}
-                    activeOpacity={0.88}
-                    disabled={utrNumber.length !== UTR_MAX_DIGITS}
-                    onPress={() =>
-                      submitAdvanceProofAndPlaceOrder("utr", utrNumber)
-                    }
-                  >
-                    <Text style={styles.addAddressSolidCTAText}>
-                      Submit UTR & Place Order
-                    </Text>
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={18}
-                      color="#FAF8F5"
-                      style={{ marginLeft: 6 }}
-                    />
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <View style={styles.scannerUtrNoticeBox}>
-                    <Ionicons
-                      name="information-circle-outline"
-                      size={16}
-                      color="#166538"
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={styles.scannerUtrNoticeText}>
-                      Upload a screenshot of your successful UPI payment receipt
-                      for admin verification.
-                    </Text>
-                  </View>
-
-                  <TouchableOpacity
-                    style={styles.uploadScreenshotBtn}
-                    onPress={pickPaymentScreenshot}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons
-                      name="cloud-upload-outline"
-                      size={22}
-                      color="#166538"
-                      style={{ marginRight: 8 }}
-                    />
-                    <Text style={styles.uploadScreenshotBtnText}>
-                      {paymentScreenshotUri
-                        ? "Change Payment Screenshot"
-                        : "Choose Screenshot from Gallery"}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {paymentScreenshotUri && (
-                    <View style={styles.screenshotPreviewContainer}>
-                      <Image
-                        source={{ uri: paymentScreenshotUri }}
-                        style={styles.screenshotPreviewImage}
-                      />
-                    </View>
-                  )}
-
-                  <TouchableOpacity
-                    style={[
-                      styles.addAddressSolidCTA,
-                      !paymentScreenshotUri && { opacity: 0.6 },
-                    ]}
-                    activeOpacity={0.88}
-                    disabled={!paymentScreenshotUri}
-                    onPress={() =>
-                      submitAdvanceProofAndPlaceOrder(
-                        "screenshot",
-                        paymentScreenshotUri
-                      )
-                    }
-                  >
-                    <Text style={styles.addAddressSolidCTAText}>
-                      Submit Screenshot & Place Order
-                    </Text>
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={18}
-                      color="#FAF8F5"
-                      style={{ marginLeft: 6 }}
-                    />
-                  </TouchableOpacity>
-                </>
-              )}
-            </ScrollView>
-          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -2396,10 +1868,10 @@ export default function CheckOutScreen() {
       >
         <View style={styles.modalOverlay}>
           <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFillObject} />
-          <TouchableOpacity 
-            style={{ flex: 1 }} 
-            activeOpacity={1} 
-            onPress={() => setShowChangeAddressModal(false)} 
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => setShowChangeAddressModal(false)}
           />
 
           <KeyboardAvoidingView
@@ -2407,8 +1879,8 @@ export default function CheckOutScreen() {
             style={styles.changeAddressModalContainer}
           >
             <View style={styles.drawerHandle} />
-            <TouchableOpacity 
-              style={styles.previewCloseBtn} 
+            <TouchableOpacity
+              style={styles.previewCloseBtn}
               onPress={() => setShowChangeAddressModal(false)}
               activeOpacity={0.85}
             >
@@ -2641,8 +2113,8 @@ export default function CheckOutScreen() {
               </View>
             )}
 
-            <ScrollView 
-              style={{ width: "100%", marginTop: 8 }} 
+            <ScrollView
+              style={{ width: "100%", marginTop: 8 }}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ paddingBottom: 120 }}
             >
@@ -2843,8 +2315,8 @@ export default function CheckOutScreen() {
                 onPress={closeSheet}
                 style={styles.modalAbsoluteFooterCTAButtonSolid}
               >
-                <Text style={styles.modalAbsoluteFooterCTAButtonSolidText}>
-                  Close Summary • ₹{totalAmount}
+                <Text style={styles.modalAbsoluteFooterButtonSolidText}>
+                  Close Summary • ₹{numericTotal}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -2956,8 +2428,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F382A',
   },
-
-  // ✅ Simple delivery option line under chef name (emoji + text + info icon)
   deliveryOptionRowInline: {
     flexDirection: "row",
     alignItems: "center",
@@ -2979,8 +2449,6 @@ const styles = StyleSheet.create({
     marginLeft: 2,
     padding: 1,
   },
-
-  // ✅ Simple Special Instructions row — icon + underlined text + chevron on the left
   simpleSpecialInstrWrapper: {
     marginTop: 4,
     marginBottom: 8,
@@ -3032,7 +2500,6 @@ const styles = StyleSheet.create({
     color: "#4F6B61",
     lineHeight: 18,
   },
-
   groupedMetaSectionContainer: {
     backgroundColor: '#FAF8F5',
     borderRadius: 18,
@@ -3175,8 +2642,6 @@ const styles = StyleSheet.create({
     color: "#0F382A",
     letterSpacing: 0.1,
   },
-
-  /* ✅ HOMEMADE / QUICKBITES DELIVERY DATE & SLOT STRIP */
   homemadeDeliveryStripContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -3220,7 +2685,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(22, 101, 52, 0.15)",
     marginHorizontal: 10,
   },
-
   homemadeItemCardRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -3656,13 +3120,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(11, 38, 29, 0.45)",
     justifyContent: "flex-end",
   },
-
-  /* ─────────────────────────────────────────────────────────
-     ✅ FULL SCREEN SCANNER MODAL STYLES
-     These replace the old bottom-sheet styles for the scanner
-     modal. The container fills the entire screen and the header
-     respects the device safe area via dynamic insets padding.
-     ───────────────────────────────────────────────────────── */
   fullScreenScannerContainer: {
     flex: 1,
     backgroundColor: "#FAF8F5",
@@ -3749,8 +3206,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 12,
   },
-
-  // ✅ Legacy scanner frame + timer pill styles (kept as-is, still used)
   scannerFrameContainer: {
     width: 240,
     height: 240,
@@ -3772,8 +3227,6 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
   },
-
-  // ✅ Simple, real-timer pill below the image card
   realTimerPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -3802,8 +3255,6 @@ const styles = StyleSheet.create({
     color: "#5B756C",
     marginLeft: 5,
   },
-
-  // ✅ Legacy scanner modal styles (still used by other modals that share name space)
   scannerModalContainer: {
     width: "100%",
     backgroundColor: "#FAF8F5",
@@ -3917,8 +3368,6 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     width: "100%",
   },
-
-  // ✅ UTR strict 12-digit helpers
   utrLabelRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -3951,12 +3400,11 @@ const styles = StyleSheet.create({
     marginTop: 6,
     paddingLeft: 2,
   },
-
   addAddressSolidCTA: {
     backgroundColor: "#166538",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center", 
+    justifyContent: "center",
     paddingVertical: 14,
     borderRadius: 20,
     marginTop: 8,
@@ -4424,8 +3872,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.2,
   },
-
-  // ✅ Delivery info flag popup styles (emoji on neutral bg, no green chip)
   deliveryInfoPopupCard: {
     position: "absolute",
     alignSelf: "center",

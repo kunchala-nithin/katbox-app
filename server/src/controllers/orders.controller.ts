@@ -561,6 +561,11 @@ setInterval(async () => {
  * The chef is NOT notified here. Chef receives the order only after
  * admin verifies advance payment via /verify-advance.
  *
+ * ✅ NOTE: For the Razorpay flow, orders are created via
+ *    POST /api/payments/verify (see payments.controller.ts), which
+ *    sets isAdvanceVerified: true and paymentCaptured: true so the
+ *    chef sees the order IMMEDIATELY — no manual admin verification.
+ *
  * ✅ QuickBites flow:
  *    When serviceType === "quickbites" (or isQuickBites === "true", or the
  *    category normalizes to "quickbites"), the order is saved through the
@@ -1545,6 +1550,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
  *    alarm.mp3 sound + chef_orders_alarm channel + priority "max",
  *    and includes data.role = "chef" and data.chefId so the client
  *    can route + alarm correctly even when the app is closed.
+ *
+ * ✅ NEW: Idempotent — if the order is already advance-verified
+ *    (e.g. because it was created via the Razorpay flow in
+ *    payments.controller.ts which sets isAdvanceVerified: true
+ *    and paymentCaptured: true), this endpoint returns 200 with
+ *    the current order state instead of re-emitting notifications
+ *    and re-pushing the chef.
  */
 export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
   try {
@@ -1553,6 +1565,15 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
 
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    // ✅ Idempotency: if already verified (e.g. Razorpay flow), return current state
+    if (order.isAdvanceVerified || order.paymentCaptured) {
+      return res.status(200).json({
+        success: true,
+        message: "Order already verified.",
+        order,
+      });
     }
 
     order.isAdvanceVerified = true;
@@ -1653,6 +1674,14 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
  *    chefOrderIndex, commissionRate, isCommissionFree,
  *    commissionAmount, commissionNote, commissionLabel.
  *
+ * ✅ NEW — The chef query now only returns orders that are either:
+ *    • isAdvanceVerified: true (legacy COD-verified flow), OR
+ *    • paymentStatus: "Paid" (Razorpay flow), OR
+ *    • paymentCaptured: true (Razorpay flow, defense-in-depth)
+ *
+ *    This ensures chefs see orders IMMEDIATELY after Razorpay
+ *    payment — no manual admin verification step.
+ *
  * The chef's orders are indexed by their OWN chronological sequence
  * (oldest = order 1). The frontend does not need to do any math —
  * it just renders the fields.
@@ -1681,11 +1710,25 @@ export const getChefOrders = async (req: AuthRequest, res: Response) => {
 
     // ✅ Fetch ASCENDING so we can assign the 1-based chronological index
     //    (order 1 = oldest) for commission calculation.
+    //
+    // ✅ UPDATED: Only fetch orders that are ALREADY visible to the chef:
+    //    either legacy advance-verified COD orders OR Razorpay-paid orders.
+    //    This makes Razorpay orders appear on the chef's screen instantly
+    //    without any admin manual verification step.
     const ordersAsc = await Order.find({
       $or: [
         { chefId: { $in: queryChefIds } },
         { chefName: chefProfile?.name || "" },
         { _id: { $in: chefProfile?.orderHistory || [] } },
+      ],
+      $and: [
+        {
+          $or: [
+            { isAdvanceVerified: true },
+            { paymentStatus: "Paid" },
+            { paymentCaptured: true },
+          ],
+        },
       ],
     }).sort({ createdAt: 1 });
 
@@ -2787,6 +2830,15 @@ export const getOrderById = async (req: Request, res: Response) => {
  *    (chefOrderIndex, commissionRate, isCommissionFree,
  *    commissionAmount, commissionNote, commissionLabel).
  *
+ * ✅ NEW — Only returns orders that are either:
+ *    • isAdvanceVerified: true (legacy COD-verified flow), OR
+ *    • paymentStatus: "Paid" (Razorpay flow), OR
+ *    • paymentCaptured: true (Razorpay flow, defense-in-depth)
+ *
+ *    This keeps the admin screen in sync with the chef screen —
+ *    admin sees exactly the same orders the chef sees, which are
+ *    the ones customers have actually paid for.
+ *
  * Indexing is per-chef: each chef's orders are sorted chronologically
  * (oldest = order 1) and the same commission rule is applied. This
  * lets the admin screen show the 18% commission amount (₹) that
@@ -2800,7 +2852,16 @@ export const getAllOrders = async (req: AuthRequest, res: Response) => {
     // ✅ Fetch ASCENDING so we can group by chef and assign the 1-based
     //    chronological index (order 1 = oldest) within each chef's own
     //    sequence of orders.
-    const allOrdersAsc = await Order.find({}).sort({ createdAt: 1 });
+    //
+    // ✅ UPDATED: only fetch orders that have been paid/verified so the
+    //    admin screen shows exactly what the chef screen shows.
+    const allOrdersAsc = await Order.find({
+      $or: [
+        { isAdvanceVerified: true },
+        { paymentStatus: "Paid" },
+        { paymentCaptured: true },
+      ],
+    }).sort({ createdAt: 1 });
 
     // ✅ Group by chef (prefer chefId; fall back to chefName; else "unassigned")
     const chefGroups: Record<string, any[]> = {};

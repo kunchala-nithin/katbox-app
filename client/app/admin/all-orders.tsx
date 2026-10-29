@@ -1519,8 +1519,6 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  // ✅ UPDATED: Prefers coordinates for exact pin placement, falls back to address.
-  //    Works for every flow — catering, mealbox, quickbite, homemade.
   const handleOpenMap = (
     addressOverride?: string,
     latOverride?: any,
@@ -1652,13 +1650,6 @@ export default function AdminAllOrdersScreen() {
     }
   };
 
-  /* ─────────────────────────────────────────────────────────────────
-     ✅ NEW — Admin-only "Process Refund" flow.
-     Tapping the button hits PATCH /api/orders/:orderId/refund, which
-     sets refundStatus = "Refunded" and refundedAt = now. The customer
-     screen then flips from "Refund initiated — 3–4 hrs" to
-     "Advance amount refunded".
-     ───────────────────────────────────────────────────────────────── */
   const handleProcessRefund = (order: any) => {
     if (!order) return;
     const orderId = String(order.orderId || '');
@@ -2570,13 +2561,6 @@ export default function AdminAllOrdersScreen() {
                   </View>
                 )}
 
-                {/* ─────────────────────────────────────────────────────
-                    ✅ NEW — Cancellation & Refund block (admin).
-                    Renders only when the current order carries a
-                    cancellation source. Includes the admin-only
-                    "Process Refund" button when a refund is due and
-                    has not yet been marked as refunded.
-                    ───────────────────────────────────────────────────── */}
                 {activeIsCancelled && activeCancellationBadge ? (
                   <View style={styles.cancellationInfoBlock}>
                     <View style={styles.cancellationInfoRow}>
@@ -2668,9 +2652,6 @@ export default function AdminAllOrdersScreen() {
                       Cancellation charges (if any) are sent to the chef.
                     </Text>
 
-                    {/* ✅ ADMIN-ONLY: "Process Refund" button. Only
-                        visible when a refund is due and has not yet
-                        been marked as refunded. */}
                     {shouldShowProcessRefundBtn ? (
                       <TouchableOpacity
                         style={styles.processRefundBtn}
@@ -2692,9 +2673,6 @@ export default function AdminAllOrdersScreen() {
                 ) : null}
               </View>
 
-              {/* ─── SINGLE COMMISSION SECTION (admin) ───
-                  — Now HIDDEN for cancelled orders (any cancellation
-                  source: customer, chef, or admin). */}
               {!activeIsCancelled && (
                 <View style={styles.card}>
                   <View style={styles.commissionHeaderRow}>
@@ -2788,7 +2766,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* ─── MEALBOX SCHEDULES ─── */}
               {isMealBoxFlow && allMealboxSchedules.length > 0 && (
                 <View style={styles.card}>
                   <View style={styles.scheduleHeaderRow}>
@@ -2809,9 +2786,6 @@ export default function AdminAllOrdersScreen() {
                       const isItemDelivered = scheduleItem.status.toLowerCase() === 'delivered';
                       const isItemPaused = scheduleItem.isPaused;
 
-                      // ✅ NEW: per-date status color triple. Each card's
-                      // tag is colored according to ITS OWN status, so
-                      // distinct statuses are visually distinct at a glance.
                       const statusStyle = resolveAdminScheduleStatusStyle(scheduleItem.status);
 
                       return (
@@ -2822,12 +2796,6 @@ export default function AdminAllOrdersScreen() {
                               <Text style={styles.scheduleDateBadgeText}>{scheduleItem.date}</Text>
                             </View>
 
-                            {/* ✅ UPDATED: The status tag is now colored
-                                DYNAMICALLY per date, using the color triple
-                                returned by resolveAdminScheduleStatusStyle.
-                                This keeps the existing tag/paused/delivered/
-                                preparing presets intact while guaranteeing
-                                every status has its own distinct visual. */}
                             <View
                               style={[
                                 styles.scheduleStatusTag,
@@ -2962,7 +2930,6 @@ export default function AdminAllOrdersScreen() {
                 </View>
               )}
 
-              {/* 4. DELIVERY ADDRESS */}
               <View style={styles.card}>
                 <View style={styles.addressRow}>
                   <View style={styles.addressLeftCol}>
@@ -3002,7 +2969,6 @@ export default function AdminAllOrdersScreen() {
         </ScrollView>
       </View>
 
-      {/* ─── PREVIEW MODAL ─── */}
       <Modal visible={showPreviewModal} transparent animationType="none" onRequestClose={closePreviewSheet}>
         <BlurView intensity={35} tint="dark" style={styles.modalOverlay}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={closePreviewSheet} />
@@ -3681,7 +3647,6 @@ const styles = StyleSheet.create({
   priceDescriptionValue: { fontSize: 12.5, color: '#0F172A', fontWeight: '700' },
   freeTextHighlight: { color: '#2563EB', fontWeight: '800' },
   discountValueText: { fontSize: 12.5, color: '#2563EB', fontWeight: '800' },
-  // ✅ NEW — commission value color overrides (admin)
   commissionFreeValueText: {
     color: '#16A34A',
     fontWeight: '800',
@@ -3690,7 +3655,6 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     fontWeight: '900',
   },
-  // ✅ NEW — net amount after commission row inside the bill
   netPayableRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -3938,7 +3902,6 @@ const styles = StyleSheet.create({
   modalAbsoluteFooterButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
   modalAbsoluteFooterCTAButtonSolidText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 
-  /* ✅ SINGLE COMMISSION CARD (admin screen) */
   commissionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',

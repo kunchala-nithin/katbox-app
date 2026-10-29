@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useMemo, useState } from "react";
 import {
   View,
@@ -405,7 +404,7 @@ export default function OrderConfirmationScreen() {
   const deliveryDistanceKm = Number(dbOrder?.deliveryDistanceKm ?? params.deliveryDistanceKm ?? 0);
   const distanceDeliveryFee = Number(dbOrder?.deliveryFee ?? dbOrder?.distanceDeliveryFee ?? params.deliveryFee ?? params.distanceDeliveryFee ?? 0);
   const discount = dbOrder ? dbOrder.discount : Number(params.discount) || 0;
-  const paymentMethod = dbOrder?.paymentMethod || (params.paymentMethod as string) || "cod";
+  const paymentMethod = dbOrder?.paymentMethod || (params.paymentMethod as string) || "razorpay";
 
   /* ─────────────────────────────────────────────────────────
      ✅ FIX — Defensive parsing for selections / items / addons.
@@ -708,6 +707,7 @@ export default function OrderConfirmationScreen() {
     };
   };
 
+  // ✅ Razorpay orders are paid in full instantly, so they are never COD.
   const isCod = String(paymentMethod).toLowerCase() === "cod";
 
   // Dynamic Date Display Resolvers
@@ -920,9 +920,8 @@ export default function OrderConfirmationScreen() {
               : "Order Confirmed!"}
           </Text>
           <Text style={styles.orderConfirmedSubtitle}>
-            {isCod
-              ? `40% Advance (₹${advancePaidAmount}) paid successfully.\nPlease keep ₹${balanceAmountToCollect} ready for delivery.`
-              : `Yay! Your payment was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
+            {/* ✅ Razorpay orders are paid in full upfront, so we display that here. */}
+            {`Payment of ₹${totalAmount} was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
           </Text>
 
           {/* Order ID & UTR Pill */}
@@ -942,7 +941,7 @@ export default function OrderConfirmationScreen() {
 
           {utrNumber ? (
             <View style={[styles.orderIdBadgePill, { marginTop: 8, borderColor: "rgba(16, 124, 65, 0.4)" }]}>
-              <Text style={[styles.orderIdLabelText, { color: "#34D399" }]}>UTR Ref</Text>
+              <Text style={[styles.orderIdLabelText, { color: "#34D399" }]}>Payment Ref</Text>
               <Text style={styles.orderIdValueText}>{utrNumber}</Text>
             </View>
           ) : null}
@@ -1410,6 +1409,7 @@ export default function OrderConfirmationScreen() {
                 </View>
               </View>
 
+              {/* ✅ CHANGED: From "Advance Verification" to "Payment Confirmed" */}
               <View style={styles.timelineStepRow}>
                 <View style={styles.timelineLeftColumn}>
                   <View style={styles.currentStepCircle}>
@@ -1418,8 +1418,8 @@ export default function OrderConfirmationScreen() {
                   <View style={styles.inactiveTimelineLine} />
                 </View>
                 <View style={styles.timelineContentRight}>
-                  <Text style={styles.currentStepTitle}>Advance Verification</Text>
-                  <Text style={styles.stepSubtitleText}>Admin is verifying your payment proof</Text>
+                  <Text style={styles.currentStepTitle}>Payment Confirmed</Text>
+                  <Text style={styles.stepSubtitleText}>Payment received securely, sending order to chef</Text>
                 </View>
               </View>
 
