@@ -1,15 +1,11 @@
-// payments.routes.ts
 import { Router } from "express";
-import {
-  createPaymentOrder,
-  verifyPaymentAndCreateOrder,
-} from "../controllers/payments.controller";
+import { protect } from "../middleware/auth.middleware";
+import { createPaymentOrder, verifyPaymentAndCreateOrder } from "../controllers/payments.controller";
 
 const router = Router();
 
-// Razorpay is the only active online payment gateway.
-// Both endpoints operate on an existing KatBox order created by /api/orders/create.
-router.post("/create-order", createPaymentOrder);
-router.post("/verify", verifyPaymentAndCreateOrder);
+// Both payment endpoints require the authenticated KatBox customer session.
+router.post("/create-order", protect, createPaymentOrder);
+router.post("/verify", protect, verifyPaymentAndCreateOrder);
 
 export default router;

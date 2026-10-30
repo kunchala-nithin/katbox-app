@@ -5,10 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": [
-      "katbox",
-      "clerk"
-    ],
+    "scheme": ["katbox", "clerk"],
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -27,6 +24,8 @@
           "phonepe",
           "gpay",
           "paytm",
+          "paytmmp",
+          "tez",
           "bhim",
           "upi",
           "tel",
@@ -72,9 +71,7 @@
         {
           "photosPermission": "Allow KatBox to access your photos.",
           "savePhotosPermission": "Allow KatBox to save the payment QR scanner to your gallery.",
-          "granularPermissions": [
-            "photo"
-          ]
+          "granularPermissions": ["photo"]
         }
       ],
       [
@@ -89,9 +86,7 @@
       [
         "expo-notifications",
         {
-          "sounds": [
-            "./assets/sounds/alarm.mp3"
-          ]
+          "sounds": ["./assets/sounds/alarm.mp3"]
         }
       ],
       [

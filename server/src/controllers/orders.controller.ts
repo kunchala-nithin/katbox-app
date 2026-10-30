@@ -891,8 +891,13 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     const resolvedAddress = String(safeDeliveryAddress || safeAddressDetails || "");
 
     let numericTotal = Number(totalAmount) || 0;
-    let finalAdvance = advancePaidAmount !== undefined ? Number(advancePaidAmount) : Math.round(numericTotal * 0.40 * 100) / 100;
-    let finalBalance = balanceAmountToCollect !== undefined ? Number(balanceAmountToCollect) : Math.round((numericTotal - finalAdvance) * 100) / 100;
+    const isRazorpayPayment = ["razorpay", "upi", "card", "netbanking", "wallet"].includes(String(safePaymentMethod || "").toLowerCase());
+    let finalAdvance = isRazorpayPayment
+      ? 0
+      : (advancePaidAmount !== undefined ? Number(advancePaidAmount) : Math.round(numericTotal * 0.40 * 100) / 100);
+    let finalBalance = isRazorpayPayment
+      ? numericTotal
+      : (balanceAmountToCollect !== undefined ? Number(balanceAmountToCollect) : Math.round((numericTotal - finalAdvance) * 100) / 100);
 
     let resolvedChefPhone = "";
     let resolvedChefDoc: any = null;
@@ -1209,7 +1214,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: false,
         paymentMethod: safePaymentMethod || "cod",
-        paymentStatus: "Verification Pending",
+        paymentStatus: isRazorpayPayment ? "Payment Pending" : "Verification Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for homemade / quickbites flow
         specialInstruction: resolvedSpecialInstruction,
@@ -1228,7 +1233,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         // ✅ Persist delivery type for homemade / quickbites flow
         deliveryType: safeDeliveryType,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? "Awaiting full Razorpay payment" : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -1291,7 +1296,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: false,
         paymentMethod: safePaymentMethod || "cod",
-        paymentStatus: "Verification Pending",
+        paymentStatus: isRazorpayPayment ? "Payment Pending" : "Verification Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for catering flow
         specialInstruction: resolvedSpecialInstruction,
@@ -1306,7 +1311,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           ? { specialInstructions: resolvedQuickSpecialInstructions }
           : {}),
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? "Awaiting full Razorpay payment" : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -1404,7 +1409,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: false,
         paymentMethod: safePaymentMethod || "cod",
-        paymentStatus: "Verification Pending",
+        paymentStatus: isRazorpayPayment ? "Payment Pending" : "Verification Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for mealbox flow
         specialInstruction: resolvedSpecialInstruction,
@@ -1421,7 +1426,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         // ✅ Persist delivery type for mealbox flow
         deliveryType: safeDeliveryType,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? "Awaiting full Razorpay payment" : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -1520,7 +1525,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     return res.status(201).json({
       success: true,
-      message: "Order placed successfully. Advance verification pending.",
+      message: isRazorpayPayment ? "Order saved. Awaiting secure payment." : "Order placed successfully. Advance verification pending.",
       order: savedOrder,
     });
   } catch (error: any) {
@@ -1567,7 +1572,17 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    // ✅ Idempotency: if already verified (e.g. Razorpay flow), return current state
+    // Razorpay-backed orders must never be manually marked as paid by admin.
+    // Their only verification path is the signed Razorpay callback below.
+    const gatewayMethods = ["razorpay", "upi", "card", "netbanking", "wallet"];
+    if (gatewayMethods.includes(String(order.paymentMethod || "").toLowerCase()) && order.paymentCaptured !== true) {
+      return res.status(409).json({
+        success: false,
+        message: "Manual payment verification is disabled for Razorpay orders. Payment is verified automatically by the gateway.",
+      });
+    }
+
+    // Idempotency: if already verified, return current state.
     if (order.isAdvanceVerified || order.paymentCaptured) {
       return res.status(200).json({
         success: true,

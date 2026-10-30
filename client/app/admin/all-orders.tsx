@@ -1114,7 +1114,7 @@ export default function AdminAllOrdersScreen() {
 
   // ✅ NEW: Whether the advance payment has been verified by the admin.
   //    The "Awaiting chef acceptance" banner is now gated on this flag,
-  //    so it only appears AFTER the admin taps "Payment Received".
+  //    Razorpay marks this true automatically after server-side verification.
   const isAdvanceVerified = activeOrder?.isAdvanceVerified === true;
 
   const isCashCollected =
@@ -1606,26 +1606,7 @@ export default function AdminAllOrdersScreen() {
   };
 
   // ─── ADMIN VERIFY ADVANCE / PAYMENT RECEIVED ACTION ───
-  const handleVerifyAdvancePayment = async () => {
-    if (!activeOrder) return;
 
-    try {
-      setActionLoading(true);
-      const res = await api.patch(`/api/orders/${activeOrder.orderId}/verify-advance`);
-
-      if (res.data && res.data.success) {
-        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-        setOrders((prev) =>
-          prev.map((o) => (o.orderId === activeOrder.orderId ? { ...o, ...res.data.order } : o))
-        );
-        Alert.alert('Success', 'Payment received & advance verified successfully!');
-      }
-    } catch (err: any) {
-      Alert.alert('Error', err.response?.data?.message || 'Failed to verify advance payment.');
-    } finally {
-      setActionLoading(false);
-    }
-  };
 
   const handleUpdateIndividualScheduleStatus = async (dateStr: string, newStatus: string) => {
     if (!activeOrder) return;
@@ -1972,46 +1953,13 @@ export default function AdminAllOrdersScreen() {
             </View>
           ) : (
             <>
-              {/* ─── ADVANCE PAYMENT VERIFICATION BANNER ─── */}
-              {activeOrder && (
-                <View style={styles.card}>
-                  <Text style={styles.cardSectionHeading}>Advance Payment Verification</Text>
-                  <View style={styles.advancePaymentBox}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.advanceLabelText}>40% Advance Amount:</Text>
-                      <Text style={styles.advanceAmountText}>₹{activeOrder.advancePaidAmount || Math.round(Number(activeOrder.totalAmount || 0) * 0.40)}</Text>
-                      {activeOrder.utrNumber ? (
-                        <Text style={styles.advanceMetaText}>UTR Ref: {activeOrder.utrNumber}</Text>
-                      ) : null}
-                      <Text style={[styles.advanceStatusBadge, activeOrder.isAdvanceVerified ? styles.statusVerified : styles.statusPending]}>
-                        {activeOrder.isAdvanceVerified ? '✓ Verified & Received' : '⏳ Verification Pending'}
-                      </Text>
-                    </View>
-
-                    {!activeOrder.isAdvanceVerified && (
-                      <TouchableOpacity
-                        style={styles.verifyPaymentBtn}
-                        activeOpacity={0.85}
-                        onPress={handleVerifyAdvancePayment}
-                        disabled={actionLoading}
-                      >
-                        {actionLoading ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <Text style={styles.verifyPaymentBtnText}>Payment Received</Text>
-                        )}
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-              )}
+              {/* Razorpay payments are verified automatically by the backend.
+                  No admin manual payment-verification action is shown here. */}
 
               {/* ✅ UPDATED: AWAITING CHEF ACCEPTANCE BANNER
-                  — Now gated on `isAdvanceVerified`. This section will ONLY
-                  appear after the admin taps the "Payment Received" button
-                  on the Advance Payment Verification card above, and only
-                  when the order is still in the "Placed" state (not yet
-                  accepted by the chef). */}
+                  — Razorpay verification updates this state automatically.
+                  This section appears while a paid order is awaiting chef
+                  acceptance and remains independent of manual admin verification. */}
               {isAdvanceVerified && !isCurrentOrderAccepted && currentStatus.toLowerCase() === 'placed' && (
                 <View style={styles.timerBannerCard}>
                   <View style={styles.timerBannerIcon}>
