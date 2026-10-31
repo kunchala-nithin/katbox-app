@@ -395,8 +395,39 @@ export default function OrderConfirmationScreen() {
   const totalAmount = dbOrder ? String(dbOrder.totalAmount) : ((params.totalAmount as string) || "687");
   const numericTotal = Number(totalAmount) || 0;
   
-  const advancePaidAmount = dbOrder?.advancePaidAmount !== undefined ? dbOrder.advancePaidAmount : Math.round(numericTotal * 0.40 * 100) / 100;
-  const balanceAmountToCollect = dbOrder?.balanceAmountToCollect !== undefined ? dbOrder.balanceAmountToCollect : Math.round((numericTotal - advancePaidAmount) * 100) / 100;
+  // Catering payment values are read from the saved MongoDB order.
+  // For legacy records only, use paymentOption to choose a safe fallback:
+  // advance = 40% paid; full = the complete order total paid.
+  const resolvedPaymentOption = String(
+    dbOrder?.paymentOption || params.paymentOption || "full"
+  ).toLowerCase();
+
+  const storedAdvancePaidAmount = dbOrder?.advancePaidAmount;
+  const hasStoredAdvancePaidAmount =
+    storedAdvancePaidAmount !== undefined &&
+    storedAdvancePaidAmount !== null &&
+    storedAdvancePaidAmount !== "" &&
+    Number.isFinite(Number(storedAdvancePaidAmount));
+
+  const advancePaidAmount = hasStoredAdvancePaidAmount
+    ? Number(storedAdvancePaidAmount)
+    : isCateringFlow
+      ? (resolvedPaymentOption === "advance"
+          ? Math.round(numericTotal * 0.40 * 100) / 100
+          : numericTotal)
+      : Math.round(numericTotal * 0.40 * 100) / 100;
+
+  const storedBalanceAmount = dbOrder?.balanceAmountToCollect;
+  const hasStoredBalanceAmount =
+    storedBalanceAmount !== undefined &&
+    storedBalanceAmount !== null &&
+    storedBalanceAmount !== "" &&
+    Number.isFinite(Number(storedBalanceAmount));
+
+  const balanceAmountToCollect = hasStoredBalanceAmount
+    ? Number(storedBalanceAmount)
+    : Math.max(0, Math.round((numericTotal - advancePaidAmount) * 100) / 100);
+
   const utrNumber = dbOrder?.utrNumber || "";
 
   const subtotal = dbOrder ? dbOrder.subtotal : Number(params.subtotal) || Number(totalAmount);
@@ -1313,9 +1344,19 @@ export default function OrderConfirmationScreen() {
               <Text style={{ color: "#0F172A", fontSize: 13, fontWeight: "800" }}>₹{numericTotal.toFixed(2)}</Text>
             </View>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
-              <Text style={{ color: "#64748B", fontSize: 13, fontWeight: "600" }}>Amount Paid</Text>
+              <Text style={{ color: "#64748B", fontSize: 13, fontWeight: "600" }}>
+                {isCateringFlow && resolvedPaymentOption === "advance" ? "Advance Paid" : "Amount Paid"}
+              </Text>
               <Text style={{ color: "#15803D", fontSize: 13, fontWeight: "900" }}>₹{Number(advancePaidAmount).toFixed(2)}</Text>
             </View>
+            {isCateringFlow ? (
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+                <Text style={{ color: "#64748B", fontSize: 13, fontWeight: "600" }}>Payment Option</Text>
+                <Text style={{ color: "#0F382A", fontSize: 13, fontWeight: "800" }}>
+                  {resolvedPaymentOption === "advance" ? "40% Advance" : "Full Payment"}
+                </Text>
+              </View>
+            ) : null}
             <View style={{ height: 1, backgroundColor: "#E2E8F0", marginVertical: 5 }} />
             <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
               <Text style={{ color: "#0F382A", fontSize: 14, fontWeight: "900" }}>Balance Amount</Text>

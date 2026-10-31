@@ -169,6 +169,7 @@ export const addToCart = async (req: Request, res: Response) => {
       type,
       finalPrice,
       deliveryPrice,
+      deliveryType,
       extraItems, // ✅ NEW
       userPhone,
       alternatePhone
@@ -188,6 +189,7 @@ export const addToCart = async (req: Request, res: Response) => {
     const calculatedFinalTotal = Math.max(0, totalPrice - appliedDiscount);
     const resolvedUserPhone = userPhone || orderDetails?.contactPhone || (req as any).user?.phone || '';
     const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
+    const resolvedDeliveryType = String(deliveryType || orderDetails?.delivery || "Standard").trim();
     console.log("🔥 EXTRA ITEMS FROM FRONTEND:", extraItems);
     // ✅🔥 DELETE OLD CART (PREVENT DUPLICATES)
     await Cart.deleteMany({ user: userId, status: "in-cart" });
@@ -207,10 +209,12 @@ export const addToCart = async (req: Request, res: Response) => {
       },
       totalItems,
       totalPrice,
+      deliveryPrice: Number(deliveryPrice || 0),
       // ✅🔥 STORE EXTRA ITEMS
       extraItems: extraItems || 0,
       type: type || "veg",
       serviceType: 'catering',
+      deliveryType: resolvedDeliveryType,
       couponCode: couponCode || null,
       discount: appliedDiscount,
       totalPriceAfterDiscount: calculatedFinalTotal,
@@ -345,6 +349,7 @@ export const updateCart = async (req: Request, res: Response) => {
       type,
       finalPrice,
       deliveryPrice,
+      deliveryType,
       extraItems,
       userPhone,
       alternatePhone
@@ -362,6 +367,7 @@ export const updateCart = async (req: Request, res: Response) => {
     const calculatedFinalTotal = Math.max(0, totalPrice - appliedDiscount);
     const resolvedUserPhone = userPhone || orderDetails?.contactPhone || '';
     const resolvedAltPhone = alternatePhone || orderDetails?.alternatePhone || '';
+    const resolvedDeliveryType = String(deliveryType || orderDetails?.delivery || "Standard").trim();
     const updated = await Cart.findByIdAndUpdate(
       cartId,
       {
@@ -387,6 +393,8 @@ export const updateCart = async (req: Request, res: Response) => {
             )
           : 0,
         totalPrice,
+        deliveryPrice: Number(deliveryPrice || 0),
+        deliveryType: resolvedDeliveryType,
         // ✅🔥 UPDATE EXTRA ITEMS
         extraItems: extraItems || 0,
         type: type || 'veg',

@@ -919,93 +919,107 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     }
 
     // ────────────────────────────────────────────────────────────────
-    // KatBox distance-based delivery pricing (server-authoritative).
-    // Customer coordinates come from the saved active address in MongoDB;
-    // chef coordinates come from Chef.geoLocation.coordinates [lng, lat].
-    // Pricing: ₹40 for 0–5 km, then +₹10 for each additional km or part.
+    // Delivery pricing:
+    //   • Catering: selected delivery package is the only delivery charge.
+    //     No distance fee and no coordinate requirement are applied.
+    //   • Homemade / MealBox / QuickBites: retain the existing server-side
+    //     distance pricing and coordinate validation unchanged.
     // ────────────────────────────────────────────────────────────────
     let customerDoc: any = null;
-    try {
-      if (finalUserId && mongoose.Types.ObjectId.isValid(finalUserId)) {
-        customerDoc = await User.findById(finalUserId);
+    let deliveryDistanceKm = 0;
+    let distanceDeliveryFee = 0;
+    let finalDeliveryPrice = 0;
+
+    if (resolvedServiceType === "catering") {
+      // Preserve the selected package fee supplied by the catering cart.
+      // deliveryType is stored separately and is not inferred from the fee.
+      finalDeliveryPrice = Math.max(0, Number(deliveryPrice) || 0);
+
+      // Coordinates are optional for catering because there is no distance fee.
+      const suppliedLat = Number(latitude);
+      const suppliedLng = Number(longitude);
+      if (
+        Number.isFinite(suppliedLat) && suppliedLat >= -90 && suppliedLat <= 90 &&
+        Number.isFinite(suppliedLng) && suppliedLng >= -180 && suppliedLng <= 180 &&
+        !(suppliedLat === 0 && suppliedLng === 0)
+      ) {
+        resolvedLatitude = suppliedLat;
+        resolvedLongitude = suppliedLng;
       }
-      if (!customerDoc && finalUserId) {
-        customerDoc = await User.findOne({ clerkId: finalUserId });
+    } else {
+      try {
+        if (finalUserId && mongoose.Types.ObjectId.isValid(finalUserId)) {
+          customerDoc = await User.findById(finalUserId);
+        }
+        if (!customerDoc && finalUserId) {
+          customerDoc = await User.findOne({ clerkId: finalUserId });
+        }
+      } catch (customerLookupErr) {
+        console.log("Customer address lookup warning:", customerLookupErr);
       }
-    } catch (customerLookupErr) {
-      console.log("Customer address lookup warning:", customerLookupErr);
+
+      const savedActiveAddress = customerDoc?.activeAddress;
+      const customerLatitude = Number(savedActiveAddress?.latitude);
+      const customerLongitude = Number(savedActiveAddress?.longitude);
+      const customerCoordinatesAreValid =
+        Number.isFinite(customerLatitude) &&
+        Number.isFinite(customerLongitude) &&
+        customerLatitude >= -90 &&
+        customerLatitude <= 90 &&
+        customerLongitude >= -180 &&
+        customerLongitude <= 180 &&
+        !(customerLatitude === 0 && customerLongitude === 0);
+
+      const chefCoordinates = resolvedChefDoc?.geoLocation?.coordinates;
+      const chefLongitude = Array.isArray(chefCoordinates) ? Number(chefCoordinates[0]) : NaN;
+      const chefLatitude = Array.isArray(chefCoordinates) ? Number(chefCoordinates[1]) : NaN;
+      const chefCoordinatesAreValid =
+        Number.isFinite(chefLatitude) &&
+        Number.isFinite(chefLongitude) &&
+        chefLatitude >= -90 &&
+        chefLatitude <= 90 &&
+        chefLongitude >= -180 &&
+        chefLongitude <= 180 &&
+        !(chefLatitude === 0 && chefLongitude === 0);
+
+      if (!customerCoordinatesAreValid) {
+        return res.status(400).json({
+          success: false,
+          message: "Please select a delivery address with a valid map location before placing your order.",
+          code: "DELIVERY_ADDRESS_COORDINATES_REQUIRED",
+        });
+      }
+
+      if (!chefCoordinatesAreValid) {
+        return res.status(400).json({
+          success: false,
+          message: "This chef has not saved a valid kitchen location yet. Please contact support or choose another chef.",
+          code: "CHEF_COORDINATES_REQUIRED",
+        });
+      }
+
+      const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+      const earthRadiusKm = 6371;
+      const dLat = toRadians(chefLatitude - customerLatitude);
+      const dLon = toRadians(chefLongitude - customerLongitude);
+      const haversineA =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRadians(customerLatitude)) *
+          Math.cos(toRadians(chefLatitude)) *
+          Math.sin(dLon / 2) ** 2;
+      const safeHaversineA = Math.min(1, Math.max(0, haversineA));
+      deliveryDistanceKm = earthRadiusKm * 2 *
+        Math.atan2(Math.sqrt(safeHaversineA), Math.sqrt(1 - safeHaversineA));
+      distanceDeliveryFee =
+        deliveryDistanceKm <= 5
+          ? 40
+          : 40 + Math.ceil(deliveryDistanceKm - 5) * 10;
+
+      // Existing non-catering pricing remains distance-based.
+      finalDeliveryPrice = distanceDeliveryFee;
+      resolvedLatitude = customerLatitude;
+      resolvedLongitude = customerLongitude;
     }
-
-    const savedActiveAddress = customerDoc?.activeAddress;
-    const customerLatitude = Number(savedActiveAddress?.latitude);
-    const customerLongitude = Number(savedActiveAddress?.longitude);
-    const customerCoordinatesAreValid =
-      Number.isFinite(customerLatitude) &&
-      Number.isFinite(customerLongitude) &&
-      customerLatitude >= -90 &&
-      customerLatitude <= 90 &&
-      customerLongitude >= -180 &&
-      customerLongitude <= 180 &&
-      !(customerLatitude === 0 && customerLongitude === 0);
-
-    const chefCoordinates = resolvedChefDoc?.geoLocation?.coordinates;
-    const chefLongitude = Array.isArray(chefCoordinates) ? Number(chefCoordinates[0]) : NaN;
-    const chefLatitude = Array.isArray(chefCoordinates) ? Number(chefCoordinates[1]) : NaN;
-    const chefCoordinatesAreValid =
-      Number.isFinite(chefLatitude) &&
-      Number.isFinite(chefLongitude) &&
-      chefLatitude >= -90 &&
-      chefLatitude <= 90 &&
-      chefLongitude >= -180 &&
-      chefLongitude <= 180 &&
-      !(chefLatitude === 0 && chefLongitude === 0);
-
-    if (!customerCoordinatesAreValid) {
-      return res.status(400).json({
-        success: false,
-        message: "Please select a delivery address with a valid map location before placing your order.",
-        code: "DELIVERY_ADDRESS_COORDINATES_REQUIRED",
-      });
-    }
-
-    if (!chefCoordinatesAreValid) {
-      return res.status(400).json({
-        success: false,
-        message: "This chef has not saved a valid kitchen location yet. Please contact support or choose another chef.",
-        code: "CHEF_COORDINATES_REQUIRED",
-      });
-    }
-
-    const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
-    const earthRadiusKm = 6371;
-    const dLat = toRadians(chefLatitude - customerLatitude);
-    const dLon = toRadians(chefLongitude - customerLongitude);
-    const haversineA =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRadians(customerLatitude)) *
-        Math.cos(toRadians(chefLatitude)) *
-        Math.sin(dLon / 2) ** 2;
-    // Floating-point rounding can make haversineA marginally exceed 1
-    // for nearly antipodal points. Clamp it to keep the distance finite.
-    const safeHaversineA = Math.min(1, Math.max(0, haversineA));
-    const deliveryDistanceKm = earthRadiusKm * 2 *
-      Math.atan2(Math.sqrt(safeHaversineA), Math.sqrt(1 - safeHaversineA));
-    const distanceDeliveryFee =
-      deliveryDistanceKm <= 5
-        ? 40
-        : 40 + Math.ceil(deliveryDistanceKm - 5) * 10;
-
-    // Catering's existing deliveryType fee represents the selected service
-    // package. Preserve that package charge and add the distance fee.
-    // Non-catering client-supplied deliveryPrice is deliberately ignored:
-    // the backend sets those services' delivery charge from the distance rule.
-    const cateringServiceFee =
-      resolvedServiceType === "catering" ? Math.max(0, Number(deliveryPrice) || 0) : 0;
-    const finalDeliveryPrice = cateringServiceFee + distanceDeliveryFee;
-
-    // Use the database-backed selected address coordinates for saved map pins.
-    resolvedLatitude = customerLatitude;
-    resolvedLongitude = customerLongitude;
 
     numericTotal = Math.max(
       0,
@@ -1289,9 +1303,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         ...(safeLng !== undefined ? { longitude: safeLng } : {}),
         subtotal: Number(subtotal) || 0,
         deliveryPrice: finalDeliveryPrice,
-        deliveryDistanceKm: Number(deliveryDistanceKm.toFixed(3)),
-        distanceDeliveryFee,
-        deliveryPricingRuleVersion: "hyderabad-40-up-to-5km-plus-10-per-km-v1",
+        // Catering intentionally has no distance-based delivery fee.
+        deliveryDistanceKm: undefined,
+        distanceDeliveryFee: undefined,
+        deliveryPricingRuleVersion: undefined,
         discount: Number(discount) || 0,
         appliedCoupon: safeAppliedCoupon,
         totalAmount: numericTotal,

@@ -831,7 +831,7 @@ export default function CheckOutScreen() {
       }
 
       // Step 4: Server verifies the signature and confirms the captured
-      // payment against the exact MongoDB order and full amount.
+      // payment against the exact MongoDB order and selected payable amount.
       const verifyRes = await api.post("/api/payments/verify", {
         orderId: katboxOrderId,
         razorpay_order_id: razorpayResult.razorpay_order_id,
@@ -1929,10 +1929,15 @@ export default function CheckOutScreen() {
             {isAdvancePaymentEligible ? (
               <View style={styles.confirmPaymentOptions}>
                 <TouchableOpacity
-                  style={[styles.confirmPaymentOption, styles.confirmAdvanceOption, loading && { opacity: 0.75 }]}
+                  style={[
+                    styles.confirmPaymentOption,
+                    styles.confirmAdvanceOption,
+                    selectedPaymentOption === "advance" && { borderWidth: 2, borderColor: "#FFFFFF" },
+                    loading && { opacity: 0.75 },
+                  ]}
                   activeOpacity={0.88}
                   disabled={loading}
-                  onPress={() => { setSelectedPaymentOption("advance"); closeConfirmModal(() => setTimeout(() => handleRazorpayPaymentWithOption("advance"), 100)); }}
+                  onPress={() => setSelectedPaymentOption("advance")}
                 >
                   <View style={styles.confirmOptionTextBlock}>
                     <Text style={styles.confirmOptionEyebrow}>PAY 40% NOW</Text>
@@ -1941,14 +1946,17 @@ export default function CheckOutScreen() {
                   </View>
                   <View style={styles.confirmOptionAmountBlock}>
                     <Text style={styles.confirmAdvanceAmount}>₹{advanceAmount.toFixed(2)}</Text>
-                    <Ionicons name="arrow-forward-circle" size={20} color="#FFFFFF" />
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.confirmPaymentOption, styles.confirmFullOption, loading && { opacity: 0.75 }]}
+                  style={[
+                    styles.confirmPaymentOption,
+                    selectedPaymentOption === "full" ? styles.confirmSelectedFullOption : styles.confirmFullOption,
+                    loading && { opacity: 0.75 },
+                  ]}
                   activeOpacity={0.88}
                   disabled={loading}
-                  onPress={() => { setSelectedPaymentOption("full"); closeConfirmModal(() => setTimeout(() => handleRazorpayPaymentWithOption("full"), 100)); }}
+                  onPress={() => setSelectedPaymentOption("full")}
                 >
                   <View style={styles.confirmOptionTextBlock}>
                     <Text style={styles.confirmFullEyebrow}>PAY 100% NOW</Text>
@@ -1957,12 +1965,31 @@ export default function CheckOutScreen() {
                   </View>
                   <View style={styles.confirmOptionAmountBlock}>
                     <Text style={styles.confirmFullAmount}>₹{numericTotal.toFixed(2)}</Text>
-                    <Ionicons name="arrow-forward-circle" size={20} color="#166538" />
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.confirmCancelBtn} activeOpacity={0.85} disabled={loading} onPress={() => closeConfirmModal()}>
-                  <Text style={styles.confirmCancelBtnText}>Cancel</Text>
-                </TouchableOpacity>
+                <View style={styles.confirmBtnRow}>
+                  <TouchableOpacity
+                    style={[styles.confirmCancelBtn, styles.confirmAmountActionBtn]}
+                    activeOpacity={0.85}
+                    disabled={loading}
+                    onPress={() => closeConfirmModal()}
+                  >
+                    <Text style={styles.confirmCancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.confirmOkBtn, styles.confirmAmountActionBtn, loading && { opacity: 0.75 }]}
+                    activeOpacity={0.9}
+                    disabled={loading}
+                    onPress={() => {
+                      const option = selectedPaymentOption;
+                      closeConfirmModal(() => {
+                        setTimeout(() => handleRazorpayPaymentWithOption(option), 100);
+                      });
+                    }}
+                  >
+                    <Text style={styles.confirmOkBtnText}>Continue</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ) : (
               <View style={styles.confirmBtnRow}>
@@ -4015,6 +4042,17 @@ const styles = StyleSheet.create({
   confirmFullOption: {
     backgroundColor: "#FFFFFF",
     borderColor: "rgba(22, 101, 56, 0.28)",
+  },
+  confirmSelectedFullOption: {
+    backgroundColor: "#EAF4EE",
+    borderColor: "#166538",
+    borderWidth: 2,
+  },
+  confirmAmountActionBtn: {
+    flex: 1,
+    width: undefined,
+    marginTop: 12,
+    minWidth: 0,
   },
   confirmOptionTextBlock: {
     flex: 1,

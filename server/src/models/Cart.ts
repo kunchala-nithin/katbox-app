@@ -16,6 +16,7 @@ interface ICart extends Document {
   };
   totalItems: number;
   totalPrice: number;
+  deliveryPrice?: number; // ✅ Catering package fee, persisted independently
   extraItems: number; // ✅ NEW
   type: 'veg' | 'nonveg';
   status: 'in-cart' | 'ordered';
@@ -25,6 +26,8 @@ interface ICart extends Document {
   chefName?: string;
   // ✅ NEW: chef/vendor image persisted for homemade / quickbites / mealbox flows
   chefImage?: string;
+  // ✅ Catering delivery service selected by the customer
+  deliveryType?: 'Standard' | 'Doorstep' | 'Doorstep + Service' | string;
   items?: Array<{
     id: string;
     name: string;
@@ -74,6 +77,9 @@ const CartSchema = new Schema<ICart>(
     totalItems: { type: Number, required: true },
     totalPrice: { type: Number, required: true },
 
+    // ✅ Catering package fee is stored separately from the selected package label.
+    deliveryPrice: { type: Number, default: 0, min: 0 },
+
     // ✅🔥 NEW FIELD
     extraItems: { type: Number, default: 0 },
 
@@ -86,6 +92,10 @@ const CartSchema = new Schema<ICart>(
     chefName: { type: String },
     // ✅ NEW: chef/vendor image persisted for homemade / quickbites / mealbox flows
     chefImage: { type: String, default: '' },
+
+    // ✅ NEW: Catering delivery service type (Standard / Doorstep / Doorstep + Service)
+    deliveryType: { type: String, enum: ['Standard', 'Doorstep', 'Doorstep + Service'], default: 'Standard' },
+
     // Items intentionally remain Mixed so the exact payload—including combo metadata—is preserved.
     items: { type: [Schema.Types.Mixed], default: [] },
 

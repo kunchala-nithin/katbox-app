@@ -364,6 +364,14 @@ export default function CartScreen() {
         return;
       }
 
+      if (String(cartData?.serviceType || derivedServiceType).toLowerCase() === "catering") {
+        setDistanceDeliveryFee(0);
+        setDeliveryDistanceKm(null);
+        setDeliveryPricingError(null);
+        setIsDeliveryPricingLoading(false);
+        return;
+      }
+
       const targetChefId = String(cartData?.chefId || cartData?.restaurant?._id || params.chefId || "");
       const targetChefName = String(cartData?.chefName || cartData?.restaurant?.name || params.chefName || "");
       let address = cartData?.orderDetails?.activeAddress;
@@ -488,11 +496,12 @@ export default function CartScreen() {
   // ✅ Resolve delivery option from cart
   const resolvedDeliveryOption: string = React.useMemo(() => {
     return String(
-      orderDetails?.delivery ||
+      cartData?.deliveryType ||
+        orderDetails?.delivery ||
         cartData?.orderDetails?.delivery ||
         ""
     ).trim();
-  }, [orderDetails, cartData]);
+  }, [cartData?.deliveryType, orderDetails, cartData?.orderDetails?.delivery]);
 
   const deliveryInfo = resolvedDeliveryOption
     ? DELIVERY_OPTION_INFO[resolvedDeliveryOption] || null
@@ -648,11 +657,11 @@ export default function CartScreen() {
   const cateringPackageFee =
     Number(cartData?.deliveryPrice) > 0
       ? Number(cartData.deliveryPrice)
-      : getDeliveryPrice(orderDetails?.delivery);
+      : getDeliveryPrice(resolvedDeliveryOption || orderDetails?.delivery);
   const deliveryPrice =
     (isHomemadeFlow || isMealBoxFlow)
       ? (distanceDeliveryFee ?? 0)
-      : cateringPackageFee + (distanceDeliveryFee ?? 0);
+      : cateringPackageFee;
 
   const totalAddonsPriceCombined = cartAddons.reduce((sum: number, entry: any) => {
     return sum + Number(entry.price || 0) * Number(entry.count || 0) * plates;
@@ -823,6 +832,7 @@ export default function CartScreen() {
         type: cartData?.type,
         finalPrice: pricePerPlate,
         deliveryPrice: cateringPackageFee,
+        deliveryType: resolvedDeliveryOption || "Standard",
         extraItems: cartData?.extraItems,
         couponCode: code,
         discount: computedDiscount,
@@ -1039,14 +1049,6 @@ export default function CartScreen() {
   const groupedPreviewDayItemsMap = getGroupedMealBoxItemsBySection(currentDaySelectionsArray);
 
   const handlePlaceOrderNavigation = () => {
-    if (isDeliveryPricingLoading || distanceDeliveryFee === null) {
-      Alert.alert(
-        "Delivery Fee Unavailable",
-        deliveryPricingError || "Please select a delivery address with a valid map location and make sure the chef has saved a kitchen location."
-      );
-      return;
-    }
-
     // ✅ Ensure QuickBites is its own service type all the way to checkout
     const derivedServiceTypeLocal = isQuickBitesFlow
       ? "quickbites"
@@ -1055,6 +1057,17 @@ export default function CartScreen() {
       : isMealBoxFlow
       ? "mealbox"
       : "catering";
+
+    if (
+      derivedServiceTypeLocal !== "catering" &&
+      (isDeliveryPricingLoading || distanceDeliveryFee === null)
+    ) {
+      Alert.alert(
+        "Delivery Fee Unavailable",
+        deliveryPricingError || "Please select a delivery address with a valid map location and make sure the chef has saved a kitchen location."
+      );
+      return;
+    }
 
     if (derivedServiceTypeLocal === "catering") {
       router.push({
@@ -1079,7 +1092,7 @@ export default function CartScreen() {
           occasion: orderDetails?.occasion || "Event",
           eventDate: orderDetails?.date || "18 March",
           eventTime: orderDetails?.time || "08:30 PM",
-          deliveryType: orderDetails?.delivery || "Standard",
+          deliveryType: cartData?.deliveryType || orderDetails?.delivery || "Standard",
           addressDetails: orderDetails?.address || "Home Nizampet, Hyderabad",
           pricePerPlate: pricePerPlate,
           subtotal: subtotal,
@@ -2226,22 +2239,9 @@ export default function CartScreen() {
                   <Text style={styles.breakupValue}>₹{subtotal}</Text>
                 </View>
                 <View style={styles.breakupRow}>
-                  <Text style={styles.breakupLabel}>
-                    Delivery Package ({orderDetails?.delivery || "Doorstep"})
-                  </Text>
-                  <Text style={styles.breakupValue}>₹{cateringPackageFee}</Text>
-                </View>
-                <View style={styles.breakupRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.breakupLabel}>Distance Delivery Fee</Text>
-                    {deliveryDistanceKm !== null && (
-                      <Text style={{ color: "#71847B", fontSize: 11, marginTop: 2 }}>
-                        {deliveryDistanceKm.toFixed(1)} km · ₹40 up to 5 km, then +₹10/km
-                      </Text>
-                    )}
-                  </View>
-                  <Text style={styles.breakupValue}>
-                    {distanceDeliveryFee === null ? "—" : `₹${distanceDeliveryFee}`}
+                  <Text style={styles.breakupLabel}>Delivery Service</Text>
+                  <Text style={[styles.breakupValue, { flexShrink: 1, textAlign: "right" }]}>
+                    {resolvedDeliveryOption || "Standard"}
                   </Text>
                 </View>
                 {discount > 0 && (
