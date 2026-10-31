@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Image,
   Dimensions,
+  useWindowDimensions,
   Animated,
   Modal,
   ActivityIndicator,
@@ -110,6 +111,7 @@ const resolveSpiceEmoji = (label: string): string => {
 export default function CheckOutScreen() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
   // ✅ NEW: read delivery location (lat/lng) from global store — single source of truth
   const deliveryLocation = useDeliveryLocationStore((s) => s.deliveryLocation);
@@ -127,9 +129,8 @@ export default function CheckOutScreen() {
   const totalAmount = (params.totalAmount as string) || "687";
   const numericTotal = Number(totalAmount) || 0;
 
-  // ✅ Razorpay: full amount is paid online (no 40% advance split)
-  const advanceAmount = numericTotal;
-  const balanceAmount = 0;
+  // Catering and MealBox customers can choose a 40% advance or full payment.
+  const advanceAmount = Math.round(numericTotal * 0.40 * 100) / 100;
 
   const subtotal = Number(params.subtotal) || Number(totalAmount);
   const deliveryPrice = Number(params.deliveryPrice) || 0;
@@ -518,6 +519,8 @@ export default function CheckOutScreen() {
 
   // ✅ "razorpay" is now the ONLY payment method — all 5 cards route to it.
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"upi" | "card" | "netbanking" | "wallet" | "">("");
+  const [selectedPaymentOption, setSelectedPaymentOption] = useState<"advance" | "full">("full");
+  const isAdvancePaymentEligible = isCateringFlow || isMealBoxFlowExplicit;
   const [showDetails, setShowDetails] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -681,7 +684,10 @@ export default function CheckOutScreen() {
      4. Verify signature + captured payment on the backend.
      5. Navigate only after successful server-side verification.
      ───────────────────────────────────────────────────────────────── */
-  const handleRazorpayPayment = async () => {
+  const handleRazorpayPayment = async (paymentOptionOverride?: "advance" | "full") => {
+    const effectivePaymentOption = paymentOptionOverride || selectedPaymentOption;
+    const payableAmount = isAdvancePaymentEligible && effectivePaymentOption === "advance" ? advanceAmount : numericTotal;
+    const remainingBalance = Math.max(0, Math.round((numericTotal - payableAmount) * 100) / 100);
     if (loading) return;
     if (!selectedPaymentMethod) {
       Alert.alert("Select a payment method", "Please choose UPI, Cards, Net Banking or Wallets to continue.");
@@ -721,8 +727,9 @@ export default function CheckOutScreen() {
         discount: String(discount),
         appliedCoupon: appliedCoupon || "",
         totalAmount: String(numericTotal),
-        advancePaidAmount: "0",
-        balanceAmountToCollect: String(numericTotal),
+        advancePaidAmount: String(payableAmount),
+        balanceAmountToCollect: String(remainingBalance),
+        paymentOption: isAdvancePaymentEligible ? effectivePaymentOption : "full",
         paymentMethod: selectedPaymentMethod,
         selections: parsedSelections ? JSON.stringify(parsedSelections) : null,
         items: JSON.stringify(parsedItems),
@@ -778,7 +785,7 @@ export default function CheckOutScreen() {
         throw new Error(orderRes.data?.message || "KatBox could not create your order. Please try again.");
       }
 
-      // Step 2: Create a Razorpay order for the FULL MongoDB order total.
+      // Step 2: Create a Razorpay order for the selected advance or full amount.
       const createRes = await api.post("/api/payments/create-order", { orderId: katboxOrderId });
       if (!createRes.data?.success || !createRes.data?.razorpayOrderId || !createRes.data?.keyId) {
         throw new Error(createRes.data?.message || "Failed to initialize Razorpay checkout.");
@@ -865,6 +872,8 @@ export default function CheckOutScreen() {
       setLoading(false);
     }
   };
+
+  const handleRazorpayPaymentWithOption = (option: "advance" | "full") => handleRazorpayPayment(option);
 
   const handleConfirmPlaceOrder = () => {
     if (!selectedPaymentMethod) {
@@ -1589,7 +1598,7 @@ export default function CheckOutScreen() {
         {/* 1. UPI Payment Option — now ENABLED, opens Razorpay (UPI) */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => setSelectedPaymentMethod("upi")}
+          onPress={() => { setSelectedPaymentMethod("upi"); setSelectedPaymentOption("full"); openConfirmModal(); }}
           style={[
             styles.paymentOptionCard,
             selectedPaymentMethod === "upi" && styles.paymentOptionCardActive,
@@ -1618,7 +1627,7 @@ export default function CheckOutScreen() {
         {/* 2. Cards Option — now ENABLED, opens Razorpay (Cards) */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => setSelectedPaymentMethod("card")}
+          onPress={() => { setSelectedPaymentMethod("card"); setSelectedPaymentOption("full"); openConfirmModal(); }}
           style={[
             styles.paymentOptionCard,
             selectedPaymentMethod === "card" && styles.paymentOptionCardActive,
@@ -1642,7 +1651,7 @@ export default function CheckOutScreen() {
         {/* 3. Net Banking Option — now ENABLED, opens Razorpay (Net Banking) */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => setSelectedPaymentMethod("netbanking")}
+          onPress={() => { setSelectedPaymentMethod("netbanking"); setSelectedPaymentOption("full"); openConfirmModal(); }}
           style={[
             styles.paymentOptionCard,
             selectedPaymentMethod === "netbanking" && styles.paymentOptionCardActive,
@@ -1666,7 +1675,7 @@ export default function CheckOutScreen() {
         {/* 4. Wallets Option — now ENABLED, opens Razorpay (Wallets) */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => setSelectedPaymentMethod("wallet")}
+          onPress={() => { setSelectedPaymentMethod("wallet"); setSelectedPaymentOption("full"); openConfirmModal(); }}
           style={[
             styles.paymentOptionCard,
             selectedPaymentMethod === "wallet" && styles.paymentOptionCardActive,
@@ -1880,6 +1889,8 @@ export default function CheckOutScreen() {
             style={[
               styles.confirmCard,
               {
+                maxHeight: Math.max(320, windowHeight - insets.top - insets.bottom - 36),
+                width: Math.min(windowWidth - 32, 440),
                 opacity: confirmOpacity,
                 transform: [
                   { scale: confirmScale },
@@ -1888,17 +1899,24 @@ export default function CheckOutScreen() {
               },
             ]}
           >
+            <ScrollView
+              style={styles.confirmCardScroll}
+              contentContainerStyle={styles.confirmCardContent}
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+              keyboardShouldPersistTaps="handled"
+            >
             <View style={styles.confirmIconCircle}>
               <Ionicons name="card-outline" size={28} color="#FAF8F5" />
             </View>
 
-            <Text style={styles.confirmTitle}>Confirm Secure Payment</Text>
+            <Text style={styles.confirmTitle}>{isAdvancePaymentEligible ? "Choose Payment Amount" : "Confirm Secure Payment"}</Text>
 
             <Text style={styles.confirmSubtitle}>
-              You will be redirected to Razorpay {selectedPaymentMethod.toUpperCase()} checkout to
-              pay{" "}
-              <Text style={{ fontWeight: "900", color: "#166538" }}>₹{numericTotal}</Text>{" "}
-              now. Your order will be confirmed instantly after payment.
+              {isAdvancePaymentEligible
+                ? `You selected ${selectedPaymentMethod.toUpperCase()}. Choose the amount you would like to pay now.`
+                : `You selected ${selectedPaymentMethod.toUpperCase()}. Continue to Razorpay to complete your secure payment.`}
+              {" "}Your order will be confirmed after Razorpay verifies the payment.
             </Text>
 
             <View style={styles.confirmSummaryStrip}>
@@ -1908,37 +1926,55 @@ export default function CheckOutScreen() {
               </Text>
             </View>
 
-            <View style={styles.confirmBtnRow}>
-              <TouchableOpacity
-                style={styles.confirmCancelBtn}
-                activeOpacity={0.85}
-                disabled={loading}
-                onPress={() => closeConfirmModal()}
-              >
-                <Text style={styles.confirmCancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.confirmOkBtn, loading && { opacity: 0.75 }]}
-                activeOpacity={0.9}
-                disabled={loading}
-                onPress={handleConfirmPlaceOrder}
-              >
-                {loading ? (
-                  <ActivityIndicator size="small" color="#FAF8F5" />
-                ) : (
-                  <>
-                    <Ionicons
-                      name="shield-checkmark-outline"
-                      size={16}
-                      color="#FAF8F5"
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={styles.confirmOkBtnText}>Pay ₹{numericTotal} Securely</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
+            {isAdvancePaymentEligible ? (
+              <View style={styles.confirmPaymentOptions}>
+                <TouchableOpacity
+                  style={[styles.confirmPaymentOption, styles.confirmAdvanceOption, loading && { opacity: 0.75 }]}
+                  activeOpacity={0.88}
+                  disabled={loading}
+                  onPress={() => { setSelectedPaymentOption("advance"); closeConfirmModal(() => setTimeout(() => handleRazorpayPaymentWithOption("advance"), 100)); }}
+                >
+                  <View style={styles.confirmOptionTextBlock}>
+                    <Text style={styles.confirmOptionEyebrow}>PAY 40% NOW</Text>
+                    <Text style={styles.confirmOptionTitle}>Advance Payment</Text>
+                    <Text style={styles.confirmOptionDescription}>Pay the remaining balance later</Text>
+                  </View>
+                  <View style={styles.confirmOptionAmountBlock}>
+                    <Text style={styles.confirmAdvanceAmount}>₹{advanceAmount.toFixed(2)}</Text>
+                    <Ionicons name="arrow-forward-circle" size={20} color="#FFFFFF" />
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.confirmPaymentOption, styles.confirmFullOption, loading && { opacity: 0.75 }]}
+                  activeOpacity={0.88}
+                  disabled={loading}
+                  onPress={() => { setSelectedPaymentOption("full"); closeConfirmModal(() => setTimeout(() => handleRazorpayPaymentWithOption("full"), 100)); }}
+                >
+                  <View style={styles.confirmOptionTextBlock}>
+                    <Text style={styles.confirmFullEyebrow}>PAY 100% NOW</Text>
+                    <Text style={styles.confirmFullTitle}>Full Payment</Text>
+                    <Text style={styles.confirmFullDescription}>Nothing left to pay later</Text>
+                  </View>
+                  <View style={styles.confirmOptionAmountBlock}>
+                    <Text style={styles.confirmFullAmount}>₹{numericTotal.toFixed(2)}</Text>
+                    <Ionicons name="arrow-forward-circle" size={20} color="#166538" />
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.confirmCancelBtn} activeOpacity={0.85} disabled={loading} onPress={() => closeConfirmModal()}>
+                  <Text style={styles.confirmCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.confirmBtnRow}>
+                <TouchableOpacity style={styles.confirmCancelBtn} activeOpacity={0.85} disabled={loading} onPress={() => closeConfirmModal()}>
+                  <Text style={styles.confirmCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.confirmOkBtn, loading && { opacity: 0.75 }]} activeOpacity={0.9} disabled={loading} onPress={handleConfirmPlaceOrder}>
+                  {loading ? <ActivityIndicator size="small" color="#FAF8F5" /> : <Text style={styles.confirmOkBtnText}>Pay ₹{numericTotal.toFixed(2)} Securely</Text>}
+                </TouchableOpacity>
+              </View>
+            )}
+            </ScrollView>
           </Animated.View>
         </View>
       </Modal>
@@ -3866,69 +3902,80 @@ const styles = StyleSheet.create({
   },
   confirmModalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(11, 38, 29, 0.45)",
+    backgroundColor: "rgba(11, 38, 29, 0.52)",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 26,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
   },
   confirmCard: {
     width: "100%",
-    maxWidth: 420,
+    maxWidth: 440,
     backgroundColor: "#FAF8F5",
-    borderRadius: 28,
-    paddingHorizontal: 22,
-    paddingTop: 26,
-    paddingBottom: 20,
-    alignItems: "center",
+    borderRadius: 26,
     borderWidth: 1,
-    borderColor: "rgba(15, 56, 42, 0.08)",
+    borderColor: "rgba(15, 56, 42, 0.10)",
+    overflow: "hidden",
     shadowColor: "#0F382A",
     shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.2,
-    shadowRadius: 30,
+    shadowOpacity: 0.22,
+    shadowRadius: 28,
     elevation: 26,
   },
+  confirmCardScroll: {
+    width: "100%",
+    flexGrow: 0,
+  },
+  confirmCardContent: {
+    width: "100%",
+    alignItems: "center",
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 20,
+  },
   confirmIconCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
     backgroundColor: "#166538",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
+    marginBottom: 14,
     borderWidth: 4,
     borderColor: "rgba(22, 101, 52, 0.12)",
     shadowColor: "#166534",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    elevation: 5,
   },
   confirmTitle: {
-    fontSize: 19,
+    fontSize: 20,
     fontWeight: "900",
     color: "#0B261D",
-    letterSpacing: -0.3,
+    letterSpacing: -0.35,
     marginBottom: 8,
     textAlign: "center",
   },
   confirmSubtitle: {
+    width: "100%",
     fontSize: 13,
     color: "#5B756C",
     fontWeight: "500",
     textAlign: "center",
-    lineHeight: 20,
+    lineHeight: 19,
     marginBottom: 14,
+    paddingHorizontal: 2,
   },
   confirmSummaryStrip: {
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "stretch",
     backgroundColor: "#FFFFFF",
-    borderRadius: 14,
+    borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    marginBottom: 20,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
   },
@@ -3939,20 +3986,109 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0F382A",
   },
+  confirmPaymentOptions: {
+    width: "100%",
+    gap: 11,
+    marginTop: 2,
+  },
+  confirmPaymentOption: {
+    width: "100%",
+    minHeight: 88,
+    borderRadius: 17,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderWidth: 1,
+  },
+  confirmAdvanceOption: {
+    backgroundColor: "#166538",
+    borderColor: "#166538",
+    shadowColor: "#166538",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  confirmFullOption: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "rgba(22, 101, 56, 0.28)",
+  },
+  confirmOptionTextBlock: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  confirmOptionEyebrow: {
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.05,
+  },
+  confirmOptionTitle: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  confirmOptionDescription: {
+    color: "rgba(255,255,255,0.82)",
+    fontSize: 11,
+    fontWeight: "500",
+    lineHeight: 15,
+  },
+  confirmOptionAmountBlock: {
+    alignItems: "flex-end",
+    justifyContent: "center",
+    gap: 6,
+    flexShrink: 0,
+  },
+  confirmAdvanceAmount: {
+    color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "900",
+    fontVariant: ["tabular-nums"],
+  },
+  confirmFullEyebrow: {
+    color: "#668176",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.05,
+  },
+  confirmFullTitle: {
+    color: "#0B261D",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  confirmFullDescription: {
+    color: "#6B8178",
+    fontSize: 11,
+    fontWeight: "500",
+    lineHeight: 15,
+  },
+  confirmFullAmount: {
+    color: "#166538",
+    fontSize: 17,
+    fontWeight: "900",
+    fontVariant: ["tabular-nums"],
+  },
   confirmBtnRow: {
     flexDirection: "row",
     width: "100%",
     gap: 10,
   },
   confirmCancelBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 18,
+    width: "100%",
+    minHeight: 46,
+    paddingVertical: 12,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.14)",
+    marginTop: 12,
   },
   confirmCancelBtnText: {
     fontSize: 14,
@@ -3974,11 +4110,23 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 6,
   },
+  confirmFullPayBtn: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#166538",
+    borderRadius: 14,
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  confirmFullPayBtnText: { color: "#166538", fontSize: 14, fontWeight: "900" },
   confirmOkBtnText: {
     color: "#FAF8F5",
     fontSize: 14,
     fontWeight: "800",
     letterSpacing: 0.2,
+    textAlign: "center",
   },
 
   // ✅ Delivery info flag popup styles (emoji on neutral bg, no green chip)

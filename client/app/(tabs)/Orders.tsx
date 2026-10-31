@@ -1292,12 +1292,12 @@ export default function MyOrdersScreen() {
 
       const status = (order.orderStatus || "Placed").toLowerCase();
       const paymentStatus = String(order.paymentStatus || "").toLowerCase();
+      const outstandingBalance = Number(order.balanceAmountToCollect ?? 0);
       const isPaymentCollected =
         paymentStatus === "collected" ||
-        paymentStatus === "paid" ||
         paymentStatus === "cash collected" ||
         paymentStatus === "fully paid (balance collected)" ||
-        order.paymentCaptured === true;
+        ((paymentStatus === "paid" || order.paymentCaptured === true) && outstandingBalance <= 0);
 
       const isCompletedState =
         status === "completed" ||
@@ -2144,9 +2144,9 @@ export default function MyOrdersScreen() {
     const detailPaymentStatusStr = String(selectedOrderDetails.paymentStatus || "").toLowerCase();
     const isDetailCashCollected =
       detailPaymentStatusStr === "collected" ||
-      detailPaymentStatusStr === "paid" ||
+      detailPaymentStatusStr === "cash collected" ||
       detailPaymentStatusStr.includes("fully paid") ||
-      selectedOrderDetails.paymentCaptured === true;
+      ((detailPaymentStatusStr === "paid" || selectedOrderDetails.paymentCaptured === true) && detailBalanceToCollect <= 0);
     const detailSpecial = resolveSpecialInstruction(selectedOrderDetails);
     const detailHasSpecial = !!(detailSpecial.tag || detailSpecial.label || detailSpecial.text);
 
@@ -2194,10 +2194,7 @@ export default function MyOrdersScreen() {
     const isDeliveredCurrent =
       detailStatus.toLowerCase() === "delivered" ||
       detailStatus.toLowerCase() === "completed" ||
-      detailStatus.toLowerCase() === "cash collected" ||
-      detailPaymentStatusStr === "collected" ||
-      detailPaymentStatusStr === "paid" ||
-      selectedOrderDetails.paymentCaptured === true;
+      detailStatus.toLowerCase() === "cash collected";
 
     const { dayName: schedDayName, dayNumber: schedDayNum, month: schedMonth } = parseDateParts(detailStartDate);
 
@@ -2746,7 +2743,7 @@ export default function MyOrdersScreen() {
                       color={detailRefundProcessed ? "#15803D" : "#16A34A"}
                     />
                     <Text style={styles.orderSummaryLabel}>
-                      {detailRefundProcessed ? "Advance amount refunded" : "Advance Paid"}
+                      {detailRefundProcessed ? "Advance amount refunded" : detailBalanceToCollect > 0 ? "Advance Paid" : "Amount Paid"}
                     </Text>
                   </View>
                   <Text style={[styles.orderSummaryValue, { color: detailRefundProcessed ? "#15803D" : "#16A34A", fontWeight: "800" }]}>
@@ -3528,8 +3525,7 @@ export default function MyOrdersScreen() {
               orderStatusString.toLowerCase() === "completed" ||
               orderStatusString.toLowerCase() === "cash collected" ||
               orderPaymentStatusString === "collected" ||
-              orderPaymentStatusString === "paid" ||
-              order.paymentCaptured === true;
+              ((orderPaymentStatusString === "paid" || order.paymentCaptured === true) && Number(order.balanceAmountToCollect ?? 0) <= 0);
             const dynamicChefName = order.chefName || order.restaurantName || "Partner Chef";
 
             const cancelledBadgeText = getCancellationBadgeLabel(order);

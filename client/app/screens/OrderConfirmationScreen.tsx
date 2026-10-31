@@ -920,8 +920,7 @@ export default function OrderConfirmationScreen() {
               : "Order Confirmed!"}
           </Text>
           <Text style={styles.orderConfirmedSubtitle}>
-            {/* ✅ Razorpay orders are paid in full upfront, so we display that here. */}
-            {`Payment of ₹${totalAmount} was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
+            {`Payment of ₹${advancePaidAmount.toFixed(2)} was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
           </Text>
 
           {/* Order ID & UTR Pill */}
@@ -1178,7 +1177,7 @@ export default function OrderConfirmationScreen() {
 
               <View style={styles.solidDivider} />
               <View style={styles.totalPaidRow}>
-                <Text style={styles.totalPaidLabelText}>Total Paid</Text>
+                <Text style={styles.totalPaidLabelText}>Order Total</Text>
                 <Text style={styles.totalPaidValueText}>₹{totalAmount}</Text>
               </View>
             </View>
@@ -1231,7 +1230,7 @@ export default function OrderConfirmationScreen() {
 
               <View style={styles.solidDivider} />
               <View style={styles.totalPaidRow}>
-                <Text style={styles.totalPaidLabelText}>Total Paid</Text>
+                <Text style={styles.totalPaidLabelText}>Order Total</Text>
                 <Text style={styles.cateringTotalAmountText}>₹{totalAmount}</Text>
               </View>
             </View>
@@ -1301,11 +1300,29 @@ export default function OrderConfirmationScreen() {
 
               <View style={styles.solidDivider} />
               <View style={styles.totalPaidRow}>
-                <Text style={styles.totalPaidLabelText}>Total Paid</Text>
+                <Text style={styles.totalPaidLabelText}>Order Total</Text>
                 <Text style={styles.totalPaidValueText}>₹{totalAmount}</Text>
               </View>
             </View>
           )}
+
+          <View style={{ backgroundColor: "#FFFFFF", borderRadius: 18, padding: 16, marginTop: 14, marginBottom: 16, borderWidth: 1, borderColor: "rgba(15,56,42,0.10)" }}>
+            <Text style={{ color: "#0F382A", fontSize: 15, fontWeight: "900", marginBottom: 12 }}>Payment Summary</Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+              <Text style={{ color: "#64748B", fontSize: 13, fontWeight: "600" }}>Total Order Amount</Text>
+              <Text style={{ color: "#0F172A", fontSize: 13, fontWeight: "800" }}>₹{numericTotal.toFixed(2)}</Text>
+            </View>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+              <Text style={{ color: "#64748B", fontSize: 13, fontWeight: "600" }}>Amount Paid</Text>
+              <Text style={{ color: "#15803D", fontSize: 13, fontWeight: "900" }}>₹{Number(advancePaidAmount).toFixed(2)}</Text>
+            </View>
+            <View style={{ height: 1, backgroundColor: "#E2E8F0", marginVertical: 5 }} />
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text style={{ color: "#0F382A", fontSize: 14, fontWeight: "900" }}>Balance Amount</Text>
+              <Text style={{ color: balanceAmountToCollect > 0 ? "#B45309" : "#15803D", fontSize: 14, fontWeight: "900" }}>₹{Number(balanceAmountToCollect).toFixed(2)}</Text>
+            </View>
+            {balanceAmountToCollect > 0 ? <Text style={{ color: "#B45309", fontSize: 11, fontWeight: "600", marginTop: 8 }}>The remaining balance is payable as per your order arrangement.</Text> : <Text style={{ color: "#15803D", fontSize: 11, fontWeight: "600", marginTop: 8 }}>Your order is fully paid.</Text>}
+          </View>
 
           {/* ========== IMPROVED UPCOMING DELIVERIES (MEALBOX ONLY) ========== */}
           {!isCateringFlow && !isHomemadeFlow && scheduledDatesArray.length > 0 && (

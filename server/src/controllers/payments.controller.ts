@@ -46,7 +46,7 @@ const verifySignature = (orderId: string, paymentId: string, signature: string):
 /**
  * POST /api/payments/create-order
  * Body: { orderId: string }
- * Creates a Razorpay order for the FULL amount already saved in MongoDB.
+ * Creates a Razorpay order for the advance or full amount already saved in MongoDB.
  * The amount is never accepted from the client.
  */
 export const createPaymentOrder = async (req: AuthRequest, res: Response) => {
@@ -73,7 +73,8 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response) => {
       return res.status(409).json({ success: false, message: "This KatBox order is already paid." });
     }
 
-    const amountInPaise = Math.round(Number(order.totalAmount) * 100);
+    const amountToPay = Number(order.advancePaidAmount ?? order.totalAmount);
+    const amountInPaise = Math.round(amountToPay * 100);
     if (!Number.isSafeInteger(amountInPaise) || amountInPaise <= 0) {
       return res.status(400).json({ success: false, message: "The stored KatBox order total is invalid." });
     }
@@ -85,15 +86,16 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response) => {
       notes: {
         katboxOrderId: String(order.orderId),
         serviceType: String(order.serviceType || ""),
-        paymentPurpose: "full_order_payment",
+        paymentPurpose: Number(order.balanceAmountToCollect || 0) > 0 ? "40_percent_advance" : "full_order_payment",
       },
     });
 
     order.razorpayOrderId = razorpayOrder.id;
     order.paymentStatus = "Payment Pending";
     order.paymentCaptured = false;
-    order.advancePaidAmount = 0;
-    order.balanceAmountToCollect = Number(order.totalAmount);
+    // Keep the amount split calculated by the authenticated order-creation flow.
+    order.advancePaidAmount = amountToPay;
+    order.balanceAmountToCollect = Math.max(0, Number(order.totalAmount) - amountToPay);
     await order.save();
 
     return res.status(200).json({
@@ -113,7 +115,7 @@ export const createPaymentOrder = async (req: AuthRequest, res: Response) => {
 /**
  * POST /api/payments/verify
  * Body: { orderId, razorpay_order_id, razorpay_payment_id, razorpay_signature }
- * Verifies the signature and confirms the captured FULL payment. It updates
+ * Verifies the signature and confirms the exact advance or full amount. It updates
  * the existing MongoDB order; it never creates a duplicate order document.
  */
 export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Response) => {
@@ -153,7 +155,8 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
       return res.status(200).json({ success: true, message: "Payment was already verified.", order });
     }
 
-    const expectedPaise = Math.round(Number(order.totalAmount) * 100);
+    const expectedPaymentAmount = Number(order.advancePaidAmount ?? order.totalAmount);
+    const expectedPaise = Math.round(expectedPaymentAmount * 100);
     if (!Number.isSafeInteger(expectedPaise) || expectedPaise <= 0) {
       return res.status(400).json({ success: false, message: "The stored KatBox order total is invalid." });
     }
@@ -185,8 +188,9 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
     order.paymentStatus = "Paid";
     order.paymentCaptured = true;
     order.isAdvanceVerified = true;
-    order.advancePaidAmount = Number(order.totalAmount);
-    order.balanceAmountToCollect = 0;
+    // Keep the paid advance and outstanding balance intact for partial payments.
+    order.advancePaidAmount = expectedPaymentAmount;
+    order.balanceAmountToCollect = Math.max(0, Math.round((Number(order.totalAmount) - expectedPaymentAmount) * 100) / 100);
     order.razorpayOrderId = razorpayOrderId;
     order.razorpayPaymentId = razorpayPaymentId;
     order.razorpaySignature = razorpaySignature;
@@ -195,7 +199,7 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
     order.statusTimeline.push({
       status: "Payment Received",
       timestamp: paidAt,
-      note: `Full payment of ₹${order.totalAmount} verified by Razorpay (${razorpayPaymentId}).`,
+      note: `${order.balanceAmountToCollect > 0 ? "Advance" : "Full payment"} of ₹${expectedPaymentAmount} verified by Razorpay (${razorpayPaymentId}).`,
     });
     const updatedOrder = await order.save();
 
@@ -248,7 +252,7 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
         await sendExpoPush({
           token: String(chefUser.pushToken),
           title: `🔔 New Paid Order ${order.orderId}`,
-          body: `${order.userName || "Customer"} placed a paid order of ₹${order.totalAmount}. Tap to accept now!`,
+          body: `${order.userName || "Customer"} paid ₹${expectedPaymentAmount} ${Number(order.balanceAmountToCollect || 0) > 0 ? "advance" : "in full"} for an order of ₹${order.totalAmount}. Tap to accept now!`,
           data: {
             orderId: order.orderId,
             screen: "chef-orders",
@@ -266,7 +270,7 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
       console.error("Razorpay verified but order notification failed:", notifyError);
     }
 
-    return res.status(200).json({ success: true, message: "Full Razorpay payment verified.", order: updatedOrder });
+    return res.status(200).json({ success: true, message: "Razorpay payment verified.", order: updatedOrder });
   } catch (error: any) {
     console.error("Error verifying Razorpay payment:", error);
     return res.status(500).json({

@@ -892,12 +892,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     let numericTotal = Number(totalAmount) || 0;
     const isRazorpayPayment = ["razorpay", "upi", "card", "netbanking", "wallet"].includes(String(safePaymentMethod || "").toLowerCase());
-    let finalAdvance = isRazorpayPayment
-      ? 0
-      : (advancePaidAmount !== undefined ? Number(advancePaidAmount) : Math.round(numericTotal * 0.40 * 100) / 100);
-    let finalBalance = isRazorpayPayment
-      ? numericTotal
-      : (balanceAmountToCollect !== undefined ? Number(balanceAmountToCollect) : Math.round((numericTotal - finalAdvance) * 100) / 100);
+    const isAdvanceEligibleService = resolvedServiceType === "catering" || resolvedServiceType === "mealbox";
+    const requestedPaymentOption = String(req.body?.paymentOption || "full").toLowerCase() === "advance" ? "advance" : "full";
+    let finalAdvance = 0;
+    let finalBalance = 0;
 
     let resolvedChefPhone = "";
     let resolvedChefDoc: any = null;
@@ -1013,8 +1011,14 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       0,
       (Number(subtotal) || 0) + finalDeliveryPrice - (Number(discount) || 0)
     );
-    finalAdvance = Math.round(numericTotal * 0.40 * 100) / 100;
-    finalBalance = Math.round((numericTotal - finalAdvance) * 100) / 100;
+    // The backend recalculates the payable amount from its final server-side total.
+    // Only catering and mealbox support the 40% advance option.
+    finalAdvance = isRazorpayPayment
+      ? (isAdvanceEligibleService && requestedPaymentOption === "advance"
+          ? Math.round(numericTotal * 0.40 * 100) / 100
+          : numericTotal)
+      : (advancePaidAmount !== undefined ? Math.max(0, Number(advancePaidAmount) || 0) : Math.round(numericTotal * 0.40 * 100) / 100);
+    finalBalance = Math.max(0, Math.round((numericTotal - finalAdvance) * 100) / 100);
 
     // ────────────────────────────────────────────────────────────────
     // ✅ Compute absolute delivery timestamps at order placement.
@@ -1214,6 +1218,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: false,
         paymentMethod: safePaymentMethod || "cod",
+        paymentOption: isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full",
         paymentStatus: isRazorpayPayment ? "Payment Pending" : "Verification Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for homemade / quickbites flow
@@ -1233,7 +1238,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         // ✅ Persist delivery type for homemade / quickbites flow
         deliveryType: safeDeliveryType,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? "Awaiting full Razorpay payment" : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -1296,6 +1301,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: false,
         paymentMethod: safePaymentMethod || "cod",
+        paymentOption: isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full",
         paymentStatus: isRazorpayPayment ? "Payment Pending" : "Verification Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for catering flow
@@ -1311,7 +1317,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           ? { specialInstructions: resolvedQuickSpecialInstructions }
           : {}),
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? "Awaiting full Razorpay payment" : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -1409,6 +1415,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: false,
         paymentMethod: safePaymentMethod || "cod",
+        paymentOption: isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full",
         paymentStatus: isRazorpayPayment ? "Payment Pending" : "Verification Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for mealbox flow
@@ -1426,7 +1433,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         // ✅ Persist delivery type for mealbox flow
         deliveryType: safeDeliveryType,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? "Awaiting full Razorpay payment" : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
         ],
       });
 
@@ -1525,7 +1532,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     return res.status(201).json({
       success: true,
-      message: isRazorpayPayment ? "Order saved. Awaiting secure payment." : "Order placed successfully. Advance verification pending.",
+      message: isRazorpayPayment ? `Order saved. Awaiting Razorpay payment of ₹${finalAdvance}.` : "Order placed successfully. Advance verification pending.",
       order: savedOrder,
     });
   } catch (error: any) {

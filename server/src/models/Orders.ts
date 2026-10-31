@@ -239,6 +239,8 @@ export interface IBaseOrder extends Document {
 
   paymentMethod: string;
 
+  paymentOption?: string;
+
   paymentStatus: string;
 
   orderStatus: string;
@@ -719,6 +721,8 @@ const BaseOrderSchema: Schema = new Schema(
     isAdvanceVerified: { type: Boolean, default: false },
 
     paymentMethod: { type: String, required: true, default: "cod" },
+
+    paymentOption: { type: String, enum: ["advance", "full", ""], default: "full" },
 
     paymentStatus: { type: String, default: "Verification Pending" },
 
