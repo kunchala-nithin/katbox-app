@@ -646,18 +646,20 @@ export default function CartScreen() {
   const plates = orderDetails?.guests || 50;
   const pricePerPlate = Number(menu?.finalPrice) || Number(menu?.price) || 0;
 
-  const getDeliveryPrice = (delivery: string) => {
-    if (!delivery) return 0;
-    if (delivery === "Standard") return 290;
-    if (delivery === "Doorstep") return 803;
-    if (delivery === "Doorstep + Service") return 1025;
-    return 0;
-  };
-
-  const cateringPackageFee =
-    Number(cartData?.deliveryPrice) > 0
-      ? Number(cartData.deliveryPrice)
-      : getDeliveryPrice(resolvedDeliveryOption || orderDetails?.delivery);
+  // Catering delivery pricing is read from the amount saved with the cart
+  // by CateringOrderReview. Do not calculate it from a hardcoded service map:
+  // each selected service can carry its own dynamically configured price.
+  const cateringPackageFee = (() => {
+    const savedDeliveryPrice =
+      cartData?.deliveryPrice ??
+      orderDetails?.deliveryPrice ??
+      orderDetails?.deliveryServicePrice ??
+      0;
+    const parsedDeliveryPrice = Number(savedDeliveryPrice);
+    return Number.isFinite(parsedDeliveryPrice) && parsedDeliveryPrice >= 0
+      ? parsedDeliveryPrice
+      : 0;
+  })();
   const deliveryPrice =
     (isHomemadeFlow || isMealBoxFlow)
       ? (distanceDeliveryFee ?? 0)
@@ -667,9 +669,12 @@ export default function CartScreen() {
     return sum + Number(entry.price || 0) * Number(entry.count || 0) * plates;
   }, 0);
 
+  // Catering base subtotal is strictly price-per-plate multiplied by guests.
+  // Add-ons remain separate so they are not incorrectly included in that base.
+  const baseSubtotal = plates * pricePerPlate;
   const subtotal = (isHomemadeFlow || isMealBoxFlow)
     ? (cartData?.totalPrice || 0)
-    : (plates * pricePerPlate + totalAddonsPriceCombined);
+    : (baseSubtotal + totalAddonsPriceCombined);
 
   const finalTotal = Math.max(0, subtotal + deliveryPrice - discount);
 
@@ -2236,12 +2241,25 @@ export default function CartScreen() {
                 </View>
                 <View style={styles.breakupRow}>
                   <Text style={styles.breakupLabel}>Base Subtotal</Text>
-                  <Text style={styles.breakupValue}>₹{subtotal}</Text>
+                  <Text style={styles.breakupValue}>₹{baseSubtotal.toLocaleString("en-IN")}</Text>
                 </View>
+                {totalAddonsPriceCombined > 0 && (
+                  <View style={styles.breakupRow}>
+                    <Text style={styles.breakupLabel}>Add-ons</Text>
+                    <Text style={styles.breakupValue}>
+                      ₹{totalAddonsPriceCombined.toLocaleString("en-IN")}
+                    </Text>
+                  </View>
+                )}
                 <View style={styles.breakupRow}>
-                  <Text style={styles.breakupLabel}>Delivery Service</Text>
-                  <Text style={[styles.breakupValue, { flexShrink: 1, textAlign: "right" }]}>
-                    {resolvedDeliveryOption || "Standard"}
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={styles.breakupLabel}>Delivery Service</Text>
+                    <Text style={{ color: "#71847B", fontSize: 11, marginTop: 2 }}>
+                      {resolvedDeliveryOption || "Standard"}
+                    </Text>
+                  </View>
+                  <Text style={[styles.breakupValue, { flexShrink: 0, textAlign: "right" }]}>
+                    ₹{cateringPackageFee.toLocaleString("en-IN")}
                   </Text>
                 </View>
                 {discount > 0 && (

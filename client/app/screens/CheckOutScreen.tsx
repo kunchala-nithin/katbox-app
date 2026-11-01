@@ -445,6 +445,16 @@ export default function CheckOutScreen() {
     }
   }, [rawAddons]);
 
+  // ✅ Catering price breakdown mirrors CartScreen:
+  // Base subtotal = price per plate × guest count.
+  // The CartScreen subtotal already includes the add-ons amount, so derive
+  // the add-ons line from the authoritative subtotal to avoid double-counting
+  // or displaying a breakdown that does not add up to the order total.
+  const cateringBaseSubtotal = Math.max(0, pricePerPlate * guests);
+  const cateringAddonsTotal = isCateringFlow
+    ? Math.max(0, Math.round((subtotal - cateringBaseSubtotal) * 100) / 100)
+    : 0;
+
   const isMealBoxFlow = serviceType === "mealbox" || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
 
   const [showPreviewModal, setShowPreviewModal] = useState(false);
@@ -1740,19 +1750,31 @@ export default function CheckOutScreen() {
             <>
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Price Per Plate</Text>
-                <Text style={styles.breakupLineValue}>₹{pricePerPlate}</Text>
+                <Text style={styles.breakupLineValue}>₹{pricePerPlate.toLocaleString("en-IN")}</Text>
               </View>
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Total Guests</Text>
                 <Text style={styles.breakupLineValue}>× {guests}</Text>
               </View>
               <View style={styles.breakupLineRow}>
-                <Text style={styles.breakupLineLabel}>Platter Subtotal</Text>
-                <Text style={styles.breakupLineValue}>₹{subtotal}</Text>
+                <Text style={styles.breakupLineLabel}>Base Subtotal</Text>
+                <Text style={styles.breakupLineValue}>
+                  ₹{cateringBaseSubtotal.toLocaleString("en-IN")}
+                </Text>
               </View>
+              {cateringAddonsTotal > 0 && (
+                <View style={styles.breakupLineRow}>
+                  <Text style={styles.breakupLineLabel}>Add-ons</Text>
+                  <Text style={styles.breakupLineValue}>
+                    ₹{cateringAddonsTotal.toLocaleString("en-IN")}
+                  </Text>
+                </View>
+              )}
               <View style={styles.breakupLineRow}>
-                <Text style={styles.breakupLineLabel}>Delivery ({deliveryType})</Text>
-                <Text style={styles.breakupLineValue}>₹{deliveryPrice}</Text>
+                <Text style={styles.breakupLineLabel}>Delivery Service ({deliveryType})</Text>
+                <Text style={styles.breakupLineValue}>
+                  ₹{deliveryPrice.toLocaleString("en-IN")}
+                </Text>
               </View>
             </>
           ) : isHomemadeFlow ? (
