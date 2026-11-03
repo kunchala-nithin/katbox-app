@@ -665,17 +665,15 @@ export default function CartScreen() {
       ? (distanceDeliveryFee ?? 0)
       : cateringPackageFee;
 
-  const totalAddonsPriceCombined = cartAddons.reduce((sum: number, entry: any) => {
-    return sum + Number(entry.price || 0) * Number(entry.count || 0) * plates;
-  }, 0);
-
-  // Catering base subtotal is strictly price-per-plate multiplied by guests.
-  // Add-ons remain separate so they are not incorrectly included in that base.
+  // Catering subtotal is calculated only from the menu price per plate
+  // multiplied by the guest count. Add-ons are intentionally excluded.
   const baseSubtotal = plates * pricePerPlate;
   const subtotal = (isHomemadeFlow || isMealBoxFlow)
-    ? (cartData?.totalPrice || 0)
-    : (baseSubtotal + totalAddonsPriceCombined);
+    ? (Number(cartData?.totalPrice) || 0)
+    : baseSubtotal;
 
+  // Grand Total = Base Subtotal + Delivery Service - Coupon Discount.
+  // For catering, no add-on amount is included in this calculation.
   const finalTotal = Math.max(0, subtotal + deliveryPrice - discount);
 
   const openSheet = () => {
@@ -2243,14 +2241,6 @@ export default function CartScreen() {
                   <Text style={styles.breakupLabel}>Base Subtotal</Text>
                   <Text style={styles.breakupValue}>₹{baseSubtotal.toLocaleString("en-IN")}</Text>
                 </View>
-                {totalAddonsPriceCombined > 0 && (
-                  <View style={styles.breakupRow}>
-                    <Text style={styles.breakupLabel}>Add-ons</Text>
-                    <Text style={styles.breakupValue}>
-                      ₹{totalAddonsPriceCombined.toLocaleString("en-IN")}
-                    </Text>
-                  </View>
-                )}
                 <View style={styles.breakupRow}>
                   <View style={{ flex: 1, marginRight: 12 }}>
                     <Text style={styles.breakupLabel}>Delivery Service</Text>

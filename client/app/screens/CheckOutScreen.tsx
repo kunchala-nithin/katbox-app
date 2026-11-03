@@ -129,7 +129,7 @@ export default function CheckOutScreen() {
   const totalAmount = (params.totalAmount as string) || "687";
   const numericTotal = Number(totalAmount) || 0;
 
-  // Catering and MealBox customers can choose a 40% advance or full payment.
+  // All four service types can choose a 40% advance or full payment.
   const advanceAmount = Math.round(numericTotal * 0.40 * 100) / 100;
 
   const subtotal = Number(params.subtotal) || Number(totalAmount);
@@ -445,15 +445,9 @@ export default function CheckOutScreen() {
     }
   }, [rawAddons]);
 
-  // ✅ Catering price breakdown mirrors CartScreen:
-  // Base subtotal = price per plate × guest count.
-  // The CartScreen subtotal already includes the add-ons amount, so derive
-  // the add-ons line from the authoritative subtotal to avoid double-counting
-  // or displaying a breakdown that does not add up to the order total.
+  // ✅ Catering base subtotal = price per plate × guest count.
+  // Add-ons are excluded from the catering bill summary, matching CartScreen.
   const cateringBaseSubtotal = Math.max(0, pricePerPlate * guests);
-  const cateringAddonsTotal = isCateringFlow
-    ? Math.max(0, Math.round((subtotal - cateringBaseSubtotal) * 100) / 100)
-    : 0;
 
   const isMealBoxFlow = serviceType === "mealbox" || (!isCateringFlow && !isHomemadeFlow && parsedSelections && !Array.isArray(parsedSelections));
 
@@ -530,7 +524,8 @@ export default function CheckOutScreen() {
   // ✅ "razorpay" is now the ONLY payment method — all 5 cards route to it.
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"upi" | "card" | "netbanking" | "wallet" | "">("");
   const [selectedPaymentOption, setSelectedPaymentOption] = useState<"advance" | "full">("full");
-  const isAdvancePaymentEligible = isCateringFlow || isMealBoxFlowExplicit;
+  // All KatBox service types support the same 40% advance / 100% full-payment choice.
+  const isAdvancePaymentEligible = isCateringFlow || isHomemadeFlow || isMealBoxFlowExplicit;
   const [showDetails, setShowDetails] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -687,7 +682,7 @@ export default function CheckOutScreen() {
   };
 
   /* ─────────────────────────────────────────────────────────────────
-     RAZORPAY FULL-PAYMENT FLOW
+     RAZORPAY ADVANCE / FULL-PAYMENT FLOW
      1. Create the KatBox order in MongoDB (Payment Pending).
      2. Create a Razorpay order linked to that MongoDB orderId.
      3. Open the selected native Razorpay payment method.
@@ -1743,8 +1738,19 @@ export default function CheckOutScreen() {
             },
           ]}
         >
-          <View style={styles.modalIndicatorBar} />
-          <Text style={styles.breakupHeaderTitle}>Price Breakdown</Text>
+          <View style={styles.breakupHeaderRow}>
+            <TouchableOpacity
+              onPress={toggleDetails}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel="Close price breakdown"
+              style={styles.breakupCloseButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons name="close" size={18} color="#0F382A" />
+            </TouchableOpacity>
+            <Text style={styles.breakupHeaderTitle}>Price Breakdown</Text>
+          </View>
 
           {isCateringFlow ? (
             <>
@@ -1762,14 +1768,6 @@ export default function CheckOutScreen() {
                   ₹{cateringBaseSubtotal.toLocaleString("en-IN")}
                 </Text>
               </View>
-              {cateringAddonsTotal > 0 && (
-                <View style={styles.breakupLineRow}>
-                  <Text style={styles.breakupLineLabel}>Add-ons</Text>
-                  <Text style={styles.breakupLineValue}>
-                    ₹{cateringAddonsTotal.toLocaleString("en-IN")}
-                  </Text>
-                </View>
-              )}
               <View style={styles.breakupLineRow}>
                 <Text style={styles.breakupLineLabel}>Delivery Service ({deliveryType})</Text>
                 <Text style={styles.breakupLineValue}>
@@ -1833,21 +1831,21 @@ export default function CheckOutScreen() {
       <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View>
           <Text style={styles.bottomAmountPayableLabel}>Amount Payable</Text>
+          <Text style={styles.bottomAmountValue}>₹{numericTotal}</Text>
           <TouchableOpacity
             onPress={toggleDetails}
             activeOpacity={0.8}
-            style={{ flexDirection: "row", alignItems: "center" }}
+            accessibilityRole="button"
+            accessibilityLabel={showDetails ? "Hide price details" : "View price details"}
+            style={styles.viewDetailsLink}
           >
-            <Text style={styles.bottomAmountValue}>₹{numericTotal}</Text>
-            <View style={styles.viewDetailsBadgeContainer}>
-              <Text style={styles.viewDetailsBadgeText}>View Details</Text>
-              <Ionicons
-                name={showDetails ? "chevron-up" : "chevron-down"}
-                size={12}
-                color="#0F382A"
-                style={{ marginLeft: 2 }}
-              />
-            </View>
+            <Text style={styles.viewDetailsBadgeText}>View Details</Text>
+            <Ionicons
+              name={showDetails ? "chevron-up" : "chevron-down"}
+              size={12}
+              color="#0F382A"
+              style={{ marginLeft: 3 }}
+            />
           </TouchableOpacity>
         </View>
 
@@ -3184,11 +3182,24 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginBottom: 12,
   },
+  breakupHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  breakupCloseButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15, 56, 42, 0.07)",
+    marginRight: 10,
+  },
   breakupHeaderTitle: {
     fontSize: 16,
     fontWeight: "800",
     color: "#0B261D",
-    marginBottom: 12,
     letterSpacing: -0.2,
   },
   breakupLineRow: {
@@ -3246,21 +3257,19 @@ const styles = StyleSheet.create({
     color: "#0B261D",
     letterSpacing: -0.5,
   },
-  viewDetailsBadgeContainer: {
+  viewDetailsLink: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(15, 56, 42, 0.06)",
-    paddingHorizontal: 8,
-    paddingVertical: 2.5,
-    borderRadius: 8,
-    marginLeft: 8,
-    borderWidth: 1,
-    borderColor: "rgba(15, 56, 42, 0.1)",
+    alignSelf: "flex-start",
+    marginTop: 2,
+    paddingVertical: 2,
   },
   viewDetailsBadgeText: {
     fontSize: 11,
     fontWeight: "800",
     color: "#0F382A",
+    textDecorationLine: "underline",
+    textDecorationColor: "#0F382A",
   },
   payNowSolidButton: {
     backgroundColor: "#166534",

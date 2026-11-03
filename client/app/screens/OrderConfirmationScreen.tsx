@@ -395,9 +395,8 @@ export default function OrderConfirmationScreen() {
   const totalAmount = dbOrder ? String(dbOrder.totalAmount) : ((params.totalAmount as string) || "687");
   const numericTotal = Number(totalAmount) || 0;
   
-  // Catering payment values are read from the saved MongoDB order.
-  // For legacy records only, use paymentOption to choose a safe fallback:
-  // advance = 40% paid; full = the complete order total paid.
+  // Payment values are read from the saved MongoDB order for every service type.
+  // For legacy records only, paymentOption provides a safe 40% / 100% fallback.
   const resolvedPaymentOption = String(
     dbOrder?.paymentOption || params.paymentOption || "full"
   ).toLowerCase();
@@ -411,11 +410,9 @@ export default function OrderConfirmationScreen() {
 
   const advancePaidAmount = hasStoredAdvancePaidAmount
     ? Number(storedAdvancePaidAmount)
-    : isCateringFlow
-      ? (resolvedPaymentOption === "advance"
-          ? Math.round(numericTotal * 0.40 * 100) / 100
-          : numericTotal)
-      : Math.round(numericTotal * 0.40 * 100) / 100;
+    : resolvedPaymentOption === "advance"
+      ? Math.round(numericTotal * 0.40 * 100) / 100
+      : numericTotal;
 
   const storedBalanceAmount = dbOrder?.balanceAmountToCollect;
   const hasStoredBalanceAmount =
@@ -1345,24 +1342,30 @@ export default function OrderConfirmationScreen() {
             </View>
             <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
               <Text style={{ color: "#64748B", fontSize: 13, fontWeight: "600" }}>
-                {isCateringFlow && resolvedPaymentOption === "advance" ? "Advance Paid" : "Amount Paid"}
+                {resolvedPaymentOption === "advance" ? "Advance Paid" : "Amount Paid"}
               </Text>
               <Text style={{ color: "#15803D", fontSize: 13, fontWeight: "900" }}>₹{Number(advancePaidAmount).toFixed(2)}</Text>
             </View>
-            {isCateringFlow ? (
-              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
-                <Text style={{ color: "#64748B", fontSize: 13, fontWeight: "600" }}>Payment Option</Text>
-                <Text style={{ color: "#0F382A", fontSize: 13, fontWeight: "800" }}>
-                  {resolvedPaymentOption === "advance" ? "40% Advance" : "Full Payment"}
-                </Text>
-              </View>
-            ) : null}
-            <View style={{ height: 1, backgroundColor: "#E2E8F0", marginVertical: 5 }} />
-            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-              <Text style={{ color: "#0F382A", fontSize: 14, fontWeight: "900" }}>Balance Amount</Text>
-              <Text style={{ color: balanceAmountToCollect > 0 ? "#B45309" : "#15803D", fontSize: 14, fontWeight: "900" }}>₹{Number(balanceAmountToCollect).toFixed(2)}</Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+              <Text style={{ color: "#64748B", fontSize: 13, fontWeight: "600" }}>Payment Option</Text>
+              <Text style={{ color: "#0F382A", fontSize: 13, fontWeight: "800" }}>
+                {resolvedPaymentOption === "advance" ? "40% Advance" : "Full Payment"}
+              </Text>
             </View>
-            {balanceAmountToCollect > 0 ? <Text style={{ color: "#B45309", fontSize: 11, fontWeight: "600", marginTop: 8 }}>The remaining balance is payable as per your order arrangement.</Text> : <Text style={{ color: "#15803D", fontSize: 11, fontWeight: "600", marginTop: 8 }}>Your order is fully paid.</Text>}
+            {/* Show the balance section only when a positive balance remains.
+                Full-payment orders therefore do not display "Balance Amount". */}
+            {balanceAmountToCollect > 0.009 ? (
+              <>
+                <View style={{ height: 1, backgroundColor: "#E2E8F0", marginVertical: 5 }} />
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={{ color: "#0F382A", fontSize: 14, fontWeight: "900" }}>Balance Amount</Text>
+                  <Text style={{ color: "#B45309", fontSize: 14, fontWeight: "900" }}>₹{Number(balanceAmountToCollect).toFixed(2)}</Text>
+                </View>
+                <Text style={{ color: "#B45309", fontSize: 11, fontWeight: "600", marginTop: 8 }}>
+                  The remaining balance is payable as per your order arrangement.
+                </Text>
+              </>
+            ) : null}
           </View>
 
           {/* ========== IMPROVED UPCOMING DELIVERIES (MEALBOX ONLY) ========== */}

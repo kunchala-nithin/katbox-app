@@ -892,7 +892,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     let numericTotal = Number(totalAmount) || 0;
     const isRazorpayPayment = ["razorpay", "upi", "card", "netbanking", "wallet"].includes(String(safePaymentMethod || "").toLowerCase());
-    const isAdvanceEligibleService = resolvedServiceType === "catering" || resolvedServiceType === "mealbox";
+    // All four KatBox service types support 40% advance or full payment.
+    // The server remains authoritative for the payable amount.
+    const isAdvanceEligibleService = ["catering", "homemade", "quickbites", "mealbox"].includes(resolvedServiceType);
     const requestedPaymentOption = String(req.body?.paymentOption || "full").toLowerCase() === "advance" ? "advance" : "full";
     let finalAdvance = 0;
     let finalBalance = 0;
