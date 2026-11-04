@@ -1361,6 +1361,13 @@ export default function AllOrdersScreen() {
   );
 
   const totalAmountNum = Number(activeOrder?.totalAmount || 0);
+  const advancePaidAmountNum = Number(activeOrder?.advancePaidAmount ?? 0);
+  const balanceToCollectRaw = activeOrder?.balanceAmountToCollect;
+  const balanceToCollectNum = Number(
+    balanceToCollectRaw !== undefined && balanceToCollectRaw !== null
+      ? balanceToCollectRaw
+      : Math.max(0, totalAmountNum - advancePaidAmountNum)
+  );
   const subtotalNum = Number(activeOrder?.subtotal || totalAmountNum);
   const deliveryPriceNum = Number(activeOrder?.deliveryPrice || 0);
   const deliveryDistanceKmNum = Number(activeOrder?.deliveryDistanceKm ?? activeOrder?.distanceKm ?? 0);
@@ -1387,9 +1394,10 @@ export default function AllOrdersScreen() {
     currentStatus.toLowerCase() !== 'cancelled';
   const isCurrentOrderDelivered = currentStatus.toLowerCase() === 'delivered';
 
+  // A fully paid online order is NOT a cash-collection event.
+  // Keep payment settlement separate from the chef's fulfillment controls.
   const isCashCollected =
     (activeOrder?.paymentStatus || '').toLowerCase() === 'collected' ||
-    (activeOrder?.paymentStatus || '').toLowerCase() === 'paid' ||
     currentStatus.toLowerCase().includes('cash collected') ||
     currentStatus.toLowerCase().includes('amount collected');
 
@@ -1448,16 +1456,56 @@ export default function AllOrdersScreen() {
   const isWidgetDelivered = isCurrentOrderDelivered || (isMealBoxFlow && !!deliveredScheduleInfo);
   const widgetDeliveredDate = isMealBoxFlow && deliveredScheduleInfo ? deliveredScheduleInfo.date : '';
 
+  // The fulfillment stepper is driven ONLY by orderStatus.
+  // Payment status (Paid / Partially Paid / Collected) must never move
+  // the order forward or mark it completed before physical delivery.
   const stepperActiveIndex = useMemo(() => {
-    const s = currentStatus.toLowerCase();
-    const p = (activeOrder?.paymentStatus || '').toLowerCase();
-    if (p === 'collected' || p === 'paid' || s.includes('amount collected')) return 4;
-    if (s === 'delivered' || s === 'completed') return 4;
-    if (s.includes('out') || s.includes('delivery')) return 3;
-    if (s.includes('pack') || s.includes('prepared & packing') || s.includes('prepared and packing')) return 2;
-    if (s.includes('prep') || s.includes('preparing')) return 1;
-    return 0;
-  }, [currentStatus, activeOrder?.paymentStatus]);
+    const status = String(currentStatus || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ');
+
+    // Placed orders are waiting for chef acceptance. Cancelled orders
+    // use their separate cancellation UI rather than a fulfillment step.
+    if (!status || status === 'placed' || status === 'cancelled' || status === 'canceled') {
+      return -1;
+    }
+
+    if (status === 'accepted') return 0;
+    if (status === 'preparing' || status === 'prep') return 1;
+
+    if (
+      status === 'prepared & packing' ||
+      status === 'prepared and packing' ||
+      status === 'packing' ||
+      status === 'packed'
+    ) {
+      return 2;
+    }
+
+    if (
+      status === 'out for delivery' ||
+      status === 'out for dispatch' ||
+      status === 'dispatched'
+    ) {
+      return 3;
+    }
+
+    // Cash/balance collection is considered complete only when it is
+    // explicitly stored as the orderStatus. paymentStatus is ignored.
+    if (
+      status === 'delivered' ||
+      status === 'completed' ||
+      status === 'cash collected' ||
+      status === 'amount collected'
+    ) {
+      return 4;
+    }
+
+    // Unknown statuses should not falsely highlight the first stage.
+    return -1;
+  }, [currentStatus]);
 
   useEffect(() => {
     const pulse = Animated.loop(
@@ -2132,16 +2180,14 @@ export default function AllOrdersScreen() {
 
                     isOrderDeliveredOrCollected =
                       allSchedulesDelivered ||
-                      pStatus === 'collected' ||
-                      pStatus === 'paid' ||
+                      status === 'delivered' ||
+                      status === 'completed' ||
                       status.includes('cash collected') ||
                       status.includes('amount collected');
                   } else {
                     isOrderDeliveredOrCollected =
                       status === 'delivered' ||
                       status === 'completed' ||
-                      pStatus === 'collected' ||
-                      pStatus === 'paid' ||
                       status.includes('cash collected') ||
                       status.includes('amount collected');
                   }
@@ -2277,7 +2323,11 @@ export default function AllOrdersScreen() {
                       {isCashCollected ? (
                         <View style={styles.cashCollectedLockedCard}>
                           <Ionicons name="lock-closed" size={18} color="#166348" style={{ marginRight: 8 }} />
-                          <Text style={styles.cashCollectedLockedText}>Payment Settled • Cash Collected</Text>
+                          <Text style={styles.cashCollectedLockedText}>
+                            {balanceToCollectNum > 0
+                              ? `Balance Collected • ₹${balanceToCollectNum.toLocaleString('en-IN')}`
+                              : 'Payment Settled • Cash Collected'}
+                          </Text>
                         </View>
                       ) : (
                         <>
@@ -2702,6 +2752,30 @@ export default function AllOrdersScreen() {
                           Coupon Discount {couponAppliedCode ? `(${couponAppliedCode})` : ''}
                         </Text>
                         <Text style={styles.discountValueText}>-₹{discountNum}</Text>
+                      </View>
+                    )}
+
+                    {advancePaidAmountNum > 0 && (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>Advance Paid</Text>
+                        <Text style={[styles.priceDescriptionValue, { color: '#2563EB', fontWeight: '800' }]}>
+                          ₹{advancePaidAmountNum.toLocaleString('en-IN')}
+                        </Text>
+                      </View>
+                    )}
+                    {balanceToCollectNum > 0 && (
+                      <View style={styles.priceDescriptionRow}>
+                        <Text style={styles.priceDescriptionLabel}>
+                          {isCashCollected ? 'Balance Collected' : 'Balance To Collect'}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.priceDescriptionValue,
+                            { color: isCashCollected ? '#16A34A' : '#D97706', fontWeight: '800' },
+                          ]}
+                        >
+                          ₹{balanceToCollectNum.toLocaleString('en-IN')}
+                        </Text>
                       </View>
                     )}
 

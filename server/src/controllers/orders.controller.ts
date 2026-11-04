@@ -1028,7 +1028,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       (Number(subtotal) || 0) + finalDeliveryPrice - (Number(discount) || 0)
     );
     // The backend recalculates the payable amount from its final server-side total.
-    // Only catering and mealbox support the 40% advance option.
+    // Catering, Homemade, QuickBites and MealBox all support 40% advance or full payment.
     finalAdvance = isRazorpayPayment
       ? (isAdvanceEligibleService && requestedPaymentOption === "advance"
           ? Math.round(numericTotal * 0.40 * 100) / 100

@@ -43,8 +43,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 const BOTTOM_TAB_BAR_HEIGHT = 60;
 
 // ✅ Static customer support phone number used by the Support card.
-const SUPPORT_PHONE_NUMBER = "+919133450555";
-const SUPPORT_PHONE_DISPLAY = "+91-9133450555";
+const SUPPORT_PHONE_NUMBER = "+918886444041";
+const SUPPORT_PHONE_DISPLAY = "+91-8886444041";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -2788,7 +2788,7 @@ export default function MyOrdersScreen() {
                       ? "Payment fully settled — thank you!"
                       : isDetailCod
                       ? `Pay ₹${detailBalanceToCollect} in cash on delivery`
-                      : `Pay ₹${detailBalanceToCollect} online before delivery`}
+                      : `Pay ₹${detailBalanceToCollect} upon delivery`}
                   </Text>
                 </View>
               </>

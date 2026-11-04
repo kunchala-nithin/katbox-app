@@ -1093,9 +1093,15 @@ export default function AdminAllOrdersScreen() {
   const paymentMethodType = activeOrder?.paymentMethod || 'cod';
   const isPaymentCod = String(paymentMethodType).toLowerCase() === 'cod';
 
-  // ✅ NEW: Advance / balance values for the Bill Summary breakdown
-  const advancePaidAmountNum = Number(activeOrder?.advancePaidAmount || 0);
-  const balanceToCollectNum = Number(activeOrder?.balanceAmountToCollect || 0);
+  // ✅ Advance / balance values for the Bill Summary breakdown.
+  // Prefer the persisted balance; calculate only when the field is absent.
+  const advancePaidAmountNum = Number(activeOrder?.advancePaidAmount ?? 0);
+  const balanceToCollectRaw = activeOrder?.balanceAmountToCollect;
+  const balanceToCollectNum = Number(
+    balanceToCollectRaw !== undefined && balanceToCollectRaw !== null
+      ? balanceToCollectRaw
+      : Math.max(0, totalAmountNum - advancePaidAmountNum)
+  );
 
   // ✅ NEW — Admin-side commission values (read directly from the backend).
   const commissionRateNum = Number(activeOrder?.commissionRate || 0);
@@ -1117,9 +1123,10 @@ export default function AdminAllOrdersScreen() {
   //    Razorpay marks this true automatically after server-side verification.
   const isAdvanceVerified = activeOrder?.isAdvanceVerified === true;
 
+  // A fully paid online order is NOT a cash-collection event.
+  // Keep payment settlement separate from the chef's fulfillment controls.
   const isCashCollected =
     (activeOrder?.paymentStatus || '').toLowerCase() === 'collected' ||
-    (activeOrder?.paymentStatus || '').toLowerCase() === 'paid' ||
     currentStatus.toLowerCase().includes('cash collected') ||
     currentStatus.toLowerCase().includes('amount collected');
 
@@ -1174,16 +1181,56 @@ export default function AdminAllOrdersScreen() {
   const isWidgetDelivered = isCurrentOrderDelivered || (isMealBoxFlow && !!deliveredScheduleInfo);
   const widgetDeliveredDate = isMealBoxFlow && deliveredScheduleInfo ? deliveredScheduleInfo.date : '';
 
+  // The fulfillment stepper is driven ONLY by orderStatus.
+  // Payment status (Paid / Partially Paid / Collected) must never move
+  // the order forward or mark it completed before physical delivery.
   const stepperActiveIndex = useMemo(() => {
-    const s = currentStatus.toLowerCase();
-    const p = (activeOrder?.paymentStatus || '').toLowerCase();
-    if (p === 'collected' || p === 'paid' || s.includes('amount collected')) return 4;
-    if (s === 'delivered' || s === 'completed') return 4;
-    if (s.includes('out') || s.includes('delivery')) return 3;
-    if (s.includes('pack') || s.includes('prepared & packing') || s.includes('prepared and packing')) return 2;
-    if (s.includes('prep') || s.includes('preparing')) return 1;
-    return 0;
-  }, [currentStatus, activeOrder?.paymentStatus]);
+    const status = String(currentStatus || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ');
+
+    // Placed orders are waiting for chef acceptance. Cancelled orders
+    // use their separate cancellation UI rather than a fulfillment step.
+    if (!status || status === 'placed' || status === 'cancelled' || status === 'canceled') {
+      return -1;
+    }
+
+    if (status === 'accepted') return 0;
+    if (status === 'preparing' || status === 'prep') return 1;
+
+    if (
+      status === 'prepared & packing' ||
+      status === 'prepared and packing' ||
+      status === 'packing' ||
+      status === 'packed'
+    ) {
+      return 2;
+    }
+
+    if (
+      status === 'out for delivery' ||
+      status === 'out for dispatch' ||
+      status === 'dispatched'
+    ) {
+      return 3;
+    }
+
+    // Cash/balance collection is considered complete only when it is
+    // explicitly stored as the orderStatus. paymentStatus is ignored.
+    if (
+      status === 'delivered' ||
+      status === 'completed' ||
+      status === 'cash collected' ||
+      status === 'amount collected'
+    ) {
+      return 4;
+    }
+
+    // Unknown statuses should not falsely highlight the first stage.
+    return -1;
+  }, [currentStatus]);
 
   const defaultDishImage =
     parsedItems[0]?.image ||
@@ -1995,7 +2042,11 @@ export default function AdminAllOrdersScreen() {
                     {isCashCollected ? (
                       <View style={styles.cashCollectedLockedCard}>
                         <Ionicons name="lock-closed" size={18} color="#2563EB" style={{ marginRight: 8 }} />
-                        <Text style={styles.cashCollectedLockedText}>Payment Settled • Cash Collected</Text>
+                        <Text style={styles.cashCollectedLockedText}>
+                          {balanceToCollectNum > 0
+                            ? `Balance Collected • ₹${balanceToCollectNum.toLocaleString('en-IN')}`
+                            : 'Payment Settled • Cash Collected'}
+                        </Text>
                       </View>
                     ) : (
                       <>
@@ -2429,11 +2480,11 @@ export default function AdminAllOrdersScreen() {
                       <View style={styles.priceDescriptionRow}>
                         <Text style={styles.priceDescriptionLabel}>Advance Paid</Text>
                         <Text style={[styles.priceDescriptionValue, { color: '#2563EB', fontWeight: '800' }]}>
-                          ₹{advancePaidAmountNum}
+                          ₹{advancePaidAmountNum.toLocaleString('en-IN')}
                         </Text>
                       </View>
                     )}
-                    {advancePaidAmountNum > 0 && balanceToCollectNum > 0 && (
+                    {balanceToCollectNum > 0 && (
                       <View style={styles.priceDescriptionRow}>
                         <Text style={styles.priceDescriptionLabel}>
                           {isCashCollected ? 'Balance Collected' : 'Balance To Collect'}
@@ -2444,7 +2495,7 @@ export default function AdminAllOrdersScreen() {
                             { color: isCashCollected ? '#16A34A' : '#D97706', fontWeight: '800' },
                           ]}
                         >
-                          ₹{balanceToCollectNum}
+                          ₹{balanceToCollectNum.toLocaleString('en-IN')}
                         </Text>
                       </View>
                     )}
