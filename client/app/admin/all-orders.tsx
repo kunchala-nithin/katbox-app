@@ -2446,12 +2446,6 @@ export default function AdminAllOrdersScreen() {
                       <Text style={styles.priceDescriptionLabel}>Base Subtotal</Text>
                       <Text style={styles.priceDescriptionValue}>₹{subtotalNum}</Text>
                     </View>
-                    {addonTotalCalculated > 0 && (
-                      <View style={styles.priceDescriptionRow}>
-                        <Text style={styles.priceDescriptionLabel}>Add-ons</Text>
-                        <Text style={styles.priceDescriptionValue}>+₹{addonTotalCalculated}</Text>
-                      </View>
-                    )}
                     {!isHomemadeFlow && (
                       <View style={styles.priceDescriptionRow}>
                         <Text style={styles.priceDescriptionLabel}>

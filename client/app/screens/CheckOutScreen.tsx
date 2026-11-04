@@ -1948,45 +1948,52 @@ export default function CheckOutScreen() {
 
             {isAdvancePaymentEligible ? (
               <View style={styles.confirmPaymentOptions}>
-                <TouchableOpacity
-                  style={[
-                    styles.confirmPaymentOption,
-                    styles.confirmAdvanceOption,
-                    selectedPaymentOption === "advance" && { borderWidth: 2, borderColor: "#FFFFFF" },
-                    loading && { opacity: 0.75 },
-                  ]}
-                  activeOpacity={0.88}
-                  disabled={loading}
-                  onPress={() => setSelectedPaymentOption("advance")}
-                >
-                  <View style={styles.confirmOptionTextBlock}>
-                    <Text style={styles.confirmOptionEyebrow}>PAY 40% NOW</Text>
-                    <Text style={styles.confirmOptionTitle}>Advance Payment</Text>
-                    <Text style={styles.confirmOptionDescription}>Pay the remaining balance later</Text>
-                  </View>
-                  <View style={styles.confirmOptionAmountBlock}>
-                    <Text style={styles.confirmAdvanceAmount}>₹{advanceAmount.toFixed(2)}</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.confirmPaymentOption,
-                    selectedPaymentOption === "full" ? styles.confirmSelectedFullOption : styles.confirmFullOption,
-                    loading && { opacity: 0.75 },
-                  ]}
-                  activeOpacity={0.88}
-                  disabled={loading}
-                  onPress={() => setSelectedPaymentOption("full")}
-                >
-                  <View style={styles.confirmOptionTextBlock}>
-                    <Text style={styles.confirmFullEyebrow}>PAY 100% NOW</Text>
-                    <Text style={styles.confirmFullTitle}>Full Payment</Text>
-                    <Text style={styles.confirmFullDescription}>Nothing left to pay later</Text>
-                  </View>
-                  <View style={styles.confirmOptionAmountBlock}>
-                    <Text style={styles.confirmFullAmount}>₹{numericTotal.toFixed(2)}</Text>
-                  </View>
-                </TouchableOpacity>
+                <View style={styles.confirmPaymentPillsRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.confirmPaymentPill,
+                      selectedPaymentOption === "advance"
+                        ? styles.confirmPaymentPillSelected
+                        : styles.confirmPaymentPillUnselected,
+                      loading && { opacity: 0.75 },
+                    ]}
+                    activeOpacity={0.88}
+                    disabled={loading}
+                    onPress={() => setSelectedPaymentOption("advance")}
+                  >
+                    <Text
+                      style={[
+                        styles.confirmPaymentPillText,
+                        selectedPaymentOption === "advance" && styles.confirmPaymentPillTextSelected,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Advance 40% · ₹{advanceAmount.toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.confirmPaymentPill,
+                      selectedPaymentOption === "full"
+                        ? styles.confirmPaymentPillSelected
+                        : styles.confirmPaymentPillUnselected,
+                      loading && { opacity: 0.75 },
+                    ]}
+                    activeOpacity={0.88}
+                    disabled={loading}
+                    onPress={() => setSelectedPaymentOption("full")}
+                  >
+                    <Text
+                      style={[
+                        styles.confirmPaymentPillText,
+                        selectedPaymentOption === "full" && styles.confirmPaymentPillTextSelected,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Full 100% · ₹{numericTotal.toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
                 <View style={styles.confirmBtnRow}>
                   <TouchableOpacity
                     style={[styles.confirmCancelBtn, styles.confirmAmountActionBtn]}
@@ -4046,38 +4053,44 @@ const styles = StyleSheet.create({
   },
   confirmPaymentOptions: {
     width: "100%",
-    gap: 11,
+    gap: 9,
     marginTop: 2,
   },
-  confirmPaymentOption: {
+  confirmPaymentPillsRow: {
     width: "100%",
-    minHeight: 88,
-    borderRadius: 17,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
-    borderWidth: 1,
+    gap: 8,
   },
-  confirmAdvanceOption: {
+  confirmPaymentPill: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 40,
+    paddingHorizontal: 9,
+    paddingVertical: 9,
+    borderRadius: 22,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  confirmPaymentPillSelected: {
     backgroundColor: "#166538",
     borderColor: "#166538",
-    shadowColor: "#166538",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.16,
-    shadowRadius: 8,
-    elevation: 3,
   },
-  confirmFullOption: {
+  confirmPaymentPillUnselected: {
     backgroundColor: "#FFFFFF",
     borderColor: "rgba(22, 101, 56, 0.28)",
   },
-  confirmSelectedFullOption: {
-    backgroundColor: "#EAF4EE",
-    borderColor: "#166538",
-    borderWidth: 2,
+  confirmPaymentPillText: {
+    color: "#315D4B",
+    fontSize: 11,
+    fontWeight: "800",
+    textAlign: "center",
+    includeFontPadding: false,
+  },
+  confirmPaymentPillTextSelected: {
+    color: "#FFFFFF",
   },
   confirmAmountActionBtn: {
     flex: 1,

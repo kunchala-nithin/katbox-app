@@ -37,7 +37,7 @@ import { startOrderAlarm, stopOrderAlarm } from '@/src/lib/orderAlarm';
 const { width, height } = Dimensions.get('window');
 
 // ✅ Static Customer Support number used for call/message actions
-const CUSTOMER_SUPPORT_PHONE = '9133450555';
+const CUSTOMER_SUPPORT_PHONE = '8886444041';
 
 // Check if running in Expo Go client
 const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
@@ -1158,6 +1158,9 @@ export default function AllOrdersScreen() {
       socket.on('order_delivery_rescheduled', handleOrderDeliveryRescheduled);
       socket.on('schedule_status_updated', handleScheduleStatusUpdated);
       socket.on('order_updated', handleOrderUpdated);
+      // Whole-order lifecycle changes are broadcast separately by the backend.
+      // Listen to this event too so chef UI stays synchronized when Admin changes status.
+      socket.on('order_status_updated', handleOrderUpdated);
       socket.on('advance_payment_verified', handleOrderUpdated);
       socket.on('new_chef_order', (newOrder: any) => {
         if (newOrder.isAdvanceVerified === true) {
@@ -1183,6 +1186,7 @@ export default function AllOrdersScreen() {
         socket.off('order_delivery_rescheduled', handleOrderDeliveryRescheduled);
         socket.off('schedule_status_updated', handleScheduleStatusUpdated);
         socket.off('order_updated', handleOrderUpdated);
+        socket.off('order_status_updated', handleOrderUpdated);
         socket.off('advance_payment_verified', handleOrderUpdated);
         socket.off('new_chef_order');
       }
@@ -1949,20 +1953,46 @@ export default function AllOrdersScreen() {
   };
 
   const handleAcceptOrder = async () => {
-    if (!activeOrder) return;
+    if (!activeOrder || actionLoading) return;
+    const acceptingOrderId = String(activeOrder.orderId || '');
+    if (!acceptingOrderId) return;
+
     try {
       setActionLoading(true);
       await clearAlarmAndSnoozeCycle();
-      await api.patch(`/api/orders/${activeOrder.orderId}/status`, { status: 'Accepted' });
+
+      // Wait for the backend confirmation, then update the exact order by ID.
+      // This keeps the selected order mounted and makes the Accepted header +
+      // five-stage stepper appear immediately without a manual refresh.
+      const response = await api.patch(
+        `/api/orders/${acceptingOrderId}/status`,
+        { status: 'Accepted' }
+      );
+
+      if (response?.data?.success === false) {
+        throw new Error(response.data.message || 'Could not accept this order.');
+      }
+
+      const serverOrder = response?.data?.order || {};
+      const acceptedOrder = {
+        ...activeOrder,
+        ...serverOrder,
+        orderId: acceptingOrderId,
+        orderStatus: serverOrder.orderStatus || 'Accepted',
+      };
 
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setOrders((prev) =>
-        prev.map((o, idx) =>
-          idx === selectedOrderIndex ? { ...o, orderStatus: 'Accepted' } : o
+        prev.map((order) =>
+          String(order.orderId) === acceptingOrderId
+            ? { ...order, ...acceptedOrder }
+            : order
         )
       );
 
-      setShowConfetti(true);
+      // Fire the ribbon/confetti animation immediately after successful accept.
+      setShowConfetti(false);
+      requestAnimationFrame(() => setShowConfetti(true));
       setTimeout(() => {
         setShowConfetti(false);
       }, 3000);
@@ -1982,10 +2012,11 @@ export default function AllOrdersScreen() {
           useNativeDriver: true,
         }),
       ]).start();
-
-      fetchChefOrders();
     } catch (e: any) {
-      Alert.alert('Error', e.response?.data?.message || 'Could not update order status.');
+      Alert.alert(
+        'Error',
+        e.response?.data?.message || e.message || 'Could not update order status.'
+      );
     } finally {
       setActionLoading(false);
     }
@@ -2722,13 +2753,6 @@ export default function AllOrdersScreen() {
                       <Text style={styles.priceDescriptionLabel}>Base Subtotal</Text>
                       <Text style={styles.priceDescriptionValue}>₹{subtotalNum}</Text>
                     </View>
-
-                    {addonTotalCalculated > 0 && (
-                      <View style={styles.priceDescriptionRow}>
-                        <Text style={styles.priceDescriptionLabel}>Add-ons</Text>
-                        <Text style={styles.priceDescriptionValue}>+₹{addonTotalCalculated}</Text>
-                      </View>
-                    )}
 
                     {!isHomemadeFlow && (
                       <View style={styles.priceDescriptionRow}>

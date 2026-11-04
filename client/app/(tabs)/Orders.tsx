@@ -716,21 +716,40 @@ function WhatsNextStepperCard({
   order: any;
   targetStatus?: string;
 }) {
-  const resolvedStatus = (targetStatus || order?.orderStatus || "Placed").toLowerCase();
-  const paymentStatus = (order?.paymentStatus || "").toLowerCase();
+  const resolvedStatus = String(targetStatus || order?.orderStatus || "Placed").toLowerCase().trim();
+  const paymentStatus = String(order?.paymentStatus || "").toLowerCase().trim();
+  const totalAmountNum = Math.max(0, Number(order?.totalAmount || 0));
+  const advancePaidAmountNum = Math.max(0, Number(order?.advancePaidAmount || 0));
+  const hasPersistedBalance =
+    order?.balanceAmountToCollect !== undefined &&
+    order?.balanceAmountToCollect !== null &&
+    order?.balanceAmountToCollect !== "";
+  const balanceAmountToCollectNum = Math.max(
+    0,
+    hasPersistedBalance
+      ? Number(order.balanceAmountToCollect)
+      : (paymentStatus === "paid" || order?.paymentCaptured === true || paymentStatus === "collected"
+          ? 0
+          : totalAmountNum - advancePaidAmountNum)
+  );
+  const isPaymentFullySettled =
+    paymentStatus === "collected" ||
+    paymentStatus === "cash collected" ||
+    paymentStatus === "fully paid (balance collected)" ||
+    ((paymentStatus === "paid" || order?.paymentCaptured === true) && balanceAmountToCollectNum <= 0) ||
+    (resolvedStatus.includes("cash collected") && balanceAmountToCollectNum <= 0);
 
   let activeStep = 0;
-  if (paymentStatus === "collected" || paymentStatus === "paid" || resolvedStatus.includes("amount collected") || resolvedStatus.includes("cash collected")) {
+  if (isPaymentFullySettled) {
     activeStep = 4;
   } else if (resolvedStatus === "delivered" || resolvedStatus === "completed") {
     activeStep = 3;
-  } else if (resolvedStatus.includes("out") || resolvedStatus.includes("delivery") || resolvedStatus.includes("out for delivery")) {
+  } else if (resolvedStatus.includes("out for delivery") || resolvedStatus === "dispatched" || resolvedStatus.includes("out")) {
     activeStep = 2;
   } else if (resolvedStatus.includes("pack") || resolvedStatus.includes("prepared & packing") || resolvedStatus.includes("prepared and packing")) {
     activeStep = 1;
-  } else if (resolvedStatus.includes("prep") || resolvedStatus.includes("preparing")) {
-    activeStep = 0;
   } else {
+    // Placed / Accepted / Preparing all remain on the preparation stage.
     activeStep = 0;
   }
 
@@ -751,9 +770,12 @@ function WhatsNextStepperCard({
   }, [activeStep]);
 
   const firstDeliveryDate = order?.deliveryDate || order?.eventDate || "Today";
-  const codAmount = order?.totalAmount || 0;
+  const codAmount = totalAmountNum;
   const isCod = String(order?.paymentMethod || "cod").toLowerCase() === "cod";
   const dynamicChefName = order?.chefName || order?.restaurantName || "Kitchen Team";
+  const formattedAdvancePaid = advancePaidAmountNum.toLocaleString("en-IN");
+  const formattedBalanceDue = balanceAmountToCollectNum.toLocaleString("en-IN");
+  const hasAdvancePayment = advancePaidAmountNum > 0 && balanceAmountToCollectNum > 0;
 
   const stepsConfig = [
     {
@@ -805,8 +827,18 @@ function WhatsNextStepperCard({
       iconName: "cash-outline",
       iconType: "ionicons",
       getDescription: (isPast: boolean, isCurrent: boolean) => {
-        if (isPast || isCurrent) return `Payment of ₹${codAmount} collected and bill settled. Thank you!`;
-        return isCod ? `Please keep ₹${codAmount} in cash ready upon delivery.` : "Paid online via UPI/Card.";
+        if (isPaymentFullySettled || isPast || isCurrent) {
+          return `Payment of ₹${codAmount.toLocaleString("en-IN")} settled. Thank you!`;
+        }
+        if (hasAdvancePayment) {
+          return `Advance paid: ₹${formattedAdvancePaid}. Balance amount due: ₹${formattedBalanceDue}.`;
+        }
+        if (balanceAmountToCollectNum > 0) {
+          return isCod
+            ? `Please keep ₹${formattedBalanceDue} cash ready upon delivery.`
+            : `Balance amount due: ₹${formattedBalanceDue}.`;
+        }
+        return isCod ? `Please keep ₹${codAmount.toLocaleString("en-IN")} in cash ready upon delivery.` : "Paid online via UPI/Card.";
       },
     },
   ];
@@ -1144,10 +1176,21 @@ export default function MyOrdersScreen() {
       }
     });
 
-    const handleOrderUpdated = (updatedOrder: any) => {
+    const applyLiveOrderUpdate = (socketPayload: any) => {
+      // Backend lifecycle events normally send the order document directly.
+      // Accept wrapped payloads as well, so the customer screen cannot miss an update.
+      const updatedOrder =
+        socketPayload?.order ||
+        socketPayload?.updatedOrder ||
+        socketPayload;
+
+      if (!updatedOrder?.orderId) return;
+
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setUserOrders((prev) =>
-        prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
+        prev.map((o) =>
+          o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o
+        )
       );
       setSelectedOrderDetails((prev: any) => {
         if (prev && prev.orderId === updatedOrder.orderId) {
@@ -1157,17 +1200,12 @@ export default function MyOrdersScreen() {
       });
     };
 
+    const handleOrderUpdated = (updatedOrder: any) => {
+      applyLiveOrderUpdate(updatedOrder);
+    };
+
     const handleOrderStatusUpdated = (updatedOrder: any) => {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setUserOrders((prev) =>
-        prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
-      );
-      setSelectedOrderDetails((prev: any) => {
-        if (prev && prev.orderId === updatedOrder.orderId) {
-          return { ...prev, ...updatedOrder };
-        }
-        return prev;
-      });
+      applyLiveOrderUpdate(updatedOrder);
     };
 
     const handleScheduleStatusUpdated = (data: any) => {

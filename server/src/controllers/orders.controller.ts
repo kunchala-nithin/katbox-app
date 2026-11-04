@@ -1835,6 +1835,11 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
   try {
     const { orderId } = req.params;
     const { status } = req.body;
+    const rawUserId = String(req.user?.userId || req.user?._id || req.user?.id || "").trim();
+
+    if (!rawUserId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
 
     if (!orderId || !status) {
       return res.status(400).json({ success: false, message: "orderId and status are required." });
@@ -1851,17 +1856,62 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
 
     const isCancelledStatus = normalizedLower === "cancelled" || normalizedLower === "canceled";
 
-    // ✅ Fetch the CURRENT document first so we can:
-    //    • decide the correct expected-previous-status guard
-    //    • build the refund patch from the actual payment state
-    //    • reuse existing logic for targetDeliveryTime etc.
+    // Load the caller's current role from MongoDB. Never trust a role flag
+    // supplied by the mobile client or a decoded request-body field.
+    const caller = mongoose.Types.ObjectId.isValid(rawUserId)
+      ? await User.findById(rawUserId).select("isAdmin isChef")
+      : null;
+
+    const isAdminCaller = caller?.isAdmin === true;
+    const chefProfile = !isAdminCaller
+      ? await Chef.findOne({ user: rawUserId }).select("_id user name orderHistory")
+      : null;
+
+    if (!isAdminCaller && (!caller?.isChef || !chefProfile)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the assigned chef or an admin can update this order.",
+      });
+    }
+
+    // Fetch the current document so we can validate assignment, build the
+    // refund patch from the actual payment state, and preserve timer logic.
     const existingOrder = await Order.findOne({ orderId });
     if (!existingOrder) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    // ✅ If the order is ALREADY cancelled, refuse to transition it
-    //    again (no double cancellation / no resurrection).
+    // A chef may update ONLY an order assigned to their own Chef profile.
+    // Support the existing assignment representations used by older orders:
+    // Chef document ID, authenticated user ID, chef name, or orderHistory.
+    if (!isAdminCaller && chefProfile) {
+      const assignedChefIds = [
+        String((chefProfile as any)._id || ""),
+        String(rawUserId),
+      ].filter(Boolean);
+      const orderChefId = String((existingOrder as any).chefId || "");
+      const assignedById = assignedChefIds.includes(orderChefId);
+      const assignedByName =
+        String((existingOrder as any).chefName || "").trim().toLowerCase() ===
+        String((chefProfile as any).name || "").trim().toLowerCase();
+      const assignedByHistory = Array.isArray((chefProfile as any).orderHistory) &&
+        (chefProfile as any).orderHistory.some(
+          (id: any) => String(id) === String(existingOrder._id)
+        );
+
+      if (!assignedById && !assignedByName && !assignedByHistory) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not assigned to this order.",
+        });
+      }
+    }
+
+    // Do not allow an ordinary chef to override another chef's assignment
+    // through a request parameter/body. The order's stored assignment is
+    // authoritative and is checked above.
+
+    // If the order is ALREADY cancelled, refuse to transition it again.
     const existingStatusLower = String(existingOrder.orderStatus || "").toLowerCase();
     if (existingStatusLower === "cancelled" || existingStatusLower === "canceled") {
       return res.status(409).json({
@@ -1871,7 +1921,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // ✅ Build the $set payload (mirrors the previous save()-based behaviour).
+    // Build the $set payload (mirrors the existing save()-based behaviour).
     const now = new Date();
     const setPayload: any = {};
 
@@ -1884,10 +1934,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
     };
 
     if (isCancelledStatus) {
-      // ✅ Only two cancellation sources exist: customer + chef.
-      //    The admin dropdown uses the same PATCH endpoint as the chef,
-      //    so its cancellations are recorded as "cancelled by chef" per
-      //    product decision.
       const existingSource = String(existingOrder.cancellationSource || "").trim();
       const resolvedSource = existingSource || CANCELLATION_SOURCE_CHEF;
 
@@ -1897,12 +1943,13 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
         String(existingOrder.cancellationReason || "").trim() || resolvedSource;
       setPayload.cancelledAt = existingOrder.cancelledAt || now;
 
-      // ✅ Refund patch (full advance refund if advance > 0, else ₹0).
       const refundPatch = buildCancellationRefundPatch(existingOrder);
       setPayload.cancellationFee = refundPatch.cancellationFee;
       setPayload.refundAmount = refundPatch.refundAmount;
       setPayload.refundStatus = refundPatch.refundStatus;
     } else if (isCashCollected) {
+      // Payment state is updated independently. This status is only recorded
+      // after delivery; the existing delivery-completion behaviour is retained.
       setPayload.paymentStatus = "Fully Paid (Balance Collected)";
       setPayload.paymentCaptured = true;
       setPayload.paidAt = now;
@@ -1911,7 +1958,6 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
         setPayload.actualDeliveredAt = now;
       }
 
-      // ✅ Auto-mark all still-open schedules as delivered (mirrors old logic).
       if (Array.isArray(existingOrder.deliverySchedules) && existingOrder.deliverySchedules.length > 0) {
         const updatedSchedules = existingOrder.deliverySchedules.map((schedule: any) => {
           const sStatus = String(schedule.status || "").toLowerCase();
@@ -1938,6 +1984,8 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
         setPayload.deliverySchedules = updatedSchedules;
       }
     } else {
+      // Order lifecycle updates touch orderStatus only. They deliberately do
+      // not modify paymentStatus, paymentCaptured, advancePaidAmount or balance.
       setPayload.orderStatus = normalized;
 
       if (normalized === "Preparing" || normalized === "Accepted") {
@@ -1967,12 +2015,23 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // ✅ ATOMIC update guarded by the CURRENT status we just read. If
-    //    another request (e.g. customer cancel) changed the status in the
-    //    tiny window between our read and this update, the update will
-    //    match 0 documents and we return a 409 without corrupting state.
+    // Atomic guard: only one competing status transition can win. For chef
+    // callers, include the assignment identity in the update filter as well.
+    const atomicFilter: any = {
+      orderId,
+      orderStatus: existingOrder.orderStatus,
+    };
+    if (!isAdminCaller && chefProfile) {
+      atomicFilter.$or = [
+        { chefId: String((chefProfile as any)._id) },
+        { chefId: rawUserId },
+        { chefName: (chefProfile as any).name || "" },
+        { _id: { $in: (chefProfile as any).orderHistory || [] } },
+      ];
+    }
+
     const updatedOrder = await Order.findOneAndUpdate(
-      { orderId, orderStatus: existingOrder.orderStatus },
+      atomicFilter,
       {
         $set: setPayload,
         $push: { statusTimeline: timelinePush },
@@ -1984,8 +2043,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       const latest = await Order.findOne({ orderId });
       return res.status(409).json({
         success: false,
-        message:
-          "Order status changed by another request. Please refresh and retry.",
+        message: "Order status or assignment changed by another request. Please refresh and retry.",
         order: latest,
       });
     }
@@ -2005,17 +2063,7 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       console.log("Socket emit warning:", e);
     }
 
-    /* ──────────────────────────────────────────────────────────
-       ✅ Push notification to the CUSTOMER on every status
-       change (by chef or admin). Works when the customer's app
-       is open, backgrounded, or fully killed.
-
-       • Uses the DEFAULT phone sound (NOT alarm.mp3).
-       • data.screen === "orders" → tap opens the customer's Orders tab.
-       • data.role === "customer" → lets any customer-side listener
-         filter out non-customer pushes.
-       • Never throws — wrapped in its own try/catch.
-       ────────────────────────────────────────────────────────── */
+    // Notify the customer after the database update has succeeded.
     try {
       if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
         const customerDoc = await User.findById(updatedOrder.userId);
@@ -2042,10 +2090,11 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
 
     return res.status(200).json({
       success: true,
-      message: `Order updated successfully`,
+      message: "Order updated successfully",
       order: updatedOrder,
     });
   } catch (error: any) {
+    console.error("updateOrderStatus error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
