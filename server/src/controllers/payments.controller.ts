@@ -203,8 +203,11 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
     });
     const updatedOrder = await order.save();
 
-    // Notify customer, admin listeners and the assigned chef only after the
-    // backend has verified that Razorpay captured the complete amount.
+    // The payment is persisted. Run socket events, chef lookup and push
+    // notifications asynchronously so third-party latency cannot delay the
+    // customer's transition to OrderConfirmationScreen.
+    setImmediate(() => {
+      void (async () => {
     try {
       io.emit("order_updated", updatedOrder);
       io.emit("payment_verified", updatedOrder);
@@ -269,6 +272,8 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
       // Payment is already persisted. Notification failure must not reverse it.
       console.error("Razorpay verified but order notification failed:", notifyError);
     }
+      })();
+    });
 
     return res.status(200).json({ success: true, message: "Razorpay payment verified.", order: updatedOrder });
   } catch (error: any) {

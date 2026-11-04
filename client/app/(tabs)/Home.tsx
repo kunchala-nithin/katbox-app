@@ -453,7 +453,7 @@ export default function HomeScreen() {
 
         // A short touch opens the assistant; a moved gesture only drags it.
         if (!assistantHasMovedRef.current) {
-          router.push('/(tabs)/KatBoxAssistant' as any);
+          router.push('/screens/KatBoxAssistant' as any);
         }
       },
       onPanResponderTerminate: () => {

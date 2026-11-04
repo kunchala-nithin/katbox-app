@@ -117,6 +117,7 @@ export default function CheckOutScreen() {
   const deliveryLocation = useDeliveryLocationStore((s) => s.deliveryLocation);
 
   const [loading, setLoading] = useState(false);
+  const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
 
   const serviceType = (params.serviceType as string) || "mealbox";
   // ✅ QuickBites detection — separate flow flag, but same UI as homemade.
@@ -804,8 +805,9 @@ export default function CheckOutScreen() {
       // The backend stores ₹0 paid and the full amount as outstanding.
       if (isCashOnDelivery) {
         if (params.cartId) {
-          try { await api.delete(`/api/cart/${params.cartId}`); }
-          catch (e) { console.log("Cart cleanup non-critical error", e); }
+          void api.delete(`/api/cart/${params.cartId}`).catch((e) => {
+            console.log("Cart cleanup non-critical error", e);
+          });
         }
         setShowConfirmModal(false);
         router.replace({
@@ -865,8 +867,9 @@ export default function CheckOutScreen() {
         throw new Error("Razorpay did not return all payment verification details. Please contact support before retrying.");
       }
 
-      // Step 4: Server verifies the signature and confirms the captured
-      // payment against the exact MongoDB order and selected payable amount.
+      // Show a blocking verification state while the backend checks the
+      // signature and captured amount. Checkout remains mounted underneath.
+      setIsVerifyingPayment(true);
       const verifyRes = await api.post("/api/payments/verify", {
         orderId: katboxOrderId,
         razorpay_order_id: razorpayResult.razorpay_order_id,
@@ -877,10 +880,12 @@ export default function CheckOutScreen() {
         throw new Error(verifyRes.data?.message || "Payment could not be verified. Do not retry until the order status is checked.");
       }
 
-      // Cart cleanup is deliberately after successful server verification.
+      // Payment is verified and persisted. Cart cleanup is best-effort and
+      // runs in the background so it cannot delay confirmation navigation.
       if (params.cartId) {
-        try { await api.delete(`/api/cart/${params.cartId}`); }
-        catch (e) { console.log("Cart cleanup non-critical error", e); }
+        void api.delete(`/api/cart/${params.cartId}`).catch((e) => {
+          console.log("Cart cleanup non-critical error", e);
+        });
       }
 
       setShowConfirmModal(false);
@@ -904,6 +909,7 @@ export default function CheckOutScreen() {
           "Something went wrong while processing your payment. Please check your order status before trying again."
       );
     } finally {
+      setIsVerifyingPayment(false);
       setLoading(false);
     }
   };
@@ -2568,6 +2574,44 @@ export default function CheckOutScreen() {
           </Animated.View>
         </BlurView>
       </Modal>
+      {isVerifyingPayment && (
+        <View
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 9999,
+            elevation: 9999,
+            backgroundColor: "rgba(7, 24, 17, 0.72)",
+            alignItems: "center",
+            justifyContent: "center",
+            paddingHorizontal: 28,
+          }}
+        >
+          <View
+            style={{
+              width: "100%",
+              maxWidth: 320,
+              backgroundColor: "#FAF8F5",
+              borderRadius: 20,
+              paddingVertical: 28,
+              paddingHorizontal: 22,
+              alignItems: "center",
+            }}
+          >
+            <ActivityIndicator size="large" color="#0F382A" />
+            <Text style={{ marginTop: 16, color: "#0F382A", fontSize: 16, fontWeight: "800", textAlign: "center" }}>
+              Verifying your payment
+            </Text>
+            <Text style={{ marginTop: 7, color: "#52645B", fontSize: 13, lineHeight: 19, textAlign: "center" }}>
+              Please wait while we securely confirm your payment. Do not close the app.
+            </Text>
+          </View>
+        </View>
+      )}
+
     </SafeAreaView>
   );
 }

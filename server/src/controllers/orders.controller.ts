@@ -1506,6 +1506,11 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       await Cart.updateMany({ user: finalUserId, status: "in-cart" }, { $set: { status: "ordered" } });
     }
 
+    // Order and database relationships are saved. Dispatch socket and push
+    // notification fan-out asynchronously so notification-provider latency
+    // does not hold up Razorpay initialization on the customer app.
+    setImmediate(() => {
+      void (async () => {
     try {
       if (finalUserId) {
         io.to(finalUserId).emit("new_order_placed", savedOrder);
@@ -1600,6 +1605,8 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     } catch (e) {
       console.log("Order creation notification emit warning:", e);
     }
+      })();
+    });
 
     return res.status(201).json({
       success: true,
