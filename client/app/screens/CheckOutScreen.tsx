@@ -522,10 +522,11 @@ export default function CheckOutScreen() {
   }, [params.scheduledDatesFormatted, params.scheduledDatesList, deliveryDate, isCateringFlow, isHomemadeFlow]);
 
   // ✅ "razorpay" is now the ONLY payment method — all 5 cards route to it.
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"upi" | "card" | "netbanking" | "wallet" | "">("");
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"upi" | "card" | "netbanking" | "wallet" | "cod" | "">("");
   const [selectedPaymentOption, setSelectedPaymentOption] = useState<"advance" | "full">("full");
-  // All KatBox service types support the same 40% advance / 100% full-payment choice.
-  const isAdvancePaymentEligible = isCateringFlow || isHomemadeFlow || isMealBoxFlowExplicit;
+  // QuickBites always requires full online payment or allows cash on delivery.
+  // The 40% advance option remains available only for Catering, Homemade and MealBox.
+  const isAdvancePaymentEligible = isCateringFlow || (isHomemadeFlow && !isQuickBitesFlow) || isMealBoxFlowExplicit;
   const [showDetails, setShowDetails] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -689,13 +690,22 @@ export default function CheckOutScreen() {
      4. Verify signature + captured payment on the backend.
      5. Navigate only after successful server-side verification.
      ───────────────────────────────────────────────────────────────── */
-  const handleRazorpayPayment = async (paymentOptionOverride?: "advance" | "full") => {
-    const effectivePaymentOption = paymentOptionOverride || selectedPaymentOption;
-    const payableAmount = isAdvancePaymentEligible && effectivePaymentOption === "advance" ? advanceAmount : numericTotal;
+  const handleRazorpayPayment = async (
+    paymentOptionOverride?: "advance" | "full",
+    paymentMethodOverride?: "upi" | "card" | "netbanking" | "wallet" | "cod"
+  ) => {
+    const effectivePaymentMethod = paymentMethodOverride || selectedPaymentMethod;
+    const isCashOnDelivery = effectivePaymentMethod === "cod";
+    const effectivePaymentOption = isQuickBites || isCashOnDelivery
+      ? "full"
+      : (paymentOptionOverride || selectedPaymentOption);
+    const payableAmount = isCashOnDelivery
+      ? 0
+      : (isAdvancePaymentEligible && effectivePaymentOption === "advance" ? advanceAmount : numericTotal);
     const remainingBalance = Math.max(0, Math.round((numericTotal - payableAmount) * 100) / 100);
     if (loading) return;
-    if (!selectedPaymentMethod) {
-      Alert.alert("Select a payment method", "Please choose UPI, Cards, Net Banking or Wallets to continue.");
+    if (!effectivePaymentMethod) {
+      Alert.alert("Select a payment method", "Please choose a payment method to continue.");
       return;
     }
     if (!Number.isFinite(numericTotal) || numericTotal <= 0) {
@@ -734,8 +744,8 @@ export default function CheckOutScreen() {
         totalAmount: String(numericTotal),
         advancePaidAmount: String(payableAmount),
         balanceAmountToCollect: String(remainingBalance),
-        paymentOption: isAdvancePaymentEligible ? effectivePaymentOption : "full",
-        paymentMethod: selectedPaymentMethod,
+        paymentOption: isQuickBites || isCashOnDelivery ? "full" : (isAdvancePaymentEligible ? effectivePaymentOption : "full"),
+        paymentMethod: effectivePaymentMethod,
         selections: parsedSelections ? JSON.stringify(parsedSelections) : null,
         items: JSON.stringify(parsedItems),
         restaurantName,
@@ -790,6 +800,26 @@ export default function CheckOutScreen() {
         throw new Error(orderRes.data?.message || "KatBox could not create your order. Please try again.");
       }
 
+      // QuickBites COD is a real placed order, not a gateway transaction.
+      // The backend stores ₹0 paid and the full amount as outstanding.
+      if (isCashOnDelivery) {
+        if (params.cartId) {
+          try { await api.delete(`/api/cart/${params.cartId}`); }
+          catch (e) { console.log("Cart cleanup non-critical error", e); }
+        }
+        setShowConfirmModal(false);
+        router.replace({
+          pathname: "/screens/OrderConfirmationScreen",
+          params: {
+            orderId: katboxOrderId,
+            serviceType,
+            paymentMethod: "cod",
+            paymentStatus: "Cash on Delivery",
+          },
+        });
+        return;
+      }
+
       // Step 2: Create a Razorpay order for the selected advance or full amount.
       const createRes = await api.post("/api/payments/create-order", { orderId: katboxOrderId });
       if (!createRes.data?.success || !createRes.data?.razorpayOrderId || !createRes.data?.keyId) {
@@ -805,7 +835,7 @@ export default function CheckOutScreen() {
         amount: createRes.data.amount,
         name: "KatBox",
         order_id: createRes.data.razorpayOrderId,
-        method: selectedPaymentMethod,
+        method: effectivePaymentMethod,
         prefill: {
           name: userName || "",
           contact: customerPhone ? (customerPhone.startsWith("+") ? customerPhone : `+91${customerPhone.replace(/\D/g, "")}`) : "",
@@ -859,7 +889,7 @@ export default function CheckOutScreen() {
         params: {
           orderId: katboxOrderId,
           serviceType,
-          paymentMethod: selectedPaymentMethod,
+          paymentMethod: effectivePaymentMethod,
           paymentStatus: "Paid",
         },
       });
@@ -879,6 +909,21 @@ export default function CheckOutScreen() {
   };
 
   const handleRazorpayPaymentWithOption = (option: "advance" | "full") => handleRazorpayPayment(option);
+
+  // QuickBites skips the amount-choice popup and immediately proceeds with
+  // the selected method for the full order total. COD creates the order directly.
+  const handlePaymentMethodSelection = (
+    method: "upi" | "card" | "netbanking" | "wallet" | "cod"
+  ) => {
+    if (loading) return;
+    setSelectedPaymentMethod(method);
+    setSelectedPaymentOption("full");
+    if (isQuickBites) {
+      void handleRazorpayPayment("full", method);
+      return;
+    }
+    openConfirmModal();
+  };
 
   const handleConfirmPlaceOrder = () => {
     if (!selectedPaymentMethod) {
@@ -1603,7 +1648,7 @@ export default function CheckOutScreen() {
         {/* 1. UPI Payment Option — now ENABLED, opens Razorpay (UPI) */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => { setSelectedPaymentMethod("upi"); setSelectedPaymentOption("full"); openConfirmModal(); }}
+          onPress={() => handlePaymentMethodSelection("upi")}
           style={[
             styles.paymentOptionCard,
             selectedPaymentMethod === "upi" && styles.paymentOptionCardActive,
@@ -1632,7 +1677,7 @@ export default function CheckOutScreen() {
         {/* 2. Cards Option — now ENABLED, opens Razorpay (Cards) */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => { setSelectedPaymentMethod("card"); setSelectedPaymentOption("full"); openConfirmModal(); }}
+          onPress={() => handlePaymentMethodSelection("card")}
           style={[
             styles.paymentOptionCard,
             selectedPaymentMethod === "card" && styles.paymentOptionCardActive,
@@ -1656,7 +1701,7 @@ export default function CheckOutScreen() {
         {/* 3. Net Banking Option — now ENABLED, opens Razorpay (Net Banking) */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => { setSelectedPaymentMethod("netbanking"); setSelectedPaymentOption("full"); openConfirmModal(); }}
+          onPress={() => handlePaymentMethodSelection("netbanking")}
           style={[
             styles.paymentOptionCard,
             selectedPaymentMethod === "netbanking" && styles.paymentOptionCardActive,
@@ -1680,7 +1725,7 @@ export default function CheckOutScreen() {
         {/* 4. Wallets Option — now ENABLED, opens Razorpay (Wallets) */}
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => { setSelectedPaymentMethod("wallet"); setSelectedPaymentOption("full"); openConfirmModal(); }}
+          onPress={() => handlePaymentMethodSelection("wallet")}
           style={[
             styles.paymentOptionCard,
             selectedPaymentMethod === "wallet" && styles.paymentOptionCardActive,
@@ -1700,6 +1745,32 @@ export default function CheckOutScreen() {
           </View>
           <Ionicons name="chevron-forward" size={18} color="#5B756C" />
         </TouchableOpacity>
+
+        {/* Cash on Delivery is available ONLY for QuickBites. */}
+        {isQuickBites && (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => handlePaymentMethodSelection("cod")}
+            style={[
+              styles.paymentOptionCard,
+              selectedPaymentMethod === "cod" && styles.paymentOptionCardActive,
+            ]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+              <View style={[styles.radioCircle, selectedPaymentMethod === "cod" && styles.radioCircleActive]}>
+                {selectedPaymentMethod === "cod" && <View style={styles.radioInnerDot} />}
+              </View>
+              <View style={styles.paymentIconBox}>
+                <MaterialCommunityIcons name="cash-multiple" size={20} color="#0F382A" />
+              </View>
+              <View style={{ marginLeft: 12, flex: 1 }}>
+                <Text style={styles.paymentOptionTitle}>Cash on Delivery</Text>
+                <Text style={styles.paymentOptionSubtitle}>Pay the full amount when your order arrives</Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#5B756C" />
+          </TouchableOpacity>
+        )}
 
         {/* Bottom Trust Badge Footer Banner */}
         <View style={styles.trustBadgeFooterContainer}>

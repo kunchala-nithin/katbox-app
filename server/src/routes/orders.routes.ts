@@ -35,6 +35,10 @@ const upload = multer({ storage: multer.memoryStorage() });
    3. POST /api/payments/verify verifies the signature and captured amount,
       updates the same MongoDB order, and notifies the assigned chef.
 
+   QuickBites COD orders are created directly as confirmed orders with the
+   full amount outstanding for collection on delivery. COD is rejected by
+   the controller for every other service type.
+
    Do not add the old /:orderId/verify-advance endpoint here.
    ───────────────────────────────────────────────────────────────── */
 

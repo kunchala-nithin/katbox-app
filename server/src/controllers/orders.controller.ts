@@ -890,12 +890,23 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     const resolvedAddress = String(safeDeliveryAddress || safeAddressDetails || "");
 
+    const normalizedPaymentMethod = String(safePaymentMethod || "").trim().toLowerCase();
+    const isCashOnDelivery = normalizedPaymentMethod === "cod" || normalizedPaymentMethod === "cash" || normalizedPaymentMethod === "cash_on_delivery";
+    if (isCashOnDelivery && resolvedServiceType !== "quickbites") {
+      return res.status(400).json({
+        success: false,
+        message: "Cash on Delivery is available only for QuickBites orders.",
+      });
+    }
+
     let numericTotal = Number(totalAmount) || 0;
-    const isRazorpayPayment = ["razorpay", "upi", "card", "netbanking", "wallet"].includes(String(safePaymentMethod || "").toLowerCase());
-    // All four KatBox service types support 40% advance or full payment.
-    // The server remains authoritative for the payable amount.
-    const isAdvanceEligibleService = ["catering", "homemade", "quickbites", "mealbox"].includes(resolvedServiceType);
-    const requestedPaymentOption = String(req.body?.paymentOption || "full").toLowerCase() === "advance" ? "advance" : "full";
+    const isRazorpayPayment = ["razorpay", "upi", "card", "netbanking", "wallet"].includes(normalizedPaymentMethod);
+    // QuickBites does not support advance payments. Other service types retain
+    // the existing 40% advance / 100% full-payment choice.
+    const isAdvanceEligibleService = ["catering", "homemade", "mealbox"].includes(resolvedServiceType);
+    const requestedPaymentOption = resolvedServiceType === "quickbites"
+      ? "full"
+      : (String(req.body?.paymentOption || "full").toLowerCase() === "advance" ? "advance" : "full");
     let finalAdvance = 0;
     let finalBalance = 0;
 
@@ -1028,12 +1039,23 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       (Number(subtotal) || 0) + finalDeliveryPrice - (Number(discount) || 0)
     );
     // The backend recalculates the payable amount from its final server-side total.
-    // Catering, Homemade, QuickBites and MealBox all support 40% advance or full payment.
-    finalAdvance = isRazorpayPayment
-      ? (isAdvanceEligibleService && requestedPaymentOption === "advance"
-          ? Math.round(numericTotal * 0.40 * 100) / 100
-          : numericTotal)
-      : (advancePaidAmount !== undefined ? Math.max(0, Number(advancePaidAmount) || 0) : Math.round(numericTotal * 0.40 * 100) / 100);
+    // QuickBites online payment is always 100%; QuickBites COD collects nothing
+    // now and leaves the full order total outstanding. Other service types retain
+    // the existing advance/full-payment calculation.
+    if (isCashOnDelivery) {
+      finalAdvance = 0;
+    } else if (resolvedServiceType === "quickbites") {
+      // QuickBites is always prepaid in full when using an online method.
+      finalAdvance = numericTotal;
+    } else if (isRazorpayPayment) {
+      finalAdvance = isAdvanceEligibleService && requestedPaymentOption === "advance"
+        ? Math.round(numericTotal * 0.40 * 100) / 100
+        : numericTotal;
+    } else {
+      finalAdvance = advancePaidAmount !== undefined
+        ? Math.max(0, Number(advancePaidAmount) || 0)
+        : Math.round(numericTotal * 0.40 * 100) / 100;
+    }
     finalBalance = Math.max(0, Math.round((numericTotal - finalAdvance) * 100) / 100);
 
     // ────────────────────────────────────────────────────────────────
@@ -1232,10 +1254,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         balanceAmountToCollect: finalBalance,
         utrNumber: safeUtrNumber,
         advancePaymentScreenshot: screenshotData,
-        isAdvanceVerified: false,
+        isAdvanceVerified: isCashOnDelivery,
         paymentMethod: safePaymentMethod || "cod",
-        paymentOption: isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full",
-        paymentStatus: isRazorpayPayment ? "Payment Pending" : "Verification Pending",
+        paymentOption: isCashOnDelivery ? "full" : (isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full"),
+        paymentStatus: isCashOnDelivery ? "Cash on Delivery" : (isRazorpayPayment ? "Payment Pending" : "Verification Pending"),
         orderStatus: "Placed",
         // ✅ Persist special instructions for homemade / quickbites flow
         specialInstruction: resolvedSpecialInstruction,
@@ -1254,7 +1276,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         // ✅ Persist delivery type for homemade / quickbites flow
         deliveryType: safeDeliveryType,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: isCashOnDelivery ? `QuickBites order placed with Cash on Delivery. ₹${numericTotal} is payable on delivery.` : (isRazorpayPayment ? `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending`) },
         ],
       });
 
@@ -1316,10 +1338,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         balanceAmountToCollect: finalBalance,
         utrNumber: safeUtrNumber,
         advancePaymentScreenshot: screenshotData,
-        isAdvanceVerified: false,
+        isAdvanceVerified: isCashOnDelivery,
         paymentMethod: safePaymentMethod || "cod",
-        paymentOption: isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full",
-        paymentStatus: isRazorpayPayment ? "Payment Pending" : "Verification Pending",
+        paymentOption: isCashOnDelivery ? "full" : (isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full"),
+        paymentStatus: isCashOnDelivery ? "Cash on Delivery" : (isRazorpayPayment ? "Payment Pending" : "Verification Pending"),
         orderStatus: "Placed",
         // ✅ Persist special instructions for catering flow
         specialInstruction: resolvedSpecialInstruction,
@@ -1430,10 +1452,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         balanceAmountToCollect: finalBalance,
         utrNumber: safeUtrNumber,
         advancePaymentScreenshot: screenshotData,
-        isAdvanceVerified: false,
+        isAdvanceVerified: isCashOnDelivery,
         paymentMethod: safePaymentMethod || "cod",
-        paymentOption: isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full",
-        paymentStatus: isRazorpayPayment ? "Payment Pending" : "Verification Pending",
+        paymentOption: isCashOnDelivery ? "full" : (isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full"),
+        paymentStatus: isCashOnDelivery ? "Cash on Delivery" : (isRazorpayPayment ? "Payment Pending" : "Verification Pending"),
         orderStatus: "Placed",
         // ✅ Persist special instructions for mealbox flow
         specialInstruction: resolvedSpecialInstruction,
@@ -1491,14 +1513,46 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         if (customerDoc?.pushToken) {
           await sendExpoPushNotification(
             customerDoc.pushToken,
-            "Order Placed - Verification Pending 🕒",
-            `Your order #${savedOrder.orderId} advance payment is being verified by admin.`,
+            isCashOnDelivery ? "QuickBites Order Placed 🎉" : "Order Placed - Verification Pending 🕒",
+            isCashOnDelivery
+              ? `Your QuickBites order #${savedOrder.orderId} is confirmed. ₹${savedOrder.totalAmount} is payable on delivery.`
+              : `Your order #${savedOrder.orderId} advance payment is being verified by admin.`,
             { orderId: savedOrder.orderId, screen: "orders" }
           );
         }
       }
 
       io.emit("new_order_placed", savedOrder);
+
+      // QuickBites COD orders are accepted without payment verification because
+      // the full amount is collected on delivery. Notify the assigned chef now.
+      if (isCashOnDelivery) {
+        const chefDocForCod = resolvedChefDoc || (effectiveChefId && mongoose.Types.ObjectId.isValid(effectiveChefId)
+          ? await Chef.findById(effectiveChefId)
+          : await Chef.findOne({ name: effectiveChefName }));
+        if (chefDocForCod?.user) {
+          const chefUserId = String(chefDocForCod.user);
+          io.to(chefUserId).emit("new_chef_order", savedOrder);
+          io.to(chefUserId).emit("order_updated", savedOrder);
+          const chefUser = await User.findById(chefUserId);
+          if (chefUser?.pushToken && isValidExpoToken(chefUser.pushToken)) {
+            await sendExpoPush({
+              token: String(chefUser.pushToken),
+              title: `🔔 New QuickBites COD Order ${savedOrder.orderId}`,
+              body: `${savedOrder.userName || "Customer"} placed a ₹${savedOrder.totalAmount} Cash on Delivery order.`,
+              data: { orderId: savedOrder.orderId, screen: "chef-orders", role: "chef", chefId: chefUserId },
+              sound: ORDER_ALARM_SOUND,
+              channelId: CHEF_ORDER_CHANNEL_ID,
+              priority: "max" as const,
+              vibrate: [0, 600, 300, 600, 300],
+            });
+          }
+        }
+        if (effectiveChefId) {
+          io.to(String(effectiveChefId)).emit("new_chef_order", savedOrder);
+          io.to(String(effectiveChefId)).emit("order_updated", savedOrder);
+        }
+      }
 
       /* ──────────────────────────────────────────────────────────
          ✅ Notify EVERY admin with the alarm sound.
@@ -1549,7 +1603,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     return res.status(201).json({
       success: true,
-      message: isRazorpayPayment ? `Order saved. Awaiting Razorpay payment of ₹${finalAdvance}.` : "Order placed successfully. Advance verification pending.",
+      message: isCashOnDelivery
+        ? "QuickBites order placed successfully. Full amount is payable on delivery."
+        : (isRazorpayPayment ? `Order saved. Awaiting Razorpay payment of ₹${finalAdvance}.` : "Order placed successfully. Advance verification pending."),
       order: savedOrder,
     });
   } catch (error: any) {

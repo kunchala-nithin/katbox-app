@@ -12,6 +12,8 @@ import { refreshUser } from '@/src/lib/authStorage';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
+  Animated,
+  PanResponder,
   Text,
   StyleSheet,
   ScrollView,
@@ -382,6 +384,85 @@ export default function HomeScreen() {
   const mainScrollRef = useRef<ScrollView>(null);
   const caterersSectionRef = useRef<View>(null);
   const categoryScrollRef = useRef<ScrollView>(null);
+
+  // ─── Draggable floating KatBox Assistant ───
+  // The assistant starts at the same bottom-right location as before.
+  // Dragging is clamped to the visible screen so the button cannot be lost
+  // outside the screen edges. A simple tap still opens the assistant.
+  const assistantSize = 56;
+  const assistantInitialBottom = Platform.OS === 'ios' ? 100 : 90;
+  const assistantPosition = useRef(
+    new Animated.ValueXY({
+      x: Math.max(0, width - assistantSize - 20),
+      y: Math.max(0, height - assistantInitialBottom - assistantSize),
+    })
+  ).current;
+  const assistantPositionRef = useRef({
+    x: Math.max(0, width - assistantSize - 20),
+    y: Math.max(0, height - assistantInitialBottom - assistantSize),
+  });
+  const assistantDragStartRef = useRef({ x: 0, y: 0 });
+  const assistantHasMovedRef = useRef(false);
+
+  const assistantPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => false,
+      onMoveShouldSetPanResponder: (_event, gestureState) =>
+        Math.abs(gestureState.dx) > 3 || Math.abs(gestureState.dy) > 3,
+      onMoveShouldSetPanResponderCapture: (_event, gestureState) =>
+        Math.abs(gestureState.dx) > 3 || Math.abs(gestureState.dy) > 3,
+      onPanResponderGrant: () => {
+        assistantHasMovedRef.current = false;
+        assistantDragStartRef.current = { ...assistantPositionRef.current };
+        assistantPosition.setOffset({
+          x: assistantPositionRef.current.x,
+          y: assistantPositionRef.current.y,
+        });
+        assistantPosition.setValue({ x: 0, y: 0 });
+      },
+      onPanResponderMove: (_event, gestureState) => {
+        if (Math.abs(gestureState.dx) > 3 || Math.abs(gestureState.dy) > 3) {
+          assistantHasMovedRef.current = true;
+        }
+        const nextX = Math.min(
+          Math.max(0, assistantDragStartRef.current.x + gestureState.dx),
+          Math.max(0, width - assistantSize)
+        );
+        const nextY = Math.min(
+          Math.max(0, assistantDragStartRef.current.y + gestureState.dy),
+          Math.max(0, height - assistantSize)
+        );
+        assistantPosition.setValue({
+          x: nextX - assistantDragStartRef.current.x,
+          y: nextY - assistantDragStartRef.current.y,
+        });
+      },
+      onPanResponderRelease: (_event, gestureState) => {
+        const nextX = Math.min(
+          Math.max(0, assistantDragStartRef.current.x + gestureState.dx),
+          Math.max(0, width - assistantSize)
+        );
+        const nextY = Math.min(
+          Math.max(0, assistantDragStartRef.current.y + gestureState.dy),
+          Math.max(0, height - assistantSize)
+        );
+        assistantPosition.flattenOffset();
+        assistantPosition.setValue({ x: nextX, y: nextY });
+        assistantPositionRef.current = { x: nextX, y: nextY };
+
+        // A short touch opens the assistant; a moved gesture only drags it.
+        if (!assistantHasMovedRef.current) {
+          router.push('/(tabs)/KatBoxAssistant' as any);
+        }
+      },
+      onPanResponderTerminate: () => {
+        assistantPosition.flattenOffset();
+        assistantPosition.setValue(assistantPositionRef.current);
+      },
+      onPanResponderTerminationRequest: () => false,
+    })
+  ).current;
 
   // Helper: format display string from address object
   const formatAddressDisplay = (
@@ -2440,15 +2521,25 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
-      {/* ✅ FLOATING KATBOX ASSISTANT BUTTON (Now a Robot Assistant) */}
-      <TouchableOpacity
-        style={styles.floatingAssistantBtn}
-        activeOpacity={0.85}
-        onPress={() => router.push('/(tabs)/KatBoxAssistant' as any)}
-        accessibilityLabel="Open KatBox Assistant"
+      {/* ✅ DRAGGABLE FLOATING KATBOX ASSISTANT BUTTON */}
+      <Animated.View
+        {...assistantPanResponder.panHandlers}
+        style={[
+          styles.floatingAssistantBtn,
+          {
+            left: 0,
+            top: 0,
+            right: undefined,
+            bottom: undefined,
+            transform: assistantPosition.getTranslateTransform(),
+          },
+        ]}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel="KatBox Assistant. Tap to open or hold and drag to move."
       >
         <MaterialCommunityIcons name="robot-happy" size={26} color="#FFFFFF" />
-      </TouchableOpacity>
+      </Animated.View>
 
       {/* ─── NOTIFICATIONS POPUP PANEL ─── */}
       <Modal
@@ -4771,10 +4862,6 @@ const styles = StyleSheet.create({
   // ✅ NEW: Floating KatBox Assistant Button
   floatingAssistantBtn: {
     position: 'absolute',
-    right: 20,
-    // Positioning above the standard bottom tab bar (which is typically ~60-80px tall).
-    // 90px ensures it sits safely above the Home/Orders/Profile tabs without overlapping.
-    bottom: Platform.OS === 'ios' ? 100 : 90,
     width: 56,
     height: 56,
     borderRadius: 28,
