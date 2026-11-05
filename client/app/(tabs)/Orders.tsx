@@ -343,12 +343,22 @@ const resolveEffectiveDeliveryTime = (order: any): string | undefined => {
 };
 
 // ✅ NEW: Check if order is QuickBites
+const normalizeOrderServiceType = (value: any): string => {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\\s_-]+/g, "");
+};
+
+// ✅ QuickBites may be returned by older records with different casing or
+//    separators (for example "Quick Bites" / "quick_bites"). Normalize the
+//    discriminator before checking the service type.
 const isQuickBitesOrder = (order: any): boolean => {
   if (!order) return false;
   return (
     order?.isQuickBites === true ||
     String(order?.isQuickBites).toLowerCase() === "true" ||
-    (order?.serviceType || "").toLowerCase() === "quickbites"
+    normalizeOrderServiceType(order?.serviceType) === "quickbites"
   );
 };
 
@@ -1328,8 +1338,9 @@ export default function MyOrdersScreen() {
         if (!haystack.includes(q)) return false;
       }
 
-      const status = (order.orderStatus || "Placed").toLowerCase();
-      const paymentStatus = String(order.paymentStatus || "").toLowerCase();
+      const status = String(order.orderStatus || "Placed").trim().toLowerCase();
+      const paymentStatus = String(order.paymentStatus || "").trim().toLowerCase();
+      const isQuickBites = isQuickBitesOrder(order);
       const outstandingBalance = Number(order.balanceAmountToCollect ?? 0);
       const isPaymentCollected =
         paymentStatus === "collected" ||
@@ -1337,12 +1348,16 @@ export default function MyOrdersScreen() {
         paymentStatus === "fully paid (balance collected)" ||
         ((paymentStatus === "paid" || order.paymentCaptured === true) && outstandingBalance <= 0);
 
+      // ✅ IMPORTANT: A prepaid QuickBites order is fully paid at placement.
+      // Payment completion must NOT move it into the Completed tab. QuickBites
+      // becomes Completed only when its order lifecycle status is delivered,
+      // completed, cash collected, or collected.
       const isCompletedState =
         status === "completed" ||
         status === "delivered" ||
         status === "cash collected" ||
         status === "collected" ||
-        isPaymentCollected;
+        (!isQuickBites && isPaymentCollected);
 
       const isCancelledState = status === "cancelled" || status === "canceled";
 
@@ -3557,13 +3572,16 @@ export default function MyOrdersScreen() {
             const orderId = order.orderId;
             const isNotLastOrder = orderIndex < filteredOrders.length - 1;
             const orderStatusString = order.orderStatus || "Placed";
-            const orderPaymentStatusString = String(order.paymentStatus || "").toLowerCase();
+            const orderPaymentStatusString = String(order.paymentStatus || "").trim().toLowerCase();
             const isDeliveredState =
               orderStatusString.toLowerCase() === "delivered" ||
               orderStatusString.toLowerCase() === "completed" ||
               orderStatusString.toLowerCase() === "cash collected" ||
-              orderPaymentStatusString === "collected" ||
-              ((orderPaymentStatusString === "paid" || order.paymentCaptured === true) && Number(order.balanceAmountToCollect ?? 0) <= 0);
+              orderStatusString.toLowerCase() === "collected" ||
+              (!isQuickBites && (
+                orderPaymentStatusString === "collected" ||
+                ((orderPaymentStatusString === "paid" || order.paymentCaptured === true) && Number(order.balanceAmountToCollect ?? 0) <= 0)
+              ));
             const dynamicChefName = order.chefName || order.restaurantName || "Partner Chef";
 
             const cancelledBadgeText = getCancellationBadgeLabel(order);

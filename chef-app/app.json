@@ -1,0 +1,87 @@
+{
+  "expo": {
+    "name": "KatBox Chef",
+    "slug": "katbox-chef",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": [
+      "katboxchef",
+      "clerk"
+    ],
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#073B1E"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.katbox.chef",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Allow KatBox Chef to access photos for chef and menu images.",
+        "NSCameraUsageDescription": "Allow KatBox Chef to use the camera for chef and menu images.",
+        "NSLocationWhenInUseUsageDescription": "KatBox Chef uses location to manage your kitchen location."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#166348"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.katbox.chef",
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE",
+        "android.permission.WAKE_LOCK",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-image-picker",
+      "expo-web-browser",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#073B1E",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/sounds/alarm.mp3"
+          ]
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "KatBox Chef uses your location to manage your kitchen location.",
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "tsconfigPaths": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0a995135-38e2-446f-b347-8e3cac6c204e"
+      }
+    },
+    "owner": "ammachetivantalu"
+  }
+}
