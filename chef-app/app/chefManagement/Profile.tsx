@@ -720,51 +720,69 @@ export default function ChefProfileScreen() {
     setLogoutModalVisible(true);
   };
 
-  // Preserve the existing Clerk and local-session cleanup flow
+  // Clear the KatBox session and leave the protected Chef navigator
+  // before signing out of Clerk. Clerk signOut can emit auth-state changes;
+  // doing it first can briefly leave the Chef route mounted with a stale
+  // KatBox JWT, causing the role guard to show "Chef Access Required".
   const confirmLogout = async () => {
     setLogoutModalVisible(false);
+    setLoading(true);
+
+    let localSessionCleared = false;
 
     try {
-      setLoading(true);
+      // 1. Clear the KatBox JWT and cached MongoDB user FIRST.
+      await removeToken();
+      localSessionCleared = true;
+      setUser(null);
 
-      // 1. Sign out from Clerk first
+      // 2. Disconnect the Chef's live socket connection.
+      try {
+        if (socket && typeof socket.disconnect === "function") {
+          socket.disconnect();
+        }
+      } catch (socketError) {
+        console.error("Failed to disconnect socket:", socketError);
+      }
+
+      // 3. Tell both navigation guards that the KatBox session is gone.
+      // 4. Navigate immediately; do not wait for Clerk's network cleanup.
+      notifyAuthChanged();
+      router.replace("/login" as any);
+
+      // 5. Clear the Clerk session after local logout/navigation.
+      // This is deliberately best-effort: a Clerk network error must not
+      // send the user to the Chef Access Required screen.
       try {
         await signOut();
       } catch (clerkError) {
-        console.error("Clerk signOut error:", clerkError);
-        // Continue with local cleanup even if Clerk signOut fails
-      }
+        console.error("Clerk signOut error after local logout:", clerkError);
 
-      // 2. Clear Clerk's internal session via clerk object as fallback
-      try {
-        if (clerk && typeof clerk.signOut === "function") {
-          await clerk.signOut();
+        // Try the Clerk instance as a fallback only if the first call failed.
+        try {
+          if (clerk && typeof clerk.signOut === "function") {
+            await clerk.signOut();
+          }
+        } catch (clerkFallbackError) {
+          console.error(
+            "Clerk fallback signOut error:",
+            clerkFallbackError
+          );
         }
-      } catch (clerkObjError) {
-        // Ignore — signOut from useAuth already handled it
       }
-
-      // 3. Clear local auth storage
-      await removeToken();
-
-      // 4. Disconnect socket
-      if (socket && typeof socket.disconnect === "function") {
-        socket.disconnect();
-      }
-
-      // 5. Notify auth state change
-      notifyAuthChanged();
-
-      // 6. Navigate to login
-      router.replace("/login" as any);
     } catch (err) {
       console.error("KatBox Chef Logout error:", err);
 
-      // Fallback cleanup — attempt every step independently
-      try {
-        await removeToken();
-      } catch (storageError) {
-        console.error("Failed to clear local auth storage:", storageError);
+      // Retry local cleanup independently. Navigation must still go to login
+      // even if a secondary cleanup operation fails.
+      if (!localSessionCleared) {
+        try {
+          await removeToken();
+          localSessionCleared = true;
+          setUser(null);
+        } catch (storageError) {
+          console.error("Failed to clear local auth storage:", storageError);
+        }
       }
 
       try {
@@ -775,19 +793,15 @@ export default function ChefProfileScreen() {
         console.error("Failed to disconnect socket:", socketError);
       }
 
-      // Try Clerk signOut one more time
-      try {
-        await signOut();
-      } catch (clerkRetryError) {
-        console.error("Clerk signOut retry failed:", clerkRetryError);
-      }
-
       notifyAuthChanged();
+      router.replace("/login" as any);
+
       Alert.alert(
         "Logout",
-        "Your local session has been cleared. Please sign in again."
+        localSessionCleared
+          ? "You have been signed out of KatBox."
+          : "Please try logging out again. Your session could not be cleared."
       );
-      router.replace("/login" as any);
     } finally {
       setLoading(false);
     }

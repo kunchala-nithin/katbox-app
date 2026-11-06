@@ -10,14 +10,16 @@ import * as SecureStore from 'expo-secure-store'
 import Constants from 'expo-constants'
 import { ClerkProvider } from '@clerk/clerk-expo'
 
-import { getToken, removeToken, getUser } from '@/src/lib/authStorage'
+import { getToken, removeToken, getUser, refreshUser } from '@/src/lib/authStorage'
 import { subscribeAuth } from '@/src/lib/authEvents'
 import { isTokenExpired, getTokenExpiry } from '@/src/lib/jwtUtils'
 import api from '@/src/lib/api'
 
 export { ErrorBoundary } from 'expo-router'
 
-SplashScreen.preventAutoHideAsync()
+void SplashScreen.preventAutoHideAsync().catch((error) => {
+  console.log('Could not prevent splash screen auto-hide:', error)
+})
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -171,7 +173,9 @@ function InitialLayout() {
 
   useEffect(() => {
     if (fontError) {
-      throw fontError
+      // A font asset failure must not keep the native splash screen visible.
+      // Continue with platform fallback fonts for unavailable font assets.
+      console.log('⚠️ Font loading failed; continuing with fallback fonts:', fontError)
     }
   }, [fontError])
 
@@ -180,40 +184,37 @@ function InitialLayout() {
    * GET ROLE-BASED ROUTE
    * ------------------------------------------------------------
    *
-   * We use the Katbox user saved in authStorage.
-   *
-   * Admin:
-   *     /admin/all-users
-   *
-   * Chef:
-   *     /chefManagement/add-chefs
-   *
-   * Customer:
-   *     /(tabs)/Home
+   * We verify the latest KatBox user role through /auth/me.
+   * This standalone Chef app allows only MongoDB users whose
+   * isChef flag is exactly true to enter Chef screens.
    */
 
   const getRoleRoute = useCallback(async () => {
     try {
-      const user = await getUser()
+      /*
+       * Never make an access decision from the cached role alone.
+       * refreshUser() calls the protected /auth/me endpoint, which
+       * reads the current user record directly from MongoDB and
+       * refreshes authStorage with the latest role flags.
+       */
+      const user = await refreshUser()
 
       if (!user) {
         console.log(
-          '⚠️ No stored Katbox user found. Using customer Home route.'
+          '⚠️ Could not verify the KatBox user with the backend.'
         )
-
-        return '/login'
+        return '/unauthorized'
       }
 
-      console.log('👤 Stored Katbox user:', {
-        id: user.id,
+      console.log('👤 Verified KatBox user from MongoDB:', {
+        id: user.id || user._id,
         name: user.name,
         isChef: user.isChef,
         isAdmin: user.isAdmin,
       })
 
-      /*
-       * Admin gets priority if somehow both flags are true.
-       */
+      // This is a standalone Chef app: only MongoDB isChef === true
+      // is allowed to enter the Chef application.
       if (user.isChef === true) {
         return '/chefManagement/add-chefs'
       }
@@ -221,8 +222,7 @@ function InitialLayout() {
       return '/unauthorized'
     } catch (error) {
       console.log('❌ Role route resolution error:', error)
-
-      return '/login'
+      return '/unauthorized'
     }
   }, [])
 
@@ -512,10 +512,12 @@ function InitialLayout() {
    */
 
   useEffect(() => {
-    if (fontsLoaded && isAuthenticated !== null) {
-      SplashScreen.hideAsync()
+    if ((fontsLoaded || !!fontError) && isAuthenticated !== null) {
+      void SplashScreen.hideAsync().catch((error) => {
+        console.log('Could not hide splash screen:', error)
+      })
     }
-  }, [fontsLoaded, isAuthenticated])
+  }, [fontsLoaded, fontError, isAuthenticated])
 
   /*
    * ------------------------------------------------------------
@@ -576,23 +578,22 @@ function InitialLayout() {
             const data =
               response.notification.request.content.data
 
-            const user = await getUser()
+            const user = await refreshUser()
 
             /*
-             * Explicit notification screen has priority.
+             * Explicit notification screen has priority, but the
+             * backend-verified role below still controls access.
              */
             if (data?.screen === 'chef-orders') {
               router.push(
-                '/chefManagement/add-chefs' as any
+                '/chefManagement/all-orders' as any
               )
 
               return
             }
 
             if (data?.screen === 'admin-orders') {
-              router.push(
-                '/admin/all-orders' as any
-              )
+              router.replace('/unauthorized' as any)
 
               return
             }
@@ -601,16 +602,14 @@ function InitialLayout() {
              * Otherwise use the user's role.
              */
             if (user?.isAdmin) {
-              router.push(
-                '/admin/all-orders' as any
-              )
+              router.replace('/unauthorized' as any)
 
               return
             }
 
             if (user?.isChef) {
               router.push(
-                '/chefManagement/add-chefs' as any
+                '/chefManagement/all-orders' as any
               )
 
               return
@@ -619,9 +618,7 @@ function InitialLayout() {
             /*
              * Normal customer.
              */
-            router.push(
-              '/(tabs)/Orders' as any
-            )
+            router.replace('/unauthorized' as any)
           } catch (err) {
             console.log(
               '❌ Notification navigation error:',
@@ -684,19 +681,48 @@ function InitialLayout() {
      */
     const isPublicRoute =
       currentSegment === undefined ||
-      currentSegment === 'SlidingScreens' ||
+      currentSegment === 'index' ||
       currentSegment === 'login' ||
       currentSegment === 'verify' ||
       currentSegment === 'oauth-callback'
 
+    // Expo Router can initially report an empty segment array.
+    // Treat both an undefined segment and the index route as the app entry point.
+    // This is essential because app/index.tsx intentionally renders null.
+    if (
+      !isAuthenticated &&
+      (currentSegment === undefined || currentSegment === 'index')
+    ) {
+      console.log('🔒 Unauthenticated entry route. Redirecting to login.')
+      router.replace('/login' as any)
+      return
+    }
+
     // Chef app: a valid KatBox JWT is not sufficient; the MongoDB user
     // must also have isChef === true before Chef routes can be opened.
     if (isAuthenticated && inChef) {
-      getUser().then((storedUser) => {
-        if (storedUser?.isChef !== true) {
+      let isActive = true
+
+      refreshUser()
+        .then((freshUser) => {
+          if (!isActive) return
+
+          if (freshUser?.isChef !== true) {
+            console.log(
+              '🚫 Chef route blocked: MongoDB does not confirm isChef === true.'
+            )
+            router.replace('/unauthorized' as any)
+          }
+        })
+        .catch((error) => {
+          if (!isActive) return
+          console.log('❌ Could not verify Chef route access:', error)
           router.replace('/unauthorized' as any)
-        }
-      }).catch(() => router.replace('/unauthorized' as any))
+        })
+
+      return () => {
+        isActive = false
+      }
     }
 
     /*
@@ -790,7 +816,7 @@ function InitialLayout() {
    */
 
   if (
-    !fontsLoaded ||
+    (!fontsLoaded && !fontError) ||
     isAuthenticated === null
   ) {
     return null
@@ -803,69 +829,12 @@ function InitialLayout() {
    */
 
   return (
-    <Stack>
-      <Stack.Screen
-        name="index"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="SlidingScreens"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="login"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="oauth-callback"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="verify/[phone]"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="(tabs)"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="screens"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="chefManagement"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="admin"
-        options={{
-          headerShown: false,
-        }}
-      />
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="index" />
+      <Stack.Screen name="login" />
+      <Stack.Screen name="oauth-callback" />
+      <Stack.Screen name="unauthorized" />
+      <Stack.Screen name="chefManagement" />
     </Stack>
   )
 }

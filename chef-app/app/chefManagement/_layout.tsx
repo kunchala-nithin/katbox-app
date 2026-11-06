@@ -71,43 +71,62 @@ export default function ChefTabsLayout() {
 
   useEffect(() => {
     let mounted = true
+    let requestId = 0
 
     const loadOnce = async () => {
       if (hasLoadedRef.current) return
       hasLoadedRef.current = true
+      const currentRequestId = ++requestId
 
       try {
+        // First validate that a KatBox JWT exists and has not expired.
         const token = await getToken()
+        if (!mounted || currentRequestId !== requestId) return
+
         if (!token || isTokenExpired(token)) {
-          if (mounted) {
-            setAllowed(false)
-            setIsChef(false)
-          }
+          setAllowed(false)
+          setIsChef(false)
+          setChefUserId(null)
+          setChefName(null)
           return
         }
-        if (mounted) setAllowed(true)
 
+        setAllowed(true)
+
+        // Do not authorize from cached isChef. The cached user is useful
+        // only as a temporary identity fallback for the order notifier.
         const cached = await getUser()
-        if (cached && mounted) {
-          setIsChef(!!cached.isChef)
-          /* ✅ Populate chef identity from cache for the notifier. */
-          if (cached.id) setChefUserId(String(cached.id))
-          if (cached.name) setChefName(String(cached.name))
+        if (!mounted || currentRequestId !== requestId) return
+
+        if (cached?.id || cached?._id) {
+          setChefUserId(String(cached.id || cached._id))
+        }
+        if (cached?.name) {
+          setChefName(String(cached.name))
         }
 
+        // /auth/me verifies the role against the current MongoDB record.
         const fresh = await refreshUser()
-        if (fresh && mounted) {
-          setIsChef(!!fresh.isChef)
-          /* ✅ Refresh chef identity from the network too. */
-          if (fresh.id) setChefUserId(String(fresh.id))
-          if (fresh.name) setChefName(String(fresh.name))
-        } else if (!cached && mounted) {
+        if (!mounted || currentRequestId !== requestId) return
+
+        if (!fresh) {
+          console.log(
+            'ChefTabsLayout: backend role verification failed; denying Chef access.'
+          )
           setIsChef(false)
+          return
         }
+
+        setIsChef(fresh.isChef === true)
+        setChefUserId(
+          fresh.id || fresh._id
+            ? String(fresh.id || fresh._id)
+            : null
+        )
+        setChefName(fresh.name ? String(fresh.name) : null)
       } catch (e) {
         console.log('ChefTabsLayout auth error:', e)
-        if (mounted) {
-          setAllowed(false)
+        if (mounted && currentRequestId === requestId) {
           setIsChef(false)
         }
       }
@@ -116,12 +135,20 @@ export default function ChefTabsLayout() {
     loadOnce()
 
     const unsub = subscribeAuth(() => {
+      // Re-run the complete token + MongoDB role verification after
+      // login/logout or another auth-session change.
+      requestId += 1
       hasLoadedRef.current = false
+      setAllowed(null)
+      setIsChef(null)
+      setChefUserId(null)
+      setChefName(null)
       loadOnce()
     })
 
     return () => {
       mounted = false
+      requestId += 1
       unsub()
     }
   }, [])
@@ -131,7 +158,7 @@ export default function ChefTabsLayout() {
     return <View style={{ flex: 1, backgroundColor: '#111813' }} />
   }
   if (!allowed) return <Redirect href="/login" />
-  if (!isChef) return <Redirect href="/(tabs)/Home" />
+  if (!isChef) return <Redirect href="/unauthorized" />
 
   return (
     <Tabs
