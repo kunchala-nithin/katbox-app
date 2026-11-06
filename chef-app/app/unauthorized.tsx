@@ -33,23 +33,25 @@ export default function UnauthorizedScreen() {
 
   const leave = async () => {
     if (busy) return;
-
     setBusy(true);
 
+    // Clear the KatBox session and navigate immediately. Clerk sign-out
+    // is best-effort and must never delay local logout/navigation.
     try {
       await removeToken();
-    } catch (e) {
-      console.log('Local session clear failed:', e);
+    } catch (error) {
+      console.log('Local session clear failed:', error);
     }
+    notifyAuthChanged();
+    router.replace('/login' as any);
 
     try {
       await clerk.signOut();
-    } catch (e) {
-      console.log('Clerk sign-out failed:', e);
+    } catch (error) {
+      console.log('Clerk sign-out failed:', error);
+    } finally {
+      setBusy(false);
     }
-
-    notifyAuthChanged();
-    router.replace('/login' as any);
   };
 
   return (

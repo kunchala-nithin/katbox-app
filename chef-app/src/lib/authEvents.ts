@@ -29,8 +29,11 @@ type Listener = () => void;
 
 /**
  * Store all active authentication listeners.
+ *
+ * Set prevents the same listener from being registered
+ * more than once.
  */
-let listeners: Listener[] = [];
+const listeners = new Set<Listener>();
 
 /**
  * ============================================================
@@ -44,21 +47,20 @@ export const subscribeAuth = (
   listener: Listener
 ): (() => void) => {
   /**
-   * Prevent the exact same listener from being registered
-   * more than once.
+   * Register the listener.
+   *
+   * Set automatically prevents duplicate registrations
+   * of the exact same function reference.
    */
-  if (!listeners.includes(listener)) {
-    listeners.push(listener);
-  }
+  listeners.add(listener);
 
   /**
    * Return cleanup function.
+   *
+   * Calling this function multiple times is safe.
    */
   return () => {
-    listeners = listeners.filter(
-      (registeredListener) =>
-        registeredListener !== listener
-    );
+    listeners.delete(listener);
   };
 };
 
@@ -76,14 +78,24 @@ export const subscribeAuth = (
  */
 export const notifyAuthChanged = (): void => {
   /**
-   * Create a copy before notifying listeners.
+   * Create a snapshot before notifying listeners.
    *
-   * This prevents problems if one listener unsubscribes itself
-   * while the notification loop is running.
+   * This prevents problems if one listener subscribes
+   * or unsubscribes while the notification loop is running.
    */
-  const currentListeners = [...listeners];
+  const currentListeners = Array.from(listeners);
 
   currentListeners.forEach((listener) => {
+    /**
+     * Only notify listeners that are still registered.
+     *
+     * This avoids calling a listener that was unsubscribed
+     * during an earlier callback.
+     */
+    if (!listeners.has(listener)) {
+      return;
+    }
+
     try {
       listener();
     } catch (error) {
@@ -112,7 +124,7 @@ export const notifyAuthChanged = (): void => {
  *
  * notifyAuthChanged()
  *
- * Both names now perform exactly the same operation.
+ * Both names perform exactly the same operation.
  */
 export const triggerAuthChange = (): void => {
   notifyAuthChanged();

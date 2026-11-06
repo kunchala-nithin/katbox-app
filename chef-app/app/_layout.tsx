@@ -3,14 +3,15 @@ import { useFonts } from 'expo-font'
 import { Stack, useRouter, useSegments } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Platform } from 'react-native'
+import { Platform, AppState } from 'react-native'
+import { io as createSocket } from 'socket.io-client'
 import * as Notifications from 'expo-notifications'
 import * as Device from 'expo-device'
 import * as SecureStore from 'expo-secure-store'
 import Constants from 'expo-constants'
 import { ClerkProvider } from '@clerk/clerk-expo'
 
-import { getToken, removeToken, getUser, refreshUser } from '@/src/lib/authStorage'
+import { getToken, removeToken, verifyUserFromBackend } from '@/src/lib/authStorage'
 import { subscribeAuth } from '@/src/lib/authEvents'
 import { isTokenExpired, getTokenExpiry } from '@/src/lib/jwtUtils'
 import api from '@/src/lib/api'
@@ -189,41 +190,22 @@ function InitialLayout() {
    * isChef flag is exactly true to enter Chef screens.
    */
 
-  const getRoleRoute = useCallback(async () => {
-    try {
-      /*
-       * Never make an access decision from the cached role alone.
-       * refreshUser() calls the protected /auth/me endpoint, which
-       * reads the current user record directly from MongoDB and
-       * refreshes authStorage with the latest role flags.
-       */
-      const user = await refreshUser()
-
-      if (!user) {
-        console.log(
-          '⚠️ Could not verify the KatBox user with the backend.'
-        )
-        return '/unauthorized'
-      }
-
-      console.log('👤 Verified KatBox user from MongoDB:', {
-        id: user.id || user._id,
-        name: user.name,
-        isChef: user.isChef,
-        isAdmin: user.isAdmin,
-      })
-
-      // This is a standalone Chef app: only MongoDB isChef === true
-      // is allowed to enter the Chef application.
-      if (user.isChef === true) {
-        return '/chefManagement/add-chefs'
-      }
-
-      return '/unauthorized'
-    } catch (error) {
-      console.log('❌ Role route resolution error:', error)
-      return '/unauthorized'
+  const getRoleRoute = useCallback(async (): Promise<string | null> => {
+    const verification = await verifyUserFromBackend()
+    if (verification.status === 'error') {
+      console.log('⚠️ Role verification unavailable; keeping the current screen until the backend can be reached.')
+      return null
     }
+    if (verification.status === 'unauthorized') return '/unauthorized'
+
+    const user = verification.user
+    console.log('👤 Verified KatBox user from MongoDB:', {
+      id: user.id || user._id,
+      name: user.name,
+      isChef: user.isChef,
+      isAdmin: user.isAdmin,
+    })
+    return user.isChef === true ? '/chefManagement/add-chefs' : '/unauthorized'
   }, [])
 
   /*
@@ -507,6 +489,69 @@ function InitialLayout() {
 
   /*
    * ------------------------------------------------------------
+   * LIVE CHEF ROLE CHANGES + APP RESUME VERIFICATION
+   * ------------------------------------------------------------
+   */
+  useEffect(() => {
+    let mounted = true
+    let socket: ReturnType<typeof createSocket> | null = null
+    let appState = AppState.currentState
+
+    const verifyAndRoute = async () => {
+      const token = await getToken()
+      if (!mounted || !token) return
+      const result = await verifyUserFromBackend()
+      if (!mounted || result.status === 'error') return
+      if (result.status === 'unauthorized' || result.user.isChef !== true) {
+        router.replace('/unauthorized' as any)
+      } else {
+        router.replace('/chefManagement/add-chefs' as any)
+      }
+    }
+
+    const connectRoleSocket = async () => {
+      const token = await getToken()
+      if (!mounted || !token || !api.defaults.baseURL) return
+      socket = createSocket(api.defaults.baseURL, {
+        transports: ['websocket'],
+        auth: { token },
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+      })
+      socket.on('connect', () => { void verifyAndRoute() })
+      socket.on('chef-access-changed', (payload: { isChef?: boolean }) => {
+        if (!mounted) return
+        if (payload?.isChef === true) router.replace('/chefManagement/add-chefs' as any)
+        else router.replace('/unauthorized' as any)
+      })
+      socket.on('connect_error', (error) => console.log('Role socket connection error:', error?.message || error))
+    }
+
+    void connectRoleSocket()
+    const unsubscribeAuth = subscribeAuth(() => {
+      socket?.removeAllListeners()
+      socket?.disconnect()
+      socket = null
+      void connectRoleSocket()
+    })
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (appState.match(/inactive|background/) && nextState === 'active') {
+        void verifyAndRoute()
+      }
+      appState = nextState
+    })
+
+    return () => {
+      mounted = false
+      subscription.remove()
+      unsubscribeAuth()
+      socket?.removeAllListeners()
+      socket?.disconnect()
+    }
+  }, [router])
+
+  /*
+   * ------------------------------------------------------------
    * SPLASH SCREEN
    * ------------------------------------------------------------
    */
@@ -578,47 +623,20 @@ function InitialLayout() {
             const data =
               response.notification.request.content.data
 
-            const user = await refreshUser()
-
-            /*
-             * Explicit notification screen has priority, but the
-             * backend-verified role below still controls access.
-             */
-            if (data?.screen === 'chef-orders') {
-              router.push(
-                '/chefManagement/all-orders' as any
-              )
-
-              return
-            }
-
-            if (data?.screen === 'admin-orders') {
+            const verification = await verifyUserFromBackend()
+            if (verification.status === 'error') return
+            if (verification.status !== 'verified' || verification.user.isChef !== true) {
               router.replace('/unauthorized' as any)
-
               return
             }
 
-            /*
-             * Otherwise use the user's role.
-             */
-            if (user?.isAdmin) {
-              router.replace('/unauthorized' as any)
-
+            // This is a standalone Chef app. Only a backend-verified
+            // Chef may open the Chef order destination from a notification.
+            if (data?.screen === 'chef-orders' || data?.screen === undefined) {
+              router.push('/chefManagement/all-orders' as any)
               return
             }
-
-            if (user?.isChef) {
-              router.push(
-                '/chefManagement/all-orders' as any
-              )
-
-              return
-            }
-
-            /*
-             * Normal customer.
-             */
-            router.replace('/unauthorized' as any)
+            router.replace('/chefManagement/add-chefs' as any)
           } catch (err) {
             console.log(
               '❌ Notification navigation error:',
@@ -703,21 +721,15 @@ function InitialLayout() {
     if (isAuthenticated && inChef) {
       let isActive = true
 
-      refreshUser()
-        .then((freshUser) => {
+      verifyUserFromBackend()
+        .then((result) => {
           if (!isActive) return
-
-          if (freshUser?.isChef !== true) {
-            console.log(
-              '🚫 Chef route blocked: MongoDB does not confirm isChef === true.'
-            )
+          if (result.status === 'unauthorized' || (result.status === 'verified' && result.user.isChef !== true)) {
+            console.log('🚫 Chef route blocked by the latest MongoDB role.')
             router.replace('/unauthorized' as any)
+          } else if (result.status === 'error') {
+            console.log('⚠️ Chef role check unavailable; waiting for a successful retry.')
           }
-        })
-        .catch((error) => {
-          if (!isActive) return
-          console.log('❌ Could not verify Chef route access:', error)
-          router.replace('/unauthorized' as any)
         })
 
       return () => {
@@ -777,11 +789,8 @@ function InitialLayout() {
        */
       getRoleRoute()
         .then((route) => {
-          console.log(
-            '🚀 Authenticated user role route:',
-            route
-          )
-
+          if (!route) return
+          console.log('🚀 Authenticated user role route:', route)
           router.replace(route as any)
         })
         .catch((error) => {
@@ -790,7 +799,8 @@ function InitialLayout() {
             error
           )
 
-          router.replace('/unauthorized' as any)
+          // A transient verification error must not be interpreted as
+          // a role denial. A foreground/reconnect check will retry.
         })
     }
   }, [

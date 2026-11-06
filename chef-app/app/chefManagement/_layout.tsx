@@ -1,6 +1,7 @@
 import { Tabs, Redirect } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { useEffect, useState, useRef } from 'react'
+import { AppState } from 'react-native'
 import {
   View,
   StyleSheet,
@@ -9,7 +10,7 @@ import {
   Platform,
   Animated,
 } from 'react-native'
-import { getUser, refreshUser, getToken } from '@/src/lib/authStorage'
+import { getUser, getToken, verifyUserFromBackend } from '@/src/lib/authStorage'
 import { isTokenExpired } from '@/src/lib/jwtUtils'
 import { subscribeAuth } from '@/src/lib/authEvents'
 import { useOrderNotifier } from '@/src/hooks/useOrderNotifier'
@@ -106,23 +107,26 @@ export default function ChefTabsLayout() {
         }
 
         // /auth/me verifies the role against the current MongoDB record.
-        const fresh = await refreshUser()
+        const verification = await verifyUserFromBackend()
         if (!mounted || currentRequestId !== requestId) return
 
-        if (!fresh) {
-          console.log(
-            'ChefTabsLayout: backend role verification failed; denying Chef access.'
-          )
+        if (verification.status === 'error') {
+          // A transient network/server failure is not proof that access
+          // was revoked. Keep the loading gate closed and retry on resume.
+          console.log('ChefTabsLayout: unable to verify role; retaining verification gate.')
+          setAllowed(null)
+          setIsChef(null)
+          return
+        }
+        if (verification.status === 'unauthorized') {
+          setAllowed(false)
           setIsChef(false)
           return
         }
 
+        const fresh = verification.user
         setIsChef(fresh.isChef === true)
-        setChefUserId(
-          fresh.id || fresh._id
-            ? String(fresh.id || fresh._id)
-            : null
-        )
+        setChefUserId(fresh.id || fresh._id ? String(fresh.id || fresh._id) : null)
         setChefName(fresh.name ? String(fresh.name) : null)
       } catch (e) {
         console.log('ChefTabsLayout auth error:', e)
@@ -135,8 +139,6 @@ export default function ChefTabsLayout() {
     loadOnce()
 
     const unsub = subscribeAuth(() => {
-      // Re-run the complete token + MongoDB role verification after
-      // login/logout or another auth-session change.
       requestId += 1
       hasLoadedRef.current = false
       setAllowed(null)
@@ -146,10 +148,21 @@ export default function ChefTabsLayout() {
       loadOnce()
     })
 
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        requestId += 1
+        hasLoadedRef.current = false
+        setAllowed(null)
+        setIsChef(null)
+        loadOnce()
+      }
+    })
+
     return () => {
       mounted = false
       requestId += 1
       unsub()
+      appStateSubscription.remove()
     }
   }, [])
 

@@ -662,6 +662,39 @@ export const deleteAccount = async (): Promise<void> => {
   }
 };
 
+export type UserVerificationResult =
+  | { status: "verified"; user: StoredUser }
+  | { status: "unauthorized"; user: null }
+  | { status: "error"; user: null; error: unknown };
+
+/**
+ * Verify the current session against MongoDB without confusing a
+ * temporary network/server failure with an explicit role denial.
+ */
+export const verifyUserFromBackend = async (): Promise<UserVerificationResult> => {
+  const token = await getToken();
+  if (!token) return { status: "unauthorized", user: null };
+
+  try {
+    const response = await api.get("/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const user = response.data?.user || response.data?.data?.user || null;
+    if (!user) return { status: "error", user: null, error: new Error("Missing user in /auth/me response") };
+
+    await SecureStore.setItemAsync(USER_KEY, JSON.stringify(user));
+    if (user.phone && user.email) await saveLastUsedEmail(user.phone, user.email);
+    return { status: "verified", user };
+  } catch (error: any) {
+    const status = Number(error?.response?.status);
+    if (status === 401 || status === 403 || status === 404) {
+      return { status: "unauthorized", user: null };
+    }
+    console.log("User verification temporarily unavailable:", error?.response?.data || error?.message || error);
+    return { status: "error", user: null, error };
+  }
+};
+
 /**
  * ============================================================
  * REFRESH USER FROM BACKEND
