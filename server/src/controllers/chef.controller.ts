@@ -23,6 +23,7 @@ import jwt from "jsonwebtoken";
 
 
 import mongoose from "mongoose";
+import { emitChefAccessChanged } from "../utils/socket";
 
 
 
@@ -906,7 +907,7 @@ export const protect = (req: any, res: Response, next: any) => {
 
 
 
-    req.user = { id: decoded.userId };
+    req.user = { id: decoded.userId, _id: decoded.userId, userId: decoded.userId };
 
 
 
@@ -1920,7 +1921,8 @@ export const createOrUpdateChef = async (req: any, res: Response) => {
 
 
 
-      await User.findByIdAndUpdate(userId, { isChef: true });
+      // Chef profile creation does not approve the account.
+      // Only an explicit admin action may set User.isChef = true.
 
 
 

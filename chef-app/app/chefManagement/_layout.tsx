@@ -129,9 +129,11 @@ export default function ChefTabsLayout() {
         setChefUserId(fresh.id || fresh._id ? String(fresh.id || fresh._id) : null)
         setChefName(fresh.name ? String(fresh.name) : null)
       } catch (e) {
-        console.log('ChefTabsLayout auth error:', e)
+        // A transient storage/network exception must not be treated as an admin revocation.
+        console.log('ChefTabsLayout auth verification error:', e)
         if (mounted && currentRequestId === requestId) {
-          setIsChef(false)
+          setAllowed(null)
+          setIsChef(null)
         }
       }
     }
@@ -150,10 +152,10 @@ export default function ChefTabsLayout() {
 
     const appStateSubscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
+        // Refresh the role on resume while keeping the current Chef screen mounted.
+        // If the backend confirms revocation, the Redirect below moves to Unauthorized.
         requestId += 1
         hasLoadedRef.current = false
-        setAllowed(null)
-        setIsChef(null)
         loadOnce()
       }
     })

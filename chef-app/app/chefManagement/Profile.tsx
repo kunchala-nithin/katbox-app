@@ -380,9 +380,6 @@ export default function ChefProfileScreen() {
 
   const [expandedFaqs, setExpandedFaqs] = useState<{ [key: string]: boolean }>({});
 
-  // Logout confirmation modal state
-  const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
-
 
 
   const fetchProfileData = async () => {
@@ -569,7 +566,7 @@ export default function ChefProfileScreen() {
 
               String(o.chefName).toLowerCase() ===
 
-              String(currentChefName).toLowerCase()
+                String(currentChefName).toLowerCase()
 
             ) {
 
@@ -715,97 +712,67 @@ export default function ChefProfileScreen() {
 
 
 
-  // Simple KatBox logout confirmation
+  // Local-first logout: immediately clear the KatBox session and leave Chef screens.
+  // Clerk sign-out runs afterward as best-effort cleanup and cannot delay navigation.
   const handleLogout = () => {
-    setLogoutModalVisible(true);
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to sign out?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Logout",
+          style: "destructive",
+          onPress: async () => {
+            setLoading(true);
+
+            try {
+              // 1. Clear the local KatBox session first.
+              await removeToken();
+            } catch (storageError) {
+              console.error("Failed to clear local KatBox session:", storageError);
+            }
+
+            // 2. Disconnect the Chef socket immediately.
+            try {
+              if (socket && typeof socket.disconnect === "function") {
+                socket.disconnect();
+              }
+            } catch (socketError) {
+              console.error("Chef socket disconnect error:", socketError);
+            }
+
+            // 3. Notify root and Chef layouts that authentication has ended.
+            notifyAuthChanged();
+
+            // 4. Navigate directly to login. The cleared token means the root
+            //    guard cannot route this user back to Unauthorized.
+            router.replace("/login" as any);
+
+            // 5. Clear Clerk in the background; do not delay navigation.
+            void (async () => {
+              try {
+                await signOut();
+              } catch (clerkError) {
+                console.error("Clerk signOut error:", clerkError);
+              }
+
+              try {
+                if (clerk && typeof clerk.signOut === "function") {
+                  await clerk.signOut();
+                }
+              } catch (clerkObjError) {
+                console.error("Clerk instance signOut fallback error:", clerkObjError);
+              }
+            })();
+          },
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
-  // Clear the KatBox session and leave the protected Chef navigator
-  // before signing out of Clerk. Clerk signOut can emit auth-state changes;
-  // doing it first can briefly leave the Chef route mounted with a stale
-  // KatBox JWT, causing the role guard to show "Chef Access Required".
-  const confirmLogout = async () => {
-    setLogoutModalVisible(false);
-    setLoading(true);
 
-    let localSessionCleared = false;
-
-    try {
-      // 1. Clear the KatBox JWT and cached MongoDB user FIRST.
-      await removeToken();
-      localSessionCleared = true;
-      setUser(null);
-
-      // 2. Disconnect the Chef's live socket connection.
-      try {
-        if (socket && typeof socket.disconnect === "function") {
-          socket.disconnect();
-        }
-      } catch (socketError) {
-        console.error("Failed to disconnect socket:", socketError);
-      }
-
-      // 3. Tell both navigation guards that the KatBox session is gone.
-      // 4. Navigate immediately; do not wait for Clerk's network cleanup.
-      notifyAuthChanged();
-      router.replace("/login" as any);
-
-      // 5. Clear the Clerk session after local logout/navigation.
-      // This is deliberately best-effort: a Clerk network error must not
-      // send the user to the Chef Access Required screen.
-      try {
-        await signOut();
-      } catch (clerkError) {
-        console.error("Clerk signOut error after local logout:", clerkError);
-
-        // Try the Clerk instance as a fallback only if the first call failed.
-        try {
-          if (clerk && typeof clerk.signOut === "function") {
-            await clerk.signOut();
-          }
-        } catch (clerkFallbackError) {
-          console.error(
-            "Clerk fallback signOut error:",
-            clerkFallbackError
-          );
-        }
-      }
-    } catch (err) {
-      console.error("KatBox Chef Logout error:", err);
-
-      // Retry local cleanup independently. Navigation must still go to login
-      // even if a secondary cleanup operation fails.
-      if (!localSessionCleared) {
-        try {
-          await removeToken();
-          localSessionCleared = true;
-          setUser(null);
-        } catch (storageError) {
-          console.error("Failed to clear local auth storage:", storageError);
-        }
-      }
-
-      try {
-        if (socket && typeof socket.disconnect === "function") {
-          socket.disconnect();
-        }
-      } catch (socketError) {
-        console.error("Failed to disconnect socket:", socketError);
-      }
-
-      notifyAuthChanged();
-      router.replace("/login" as any);
-
-      Alert.alert(
-        "Logout",
-        localSessionCleared
-          ? "You have been signed out of KatBox."
-          : "Please try logging out again. Your session could not be cleared."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // 📞 Call support handler
 
@@ -1095,7 +1062,7 @@ export default function ChefProfileScreen() {
 
       latestOrder.serviceType ||
 
-      (latestOrder.isQuickBites ? "quickbites" : "mealbox")
+        (latestOrder.isQuickBites ? "quickbites" : "mealbox")
 
     )
 
@@ -1127,9 +1094,11 @@ export default function ChefProfileScreen() {
 
           "Catering Order",
 
-        subtext: `${latestOrder.deliveryType || "Standard"}  •  ${latestOrder.guests ? `${latestOrder.guests} guests` : "Event booking"
+        subtext: `${latestOrder.deliveryType || "Standard"}  •  ${
 
-          }`,
+          latestOrder.guests ? `${latestOrder.guests} guests` : "Event booking"
+
+        }`,
 
         iconName: "silverware-fork-knife",
 
@@ -1143,9 +1112,11 @@ export default function ChefProfileScreen() {
 
         nextValue: latestOrder.eventDate
 
-          ? `${latestOrder.eventDate}${latestOrder.eventTime ? ` • ${latestOrder.eventTime}` : ""
+          ? `${latestOrder.eventDate}${
 
-          }`
+              latestOrder.eventTime ? ` • ${latestOrder.eventTime}` : ""
+
+            }`
 
           : nextValue,
 
@@ -1179,13 +1150,15 @@ export default function ChefProfileScreen() {
 
         title: firstItemName,
 
-        subtext: `${latestOrder.deliverySlot ||
+        subtext: `${
+
+          latestOrder.deliverySlot ||
 
           latestOrder.deliveryTimeSlot ||
 
           "ASAP"
 
-          }  •  Fast delivery`,
+        }  •  Fast delivery`,
 
         iconName: "lightning-bolt",
 
@@ -1201,11 +1174,11 @@ export default function ChefProfileScreen() {
 
           ? new Date(latestOrder.estimatedDeliveryAt).toLocaleTimeString(
 
-            "en-IN",
+              "en-IN",
 
-            { hour: "numeric", minute: "2-digit", hour12: true }
+              { hour: "numeric", minute: "2-digit", hour12: true }
 
-          )
+            )
 
           : nextValue,
 
@@ -1239,13 +1212,15 @@ export default function ChefProfileScreen() {
 
         title: firstItemName,
 
-        subtext: `${latestOrder.deliverySlot ||
+        subtext: `${
+
+          latestOrder.deliverySlot ||
 
           latestOrder.deliveryTimeSlot ||
 
           "Today"
 
-          }  •  Fresh & authentic`,
+        }  •  Fresh & authentic`,
 
         iconName: "home-outline",
 
@@ -1279,13 +1254,15 @@ export default function ChefProfileScreen() {
 
       title: latestOrder.menuName || "Meal Box Order",
 
-      subtext: `${latestOrder.durationType || "Standard Meal Plan"}${latestOrder.deliveryTimeSlot
+      subtext: `${latestOrder.durationType || "Standard Meal Plan"}${
+
+        latestOrder.deliveryTimeSlot
 
           ? `  •  ${latestOrder.deliveryTimeSlot}`
 
           : ""
 
-        }`,
+      }`,
 
       iconName: "food-takeout-box-outline",
 
@@ -2330,45 +2307,6 @@ export default function ChefProfileScreen() {
       </ScrollView>
 
 
-
-      {/* Small KatBox logout confirmation modal */}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={logoutModalVisible}
-        onRequestClose={() => setLogoutModalVisible(false)}
-      >
-        <View style={styles.logoutModalOverlay}>
-          <View style={styles.logoutModalCard}>
-            <View style={styles.logoutIconCircle}>
-              <Feather name="log-out" size={20} color="#DC2626" />
-            </View>
-
-            <Text style={styles.logoutModalTitle}>Log out?</Text>
-            <Text style={styles.logoutModalMessage}>
-              Are you sure you want to log out of KatBox?
-            </Text>
-
-            <View style={styles.logoutModalActions}>
-              <TouchableOpacity
-                style={styles.logoutCancelButton}
-                activeOpacity={0.8}
-                onPress={() => setLogoutModalVisible(false)}
-              >
-                <Text style={styles.logoutCancelText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.logoutConfirmButton}
-                activeOpacity={0.8}
-                onPress={confirmLogout}
-              >
-                <Text style={styles.logoutConfirmText}>Log Out</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* ✅ Chef FAQ Modal — simple, clean, user friendly */}
 
@@ -3865,87 +3803,6 @@ const styles = StyleSheet.create({
   },
 
 
-
-  logoutModalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.45)",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 28,
-  },
-  logoutModalCard: {
-    width: "100%",
-    maxWidth: 320,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 16,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#EAE8E3",
-    elevation: 6,
-    shadowColor: "#000000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-  },
-  logoutIconCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "#2D4A22",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-  },
-  logoutModalTitle: {
-    fontSize: 17,
-    fontWeight: "800",
-    color: "#0F172A",
-    marginBottom: 5,
-  },
-  logoutModalMessage: {
-    fontSize: 12,
-    lineHeight: 18,
-    color: "#64748B",
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  logoutModalActions: {
-    width: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  logoutCancelButton: {
-    flex: 1,
-    minHeight: 40,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#D8DEE4",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#FFFFFF",
-  },
-  logoutCancelText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#475569",
-  },
-  logoutConfirmButton: {
-    flex: 1,
-    minHeight: 40,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#DC2626",
-  },
-  logoutConfirmText: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#FFFFFF",
-  },
 
   modalOverlay: {
 

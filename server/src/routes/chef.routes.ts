@@ -17,25 +17,18 @@ import {
   addChefCouponByAdmin,
   deleteChefCouponByAdmin,
 } from "../controllers/chef.controller";
+import { requireChef } from "../middleware/requireChef";
+import { requireAdmin } from "../middleware/requireAdmin";
 
 const router = express.Router();
-
 const storage = multer.memoryStorage();
+const upload = multer({ storage, limits: { fileSize: 8 * 1024 * 1024, files: 41 } });
 
-// One avatar + up to 20 banner images + up to 20 kitchen images.
-// Keep both per-file and total-file limits to protect memory usage.
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 8 * 1024 * 1024,
-    files: 41,
-  },
-});
-
-// Create or update the authenticated chef's profile.
+// Chef profile and private operations require a currently approved MongoDB role.
 router.post(
   "/",
   protect,
+  requireChef,
   upload.fields([
     { name: "avatar", maxCount: 1 },
     { name: "banners", maxCount: 20 },
@@ -43,36 +36,22 @@ router.post(
   ]),
   createOrUpdateChef
 );
+router.get("/my-chef", protect, requireChef, getMyChef);
+router.delete("/my-chef", protect, requireChef, deleteChef);
+router.post("/delete-image", protect, requireChef, deleteChefImage);
 
-// Get the authenticated chef's profile.
-router.get("/my-chef", protect, getMyChef);
-
-// Delete the authenticated chef's profile.
-router.delete("/my-chef", protect, deleteChef);
-
-// Delete a chef image from Cloudinary.
-router.post("/delete-image", protect, deleteChefImage);
-
-// Customer-facing chef list.
-// Pass selected delivery coordinates to calculate distance:
-// GET /api/chefs?latitude=17.44&longitude=78.39&radiusKm=10
+// Customer-facing public endpoints.
 router.get("/", getChefs);
-
-// Admin routes are declared before parameterized chef routes.
-router.get("/admin/all", protect, getAllChefsForAdmin);
-router.patch("/admin/:chefId/toggle-block", protect, toggleChefBlockStatus);
-router.patch("/admin/:chefId", protect, updateChefByAdmin);
-router.delete("/admin/:chefId", protect, deleteChefByAdmin);
-router.post("/admin/:chefId/coupons", protect, addChefCouponByAdmin);
-router.delete(
-  "/admin/:chefId/coupons/:couponId",
-  protect,
-  deleteChefCouponByAdmin
-);
-
-// Chef-level public data.
 router.get("/:chefId/coupons", getChefCoupons);
 router.get("/:chefId/reviews", getChefReviews);
 router.post("/apply-coupon", applyChefCoupon);
+
+// Every admin endpoint verifies isAdmin from MongoDB, not a client-supplied role.
+router.get("/admin/all", protect, requireAdmin, getAllChefsForAdmin);
+router.patch("/admin/:chefId/toggle-block", protect, requireAdmin, toggleChefBlockStatus);
+router.patch("/admin/:chefId", protect, requireAdmin, updateChefByAdmin);
+router.delete("/admin/:chefId", protect, requireAdmin, deleteChefByAdmin);
+router.post("/admin/:chefId/coupons", protect, requireAdmin, addChefCouponByAdmin);
+router.delete("/admin/:chefId/coupons/:couponId", protect, requireAdmin, deleteChefCouponByAdmin);
 
 export default router;

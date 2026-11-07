@@ -492,48 +492,95 @@ function InitialLayout() {
    * LIVE CHEF ROLE CHANGES + APP RESUME VERIFICATION
    * ------------------------------------------------------------
    */
+  const segmentsRef = useRef(segments)
+
+  useEffect(() => {
+    segmentsRef.current = segments
+  }, [segments])
+
   useEffect(() => {
     let mounted = true
     let socket: ReturnType<typeof createSocket> | null = null
     let appState = AppState.currentState
+    let roleCheckId = 0
+
+    const routeForVerifiedRole = (isChef: boolean) => {
+      if (!mounted) return
+      const currentRoot = segmentsRef.current[0]
+
+      if (isChef) {
+        // Do not reset a Chef who is already using another Chef Management screen.
+        // Approval while on Unauthorized (or login after a still-valid session) opens Chef home.
+        if (currentRoot !== 'chefManagement') {
+          router.replace('/chefManagement/add-chefs' as any)
+        }
+        return
+      }
+
+      // Only redirect when the user is actually inside protected Chef screens.
+      // A non-Chef already on Unauthorized remains there; logout goes to login.
+      if (currentRoot === 'chefManagement') {
+        router.replace('/unauthorized' as any)
+      } else if (currentRoot !== 'unauthorized' && currentRoot !== 'login') {
+        router.replace('/unauthorized' as any)
+      }
+    }
 
     const verifyAndRoute = async () => {
-      const token = await getToken()
-      if (!mounted || !token) return
-      const result = await verifyUserFromBackend()
-      if (!mounted || result.status === 'error') return
-      if (result.status === 'unauthorized' || result.user.isChef !== true) {
-        router.replace('/unauthorized' as any)
-      } else {
-        router.replace('/chefManagement/add-chefs' as any)
+      const checkId = ++roleCheckId
+      try {
+        const token = await getToken()
+        if (!mounted || checkId !== roleCheckId || !token) return
+
+        const result = await verifyUserFromBackend()
+        if (!mounted || checkId !== roleCheckId || result.status === 'error') return
+
+        if (result.status === 'unauthorized') {
+          routeForVerifiedRole(false)
+          return
+        }
+
+        routeForVerifiedRole(result.user.isChef === true)
+      } catch (error) {
+        // A network/storage error is not evidence that Chef access was revoked.
+        console.log('Role verification failed temporarily:', error)
       }
     }
 
     const connectRoleSocket = async () => {
       const token = await getToken()
       if (!mounted || !token || !api.defaults.baseURL) return
+
+      socket?.removeAllListeners()
+      socket?.disconnect()
       socket = createSocket(api.defaults.baseURL, {
         transports: ['websocket'],
         auth: { token },
         reconnection: true,
         reconnectionAttempts: Infinity,
       })
+
       socket.on('connect', () => { void verifyAndRoute() })
       socket.on('chef-access-changed', (payload: { isChef?: boolean }) => {
-        if (!mounted) return
-        if (payload?.isChef === true) router.replace('/chefManagement/add-chefs' as any)
-        else router.replace('/unauthorized' as any)
+        if (!mounted || typeof payload?.isChef !== 'boolean') return
+        // Re-fetch MongoDB's authoritative role rather than trusting event payload alone.
+        void verifyAndRoute()
       })
-      socket.on('connect_error', (error) => console.log('Role socket connection error:', error?.message || error))
+      socket.on('connect_error', (error) =>
+        console.log('Role socket connection error:', error?.message || error)
+      )
     }
 
     void connectRoleSocket()
+
     const unsubscribeAuth = subscribeAuth(() => {
+      // On logout the token is already cleared before this event; do not route to Unauthorized.
       socket?.removeAllListeners()
       socket?.disconnect()
       socket = null
       void connectRoleSocket()
     })
+
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (appState.match(/inactive|background/) && nextState === 'active') {
         void verifyAndRoute()
@@ -543,6 +590,7 @@ function InitialLayout() {
 
     return () => {
       mounted = false
+      roleCheckId += 1
       subscription.remove()
       unsubscribeAuth()
       socket?.removeAllListeners()

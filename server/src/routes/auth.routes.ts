@@ -16,6 +16,7 @@ import {
   protect,
 } from "../middleware/auth.middleware";
 import { normalizeIndianPhone } from "../utils/phone";
+import { emitChefAccessChanged } from "../utils/socket";
 
 const router = express.Router();
 
@@ -2033,6 +2034,7 @@ router.patch(
 
       user.isChef = nextIsChef;
       await user.save();
+      emitChefAccessChanged(String(user._id), nextIsChef);
 
       console.log(
         `🔐 Admin ${nextIsChef ? "GRANTED" : "REVOKED"} chef status for '${
