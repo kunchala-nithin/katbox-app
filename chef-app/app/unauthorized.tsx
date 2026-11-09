@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,16 +10,145 @@ import {
   Platform,
   Linking,
   Alert,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useClerk } from '@clerk/clerk-expo';
-import { removeToken } from '@/src/lib/authStorage';
+import { removeToken, refreshUser } from '@/src/lib/authStorage';
 import { notifyAuthChanged } from '@/src/lib/authEvents';
+
+// Polling interval while on this screen (ms)
+const ROLE_POLL_INTERVAL = 2000;
 
 export default function UnauthorizedScreen() {
   const router = useRouter();
   const clerk = useClerk();
   const [busy, setBusy] = useState(false);
+  const [checkingRole, setCheckingRole] = useState(false);
+
+  // Ref to prevent overlapping polls
+  const pollInFlightRef = useRef(false);
+  // Ref to track if component is mounted
+  const isMountedRef = useRef(true);
+  // Ref to store the polling interval
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /*
+   * ──────────────────────────────────────────────────────────
+   * ROLE CHECK — Detect when admin grants chef access
+   * ──────────────────────────────────────────────────────────
+   * When this screen is focused, we periodically call /auth/me
+   * to check if the user's isChef flag has been set to true.
+   * If so, we navigate to the chef management screens.
+   */
+  const checkRoleAndNavigate = useCallback(async () => {
+    if (pollInFlightRef.current || !isMountedRef.current) {
+      return;
+    }
+
+    pollInFlightRef.current = true;
+
+    try {
+      const user = await refreshUser();
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      if (user?.isChef === true) {
+        console.log(
+          '✅ [Unauthorized] Chef access granted! Navigating to chef management...'
+        );
+
+        // Stop polling immediately
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+
+        // Notify auth change so _layout.tsx re-evaluates
+        notifyAuthChanged();
+
+        // Navigate to chef management
+        router.replace('/chefManagement/add-chefs' as any);
+      }
+    } catch (error) {
+      // Silent — user stays on unauthorized screen
+      console.log('[Unauthorized] Role check error:', error);
+    } finally {
+      pollInFlightRef.current = false;
+    }
+  }, [router]);
+
+  /*
+   * ──────────────────────────────────────────────────────────
+   * START/STOP POLLING BASED ON FOCUS
+   * ──────────────────────────────────────────────────────────
+   */
+  useFocusEffect(
+    useCallback(() => {
+      console.log('[Unauthorized] Screen focused — starting role polling');
+      isMountedRef.current = true;
+
+      // Immediate check on focus
+      checkRoleAndNavigate();
+
+      // Start polling
+      pollIntervalRef.current = setInterval(
+        checkRoleAndNavigate,
+        ROLE_POLL_INTERVAL
+      );
+
+      return () => {
+        console.log('[Unauthorized] Screen unfocused — stopping role polling');
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+      };
+    }, [checkRoleAndNavigate])
+  );
+
+  /*
+   * ──────────────────────────────────────────────────────────
+   * CHECK ROLE ON APP FOREGROUND
+   * ──────────────────────────────────────────────────────────
+   * When user returns to the app (e.g., from background),
+   * immediately check if role has changed.
+   */
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        console.log('[Unauthorized] App became active — checking role');
+        checkRoleAndNavigate();
+      }
+    };
+
+    const subscription = AppState.addEventListener(
+      'change',
+      handleAppStateChange
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }, [checkRoleAndNavigate]);
+
+  /*
+   * ──────────────────────────────────────────────────────────
+   * CLEANUP ON UNMOUNT
+   * ──────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   const openExternalLink = async (url: string) => {
     try {
@@ -31,27 +159,106 @@ export default function UnauthorizedScreen() {
     }
   };
 
+  /*
+   * ──────────────────────────────────────────────────────────
+   * LOGOUT — Clear session and navigate to login
+   * ──────────────────────────────────────────────────────────
+   * This performs a full logout:
+   *   1. Clears local KatBox session (token + user)
+   *   2. Signs out of Clerk
+   *   3. Notifies auth change so _layout.tsx updates state
+   *   4. Navigates directly to login
+   */
   const leave = async () => {
     if (busy) return;
+<<<<<<< HEAD
     setBusy(true);
 
     // Clear the KatBox session and navigate immediately. Clerk sign-out
     // is best-effort and must never delay local logout/navigation.
+=======
+
+    // Stop polling immediately
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
+    setBusy(true);
+
+    let localSessionCleared = false;
+
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
     try {
+      // Step 1: Clear the KatBox JWT and cached MongoDB user first.
       await removeToken();
+<<<<<<< HEAD
     } catch (error) {
       console.log('Local session clear failed:', error);
+=======
+      localSessionCleared = true;
+      console.log('[Unauthorized] Local session cleared');
+    } catch (e) {
+      console.log('Local session clear failed:', e);
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
     }
     notifyAuthChanged();
     router.replace('/login' as any);
 
+    // Step 2: Notify the root auth guard and navigate immediately.
+    // Do not wait for Clerk's network sign-out before leaving this screen.
+    notifyAuthChanged();
+    router.replace('/login' as any);
+
+    // Step 3: Clerk cleanup is best-effort and happens after navigation.
     try {
       await clerk.signOut();
+<<<<<<< HEAD
     } catch (error) {
       console.log('Clerk sign-out failed:', error);
     } finally {
       setBusy(false);
     }
+=======
+      console.log('[Unauthorized] Clerk sign-out complete');
+    } catch (e) {
+      console.log('Clerk sign-out failed:', e);
+    }
+
+    if (!localSessionCleared) {
+      console.log(
+        '[Unauthorized] Warning: local KatBox session could not be fully cleared.'
+      );
+    }
+  };
+
+  const manualRefresh = async () => {
+    if (checkingRole) return;
+
+    setCheckingRole(true);
+
+    try {
+      const user = await refreshUser();
+
+      if (user?.isChef === true) {
+        console.log('[Unauthorized] Manual check: Chef access granted!');
+        notifyAuthChanged();
+        router.replace('/chefManagement/add-chefs' as any);
+        return;
+      }
+
+      Alert.alert(
+        'Access Status',
+        'Your account does not have Chef Partner access yet. Please contact KatBox support if you believe this is an error.',
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.log('[Unauthorized] Manual refresh error:', error);
+      Alert.alert('Error', 'Unable to check your access status. Please try again.');
+    } finally {
+      setCheckingRole(false);
+    }
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
   };
 
   return (
@@ -122,6 +329,11 @@ export default function UnauthorizedScreen() {
           <Text style={styles.description}>
             Your account is currently not authorized to access
             the KatBox Chef Partner application.
+          </Text>
+
+          <Text style={styles.autoRefreshHint}>
+            We check your access status automatically every few seconds.
+            Once approved, you will be redirected immediately.
           </Text>
         </View>
 
@@ -297,6 +509,25 @@ export default function UnauthorizedScreen() {
             Made with love. Powered by KatBox.
           </Text>
         </View>
+
+        {/* MANUAL REFRESH BUTTON */}
+        <TouchableOpacity
+          style={styles.refreshButton}
+          onPress={manualRefresh}
+          disabled={checkingRole}
+          activeOpacity={0.85}
+        >
+          {checkingRole ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <>
+              <Text style={styles.refreshIcon}>↻</Text>
+              <Text style={styles.refreshText}>
+                Check Access Status
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
 
         {/* SIGN OUT */}
         <View style={styles.footer}>
@@ -577,6 +808,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
 
+  autoRefreshHint: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#8A9990',
+    textAlign: 'center',
+    marginTop: 10,
+    paddingHorizontal: 20,
+    fontStyle: 'italic',
+  },
+
   // ACCESS CARD
 
   accessCard: {
@@ -783,6 +1024,38 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.5,
     marginTop: 17,
+  },
+
+  // MANUAL REFRESH BUTTON
+
+  refreshButton: {
+    width: '100%',
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: '#16704C',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    elevation: 2,
+    shadowColor: '#16704C',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+  },
+
+  refreshIcon: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+    marginRight: 8,
+  },
+
+  refreshText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
 
   // FOOTER

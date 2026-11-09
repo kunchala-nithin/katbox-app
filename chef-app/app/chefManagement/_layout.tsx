@@ -1,7 +1,11 @@
 import { Tabs, Redirect } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
+<<<<<<< HEAD
 import { useEffect, useState, useRef } from 'react'
 import { AppState } from 'react-native'
+=======
+import { useEffect, useState, useRef, useCallback } from 'react'
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
 import {
   View,
   StyleSheet,
@@ -9,11 +13,18 @@ import {
   Text,
   Platform,
   Animated,
+  AppState,
+  AppStateStatus,
 } from 'react-native'
 import { getUser, getToken, verifyUserFromBackend } from '@/src/lib/authStorage'
 import { isTokenExpired } from '@/src/lib/jwtUtils'
-import { subscribeAuth } from '@/src/lib/authEvents'
+import { subscribeAuth, notifyAuthChanged } from '@/src/lib/authEvents'
 import { useOrderNotifier } from '@/src/hooks/useOrderNotifier'
+
+// Interval (ms) between role checks while user is on chef screens.
+// This ensures that if an admin revokes chef access, the user is
+// immediately bounced out to the /unauthorized screen.
+const CHEF_ROLE_POLL_INTERVAL = 8000
 
 const CHEF_TAB_CONFIG: Record<
   string,
@@ -47,22 +58,24 @@ const CHEF_TAB_CONFIG: Record<
 
 export default function ChefTabsLayout() {
   const [allowed, setAllowed] = useState<boolean | null>(null)
-  const [isChef, setIsChef] = useState<boolean | null>(null) // ⭐ Start as null to prevent premature redirects
+  const [isChef, setIsChef] = useState<boolean | null>(null)
   const hasLoadedRef = useRef(false)
 
   /* ─────────────────────────────────────────────────────────
-     ✅ NEW: Chef identity atoms consumed by useOrderNotifier
-     so that CHEF-side order filtering can be done without an
-     extra network round-trip.
+     ✅ Chef identity atoms consumed by useOrderNotifier
      ───────────────────────────────────────────────────────── */
   const [chefUserId, setChefUserId] = useState<string | null>(null)
   const [chefName, setChefName] = useState<string | null>(null)
 
   /* ─────────────────────────────────────────────────────────
-     ✅ NEW: Role-scoped order alarm + push notification listener.
-     Enabled only once auth (allowed === true) AND role
-     (isChef === true) are fully resolved. When disabled, the
-     hook is a no-op — zero side effects.
+     ✅ Guards to prevent overlapping role checks
+     ───────────────────────────────────────────────────────── */
+  const rolePollInFlightRef = useRef<boolean>(false)
+  const rolePollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const isMountedRef = useRef<boolean>(true)
+
+  /* ─────────────────────────────────────────────────────────
+     ✅ Role-scoped order alarm + push notification listener
      ───────────────────────────────────────────────────────── */
   useOrderNotifier('chef', {
     enabled: allowed === true && isChef === true,
@@ -70,6 +83,9 @@ export default function ChefTabsLayout() {
     chefName,
   })
 
+  /* ─────────────────────────────────────────────────────────
+     ✅ PRIMARY AUTH + ROLE LOAD
+     ───────────────────────────────────────────────────────── */
   useEffect(() => {
     let mounted = true
     let requestId = 0
@@ -165,6 +181,123 @@ export default function ChefTabsLayout() {
       requestId += 1
       unsub()
       appStateSubscription.remove()
+    }
+  }, [])
+
+  /* ─────────────────────────────────────────────────────────
+     ✅ CONTINUOUS ROLE MONITORING
+     ─────────────────────────────────────────────────────────
+     While the user is inside the chef tabs, we periodically
+     call /auth/me to detect if isChef has been revoked by an
+     admin. If revoked:
+       1. Stop polling immediately
+       2. Notify auth change so _layout.tsx re-evaluates
+       3. Navigate to /unauthorized
+
+     We only start polling once auth + role are confirmed:
+       allowed === true && isChef === true
+     ───────────────────────────────────────────────────────── */
+  const checkChefRole = useCallback(async () => {
+    if (rolePollInFlightRef.current) return
+    if (!isMountedRef.current) return
+    if (allowed !== true || isChef !== true) return
+
+    rolePollInFlightRef.current = true
+
+    try {
+      const fresh = await refreshUser()
+
+      if (!isMountedRef.current) return
+      if (!fresh) return // Network failure — keep user where they are
+
+      if (fresh.isChef !== true) {
+        console.log(
+          '🚫 [ChefTabsLayout] Chef access revoked by admin! Redirecting to unauthorized...'
+        )
+
+        // Stop polling immediately
+        if (rolePollIntervalRef.current) {
+          clearInterval(rolePollIntervalRef.current)
+          rolePollIntervalRef.current = null
+        }
+
+        // Force the layout's isChef state to false so the Redirect
+        // below kicks in.
+        setIsChef(false)
+
+        // Notify auth subscribers (root layout + order notifier)
+        notifyAuthChanged()
+      }
+    } catch (error) {
+      // Silent — don't kick user out on transient network errors
+      console.log('[ChefTabsLayout] Role poll error:', error)
+    } finally {
+      rolePollInFlightRef.current = false
+    }
+  }, [allowed, isChef])
+
+  useEffect(() => {
+    isMountedRef.current = true
+
+    // Only poll when user is confirmed chef
+    if (allowed === true && isChef === true) {
+      // Immediate check
+      checkChefRole()
+
+      // Start interval
+      rolePollIntervalRef.current = setInterval(
+        checkChefRole,
+        CHEF_ROLE_POLL_INTERVAL
+      )
+    }
+
+    return () => {
+      if (rolePollIntervalRef.current) {
+        clearInterval(rolePollIntervalRef.current)
+        rolePollIntervalRef.current = null
+      }
+    }
+  }, [allowed, isChef, checkChefRole])
+
+  /* ─────────────────────────────────────────────────────────
+     ✅ APP FOREGROUND ROLE RE-CHECK
+     ─────────────────────────────────────────────────────────
+     When the app returns to the foreground (from background),
+     immediately verify the chef role — the admin may have
+     toggled isChef off while the user was away.
+     ───────────────────────────────────────────────────────── */
+  useEffect(() => {
+    if (allowed !== true || isChef !== true) return
+
+    const handleAppStateChange = (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        console.log(
+          '[ChefTabsLayout] App foregrounded — re-checking chef role'
+        )
+        checkChefRole()
+      }
+    }
+
+    const subscription = AppState.addEventListener(
+      'change',
+      handleAppStateChange
+    )
+
+    return () => {
+      subscription.remove()
+    }
+  }, [allowed, isChef, checkChefRole])
+
+  /* ─────────────────────────────────────────────────────────
+     ✅ CLEANUP ON UNMOUNT
+     ───────────────────────────────────────────────────────── */
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+      if (rolePollIntervalRef.current) {
+        clearInterval(rolePollIntervalRef.current)
+        rolePollIntervalRef.current = null
+      }
     }
   }, [])
 

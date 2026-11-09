@@ -3,8 +3,12 @@ import { useFonts } from 'expo-font'
 import { Stack, useRouter, useSegments } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect, useRef, useState, useCallback } from 'react'
+<<<<<<< HEAD
 import { Platform, AppState } from 'react-native'
 import { io as createSocket } from 'socket.io-client'
+=======
+import { Platform, AppState, AppStateStatus } from 'react-native'
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
 import * as Notifications from 'expo-notifications'
 import * as Device from 'expo-device'
 import * as SecureStore from 'expo-secure-store'
@@ -33,18 +37,7 @@ Notifications.setNotificationHandler({
 })
 
 /* ─────────────────────────────────────────────────────────────
-   ✅ NEW: COLD-START ANDROID CHANNEL BOOTSTRAP
-   ─────────────────────────────────────────────────────────────
-   The role-scoped channels are normally created by
-   `useOrderNotifier` when the admin/chef tab group is first
-   mounted. However, if a brand-new admin device receives its
-   very first order BEFORE opening the admin tab group, the
-   channel would not exist yet — and Android would fall back
-   to a silent default channel.
-
-   We proactively create BOTH alarm channels here at module load
-   so the very first order is guaranteed to ring with the bundled
-   alarm.mp3 sound, even if the user has never opened the tab.
+   ✅ COLD-START ANDROID CHANNEL BOOTSTRAP
    ───────────────────────────────────────────────────────────── */
 if (Platform.OS === 'android') {
   ;(async () => {
@@ -127,36 +120,30 @@ function InitialLayout() {
 
   /**
    * Prevent overlapping authentication checks from applying stale
-   * results. This is especially important when the initial check
-   * overlaps a login-triggered check after saveSession().
+   * results.
    */
   const authCheckIdRef = useRef(0)
 
   /**
-   * ──────────────────────────────────────────────────────────
    * LOGIN TRANSITION GUARD
-   * ──────────────────────────────────────────────────────────
-   *
-   * When login.tsx calls notifyAuthChanged(), the layout's
-   * checkAuth() runs asynchronously. During that window,
-   * `isAuthenticated` is temporarily changed to `null`.
-   *
-   * While authentication is being re-checked, the layout
-   * returns `null` below instead of allowing Expo Router
-   * to display the login screen.
-   *
-   * Once checkAuth() finishes:
-   *
-   *   valid JWT   -> true  -> role route
-   *   no JWT      -> false -> login
-   *
-   * This prevents the login screen from flashing for 1–2 sec
-   * after a successful Google login.
    */
   const loginTransitionRef = useRef<boolean>(false)
 
   const loginTransitionTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /**
+   * Role check in-flight guard to prevent overlapping role checks
+   */
+  const roleCheckInFlightRef = useRef<boolean>(false)
+
+  /**
+   * Last known role state - used to detect changes
+   */
+  const lastKnownRoleRef = useRef<{
+    isChef: boolean
+    isAdmin: boolean
+  } | null>(null)
 
   const [isAuthenticated, setIsAuthenticated] =
     useState<boolean | null>(null)
@@ -174,8 +161,6 @@ function InitialLayout() {
 
   useEffect(() => {
     if (fontError) {
-      // A font asset failure must not keep the native splash screen visible.
-      // Continue with platform fallback fonts for unavailable font assets.
       console.log('⚠️ Font loading failed; continuing with fallback fonts:', fontError)
     }
   }, [fontError])
@@ -184,17 +169,50 @@ function InitialLayout() {
    * ------------------------------------------------------------
    * GET ROLE-BASED ROUTE
    * ------------------------------------------------------------
-   *
-   * We verify the latest KatBox user role through /auth/me.
-   * This standalone Chef app allows only MongoDB users whose
-   * isChef flag is exactly true to enter Chef screens.
    */
 
+<<<<<<< HEAD
   const getRoleRoute = useCallback(async (): Promise<string | null> => {
     const verification = await verifyUserFromBackend()
     if (verification.status === 'error') {
       console.log('⚠️ Role verification unavailable; keeping the current screen until the backend can be reached.')
       return null
+=======
+  const getRoleRoute = useCallback(async () => {
+    try {
+      const user = await refreshUser()
+
+      if (!user) {
+        console.log(
+          '⚠️ Could not verify the KatBox user with the backend.'
+        )
+        return '/unauthorized'
+      }
+
+      console.log('👤 Verified KatBox user from MongoDB:', {
+        id: user.id || user._id,
+        name: user.name,
+        isChef: user.isChef,
+        isAdmin: user.isAdmin,
+      })
+
+      // Track role for change detection
+      lastKnownRoleRef.current = {
+        isChef: user.isChef === true,
+        isAdmin: user.isAdmin === true,
+      }
+
+      // This is a standalone Chef app: only MongoDB isChef === true
+      // is allowed to enter the Chef application.
+      if (user.isChef === true) {
+        return '/chefManagement/add-chefs'
+      }
+
+      return '/unauthorized'
+    } catch (error) {
+      console.log('❌ Role route resolution error:', error)
+      return '/unauthorized'
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
     }
     if (verification.status === 'unauthorized') return '/unauthorized'
 
@@ -212,21 +230,9 @@ function InitialLayout() {
    * ------------------------------------------------------------
    * AUTHENTICATION CHECK
    * ------------------------------------------------------------
-   *
-   * This checks the Katbox JWT, NOT the Clerk session.
-   *
-   * The Katbox backend creates this token after successful
-   * Google authentication.
-   *
-   * IMPORTANT:
-   *
-   * During a login transition, this function is awaited by
-   * the auth listener before the transition is considered
-   * complete.
    */
 
   const checkAuth = useCallback(async () => {
-    // Every check supersedes any older in-flight check.
     const checkId = ++authCheckIdRef.current
 
     const isLatestCheck = () =>
@@ -235,15 +241,10 @@ function InitialLayout() {
     try {
       const token = await getToken()
 
-      // An older read must never overwrite a newer login/logout result.
       if (!isLatestCheck()) {
         return false
       }
 
-      /*
-       * No Katbox JWT means the user is not authenticated
-       * inside the Katbox application.
-       */
       if (!token) {
         console.log('🔐 No Katbox token found.')
 
@@ -257,9 +258,6 @@ function InitialLayout() {
         return false
       }
 
-      /*
-       * Check whether the JWT has expired.
-       */
       if (isTokenExpired(token)) {
         console.log('⏰ Katbox JWT has expired.')
 
@@ -268,7 +266,6 @@ function InitialLayout() {
           logoutTimerRef.current = null
         }
 
-        // Do not delete a session if a newer check has started.
         if (!isLatestCheck()) {
           return false
         }
@@ -284,9 +281,6 @@ function InitialLayout() {
         return false
       }
 
-      /*
-       * Valid token.
-       */
       console.log('✅ Valid Katbox JWT found.')
 
       if (!isLatestCheck()) {
@@ -295,9 +289,6 @@ function InitialLayout() {
 
       setIsAuthenticated(true)
 
-      /*
-       * Schedule automatic logout exactly when the JWT expires.
-       */
       const expiry = getTokenExpiry(token)
 
       if (!expiry) {
@@ -333,7 +324,6 @@ function InitialLayout() {
       }
 
       logoutTimerRef.current = setTimeout(async () => {
-        // A newer auth check means this timer belongs to an old session.
         if (!isLatestCheck()) {
           return
         }
@@ -360,7 +350,6 @@ function InitialLayout() {
 
       return true
     } catch (error) {
-      // Ignore errors from a superseded check.
       if (!isLatestCheck()) {
         return false
       }
@@ -378,29 +367,10 @@ function InitialLayout() {
     }
   }, [])
 
-
   /*
    * ------------------------------------------------------------
    * AUTH STATE LISTENER
    * ------------------------------------------------------------
-   *
-   * Login/logout screens call:
-   *
-   *     notifyAuthChanged()
-   *
-   * This causes the layout to immediately re-check the
-   * Katbox JWT.
-   *
-   * IMPORTANT FIX:
-   *
-   * Before checking the newly-created JWT, we set
-   * isAuthenticated back to null.
-   *
-   * The rendering logic below already treats null as
-   * "authentication is being checked" and returns null.
-   *
-   * Therefore Expo Router does not get a chance to show
-   * the login screen during the short authentication window.
    */
 
   useEffect(() => {
@@ -422,36 +392,14 @@ function InitialLayout() {
     const unsubscribe = subscribeAuth(async () => {
       console.log('🔄 Authentication change detected')
 
-      /*
-       * Mark authentication transition as active.
-       */
       loginTransitionRef.current = true
 
-      /*
-       * Clear any previous transition timer.
-       */
       if (loginTransitionTimerRef.current) {
         clearTimeout(loginTransitionTimerRef.current)
         loginTransitionTimerRef.current = null
       }
 
-      /*
-       * IMPORTANT FIX:
-       *
-       * Keep the current screen mounted while the new KatBox JWT
-       * is being checked. login.tsx keeps its loading overlay visible
-       * after saveSession(), so leaving isAuthenticated unchanged
-       * avoids rendering a blank root layout during this short wait.
-       *
-       * checkAuth() below will update isAuthenticated to true once
-       * it confirms the saved JWT. The navigation guard will then
-       * send the user directly to the correct role-based destination.
-       */
-
       try {
-        /*
-         * Wait until the Katbox JWT has actually been checked.
-         */
         await checkAuth()
       } catch (error) {
         console.log(
@@ -460,11 +408,6 @@ function InitialLayout() {
         )
       } finally {
         if (isMounted) {
-          /*
-           * Authentication check has completed.
-           *
-           * We no longer need the transition guard.
-           */
           loginTransitionRef.current = false
         }
       }
@@ -623,10 +566,6 @@ function InitialLayout() {
 
     const registerPushNotifications = async () => {
       try {
-        /*
-         * Expo Go on Android does not support remote push
-         * notifications.
-         */
         const isExpoGo = Constants.appOwnership === 'expo'
 
         if (isExpoGo) {
@@ -661,9 +600,6 @@ function InitialLayout() {
 
     registerPushNotifications()
 
-    /*
-     * Notification tap navigation.
-     */
     const subscription =
       Notifications.addNotificationResponseReceivedListener(
         async (response) => {
@@ -671,13 +607,28 @@ function InitialLayout() {
             const data =
               response.notification.request.content.data
 
+<<<<<<< HEAD
             const verification = await verifyUserFromBackend()
             if (verification.status === 'error') return
             if (verification.status !== 'verified' || verification.user.isChef !== true) {
+=======
+            const user = await refreshUser()
+
+            if (data?.screen === 'chef-orders') {
+              router.push(
+                '/chefManagement/all-orders' as any
+              )
+
+              return
+            }
+
+            if (data?.screen === 'admin-orders') {
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
               router.replace('/unauthorized' as any)
               return
             }
 
+<<<<<<< HEAD
             // This is a standalone Chef app. Only a backend-verified
             // Chef may open the Chef order destination from a notification.
             if (data?.screen === 'chef-orders' || data?.screen === undefined) {
@@ -685,6 +636,23 @@ function InitialLayout() {
               return
             }
             router.replace('/chefManagement/add-chefs' as any)
+=======
+            if (user?.isAdmin) {
+              router.replace('/unauthorized' as any)
+
+              return
+            }
+
+            if (user?.isChef) {
+              router.push(
+                '/chefManagement/all-orders' as any
+              )
+
+              return
+            }
+
+            router.replace('/unauthorized' as any)
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
           } catch (err) {
             console.log(
               '❌ Notification navigation error:',
@@ -705,26 +673,13 @@ function InitialLayout() {
    * NAVIGATION GUARD
    * ------------------------------------------------------------
    *
-   * This is the important part for your login/logout problem.
-   *
-   * We DO NOT immediately force every authenticated user to
-   * Home.
-   *
-   * Instead:
-   *
-   *   Customer -> Home
-   *   Chef     -> Chef route
-   *   Admin    -> Admin route
-   *
-   * AND we skip the "logged-out -> /login" rule while a login
-   * transition is in-flight.
-   *
-   * IMPORTANT:
-   *
-   * When isAuthenticated === null, this effect returns before
-   * making any navigation decision.
-   *
-   * This is what prevents the login flash.
+   * Rules:
+   *   1. If not authenticated -> login (except during transition)
+   *   2. If authenticated + on public route -> redirect to role route
+   *   3. If authenticated + isChef + on non-chef route -> redirect to chef
+   *   4. If authenticated + !isChef + on chef route -> redirect to unauthorized
+   *   5. If authenticated + !isChef + on unauthorized -> stay
+   *   6. If authenticated + isChef + on unauthorized -> redirect to chef
    */
 
   useEffect(() => {
@@ -734,17 +689,12 @@ function InitialLayout() {
 
     const currentSegment = segments[0] as string | undefined
 
-    /*
-     * Protected route groups.
-     */
     const inTabs = currentSegment === '(tabs)'
     const inScreens = currentSegment === 'screens'
     const inChef = currentSegment === 'chefManagement'
     const inAdmin = currentSegment === 'admin'
+    const inUnauthorized = currentSegment === 'unauthorized'
 
-    /*
-     * Public routes.
-     */
     const isPublicRoute =
       currentSegment === undefined ||
       currentSegment === 'index' ||
@@ -752,9 +702,7 @@ function InitialLayout() {
       currentSegment === 'verify' ||
       currentSegment === 'oauth-callback'
 
-    // Expo Router can initially report an empty segment array.
-    // Treat both an undefined segment and the index route as the app entry point.
-    // This is essential because app/index.tsx intentionally renders null.
+    // Handle unauthenticated entry route
     if (
       !isAuthenticated &&
       (currentSegment === undefined || currentSegment === 'index')
@@ -764,14 +712,20 @@ function InitialLayout() {
       return
     }
 
-    // Chef app: a valid KatBox JWT is not sufficient; the MongoDB user
-    // must also have isChef === true before Chef routes can be opened.
+    // Chef route protection - must verify isChef from backend
     if (isAuthenticated && inChef) {
+      // Skip if a role check is already in flight
+      if (roleCheckInFlightRef.current) {
+        return
+      }
+
+      roleCheckInFlightRef.current = true
       let isActive = true
 
       verifyUserFromBackend()
         .then((result) => {
           if (!isActive) return
+<<<<<<< HEAD
           if (result.status === 'unauthorized' || (result.status === 'verified' && result.user.isChef !== true)) {
             console.log('🚫 Chef route blocked by the latest MongoDB role.')
             router.replace('/unauthorized' as any)
@@ -779,33 +733,87 @@ function InitialLayout() {
             console.log('⚠️ Chef role check unavailable; waiting for a successful retry.')
           }
         })
+=======
+          roleCheckInFlightRef.current = false
+
+          if (!freshUser) {
+            console.log('🚫 Could not verify user. Redirecting to unauthorized.')
+            router.replace('/unauthorized' as any)
+            return
+          }
+
+          if (freshUser.isChef !== true) {
+            console.log(
+              '🚫 Chef route blocked: MongoDB does not confirm isChef === true.'
+            )
+            router.replace('/unauthorized' as any)
+            return
+          }
+
+          // User is confirmed chef - update last known role
+          lastKnownRoleRef.current = {
+            isChef: true,
+            isAdmin: freshUser.isAdmin === true,
+          }
+        })
+        .catch((error) => {
+          if (!isActive) return
+          roleCheckInFlightRef.current = false
+          console.log('❌ Could not verify Chef route access:', error)
+          router.replace('/unauthorized' as any)
+        })
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
 
       return () => {
         isActive = false
+        roleCheckInFlightRef.current = false
+      }
+    }
+
+    // If user is on unauthorized but is actually a chef, redirect to chef
+    if (isAuthenticated && inUnauthorized) {
+      if (roleCheckInFlightRef.current) {
+        return
+      }
+
+      roleCheckInFlightRef.current = true
+      let isActive = true
+
+      refreshUser()
+        .then((freshUser) => {
+          if (!isActive) return
+          roleCheckInFlightRef.current = false
+
+          if (freshUser?.isChef === true) {
+            console.log(
+              '✅ User is now a chef! Redirecting from unauthorized to chef management.'
+            )
+            router.replace('/chefManagement/add-chefs' as any)
+          }
+        })
+        .catch((error) => {
+          if (!isActive) return
+          roleCheckInFlightRef.current = false
+          console.log('❌ Role check on unauthorized screen error:', error)
+        })
+
+      return () => {
+        isActive = false
+        roleCheckInFlightRef.current = false
       }
     }
 
     /*
-     * ----------------------------------------------------------
      * USER IS LOGGED OUT
-     * ----------------------------------------------------------
-     *
-     * If the local Katbox JWT does not exist, protected
-     * screens must not remain accessible.
-     *
-     * SKIP while a login transition is in-flight. Otherwise we
-     * would redirect the user back to /login between the moment
-     * saveSession() completes and the moment checkAuth()
-     * finishes resolving the new token.
      */
-
     if (
       !isAuthenticated &&
       !loginTransitionRef.current &&
       (inTabs ||
         inScreens ||
         inChef ||
-        inAdmin)
+        inAdmin ||
+        inUnauthorized)
     ) {
       console.log(
         '🔒 User is unauthenticated. Redirecting to login.'
@@ -817,24 +825,9 @@ function InitialLayout() {
     }
 
     /*
-     * ----------------------------------------------------------
-     * USER IS LOGGED IN
-     * ----------------------------------------------------------
-     *
-     * Only redirect when the user is sitting on a public
-     * authentication/intro route.
-     *
-     * IMPORTANT:
-     *
-     * We do not redirect arbitrary authenticated routes.
-     * This prevents the layout from fighting with screens such
-     * as chef/admin pages.
+     * USER IS LOGGED IN + on public route
      */
-
     if (isAuthenticated && isPublicRoute) {
-      /*
-       * Resolve the user's role from authStorage.
-       */
       getRoleRoute()
         .then((route) => {
           if (!route) return
@@ -860,17 +853,77 @@ function InitialLayout() {
 
   /*
    * ------------------------------------------------------------
+   * APP FOREGROUND ROLE REFRESH
+   * ------------------------------------------------------------
+   * When app returns to foreground from background:
+   *   - If on unauthorized -> check if role changed
+   *   - If on chef screen -> check if role still valid
+   */
+  useEffect(() => {
+    if (isAuthenticated !== true) {
+      return
+    }
+
+    const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+      if (nextAppState !== 'active') {
+        return
+      }
+
+      const currentSegment = segments[0] as string | undefined
+      const inChef = currentSegment === 'chefManagement'
+      const inUnauthorized = currentSegment === 'unauthorized'
+
+      if (!inChef && !inUnauthorized) {
+        return
+      }
+
+      if (roleCheckInFlightRef.current) {
+        return
+      }
+
+      try {
+        const user = await refreshUser()
+
+        if (!user) {
+          return
+        }
+
+        // On unauthorized screen - check if user became chef
+        if (inUnauthorized && user.isChef === true) {
+          console.log(
+            '✅ [Foreground] User is now a chef! Redirecting...'
+          )
+          router.replace('/chefManagement/add-chefs' as any)
+          return
+        }
+
+        // On chef screen - check if user lost chef role
+        if (inChef && user.isChef !== true) {
+          console.log(
+            '🚫 [Foreground] User lost chef access! Redirecting to unauthorized.'
+          )
+          router.replace('/unauthorized' as any)
+          return
+        }
+      } catch (error) {
+        console.log('[Foreground] Role check error:', error)
+      }
+    }
+
+    const subscription = AppState.addEventListener(
+      'change',
+      handleAppStateChange
+    )
+
+    return () => {
+      subscription.remove()
+    }
+  }, [isAuthenticated, segments, router])
+
+  /*
+   * ------------------------------------------------------------
    * WAIT FOR INITIAL AUTH + FONTS
    * ------------------------------------------------------------
-   *
-   * IMPORTANT:
-   *
-   * null means:
-   *
-   *   "Authentication is currently being checked."
-   *
-   * We intentionally render nothing here so the login screen
-   * cannot appear during a successful login transition.
    */
 
   if (
@@ -928,12 +981,6 @@ async function registerForPushNotificationsAsync() {
       return
     }
 
-    /*
-     * getExpoPushTokenAsync() requires a valid EAS
-     * projectId in a development/production build.
-     *
-     * Expo Go is handled before this function is called.
-     */
     const projectId =
       Constants.expoConfig?.extra?.eas?.projectId ??
       Constants.easConfig?.projectId

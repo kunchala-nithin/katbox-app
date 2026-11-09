@@ -1285,12 +1285,22 @@ const Login = () => {
 
 
 
+<<<<<<< HEAD
         // Save every valid KatBox identity. The root role guard routes
         // unapproved users exclusively to /unauthorized; it does not
         // discard their authenticated session or force Clerk sign-out.
         if (!res?.data?.token || !res?.data?.user) {
           throw new Error('The server returned an incomplete KatBox session.');
         }
+=======
+        // Save every valid KatBox session. The root layout checks the
+        // MongoDB isChef value and routes:
+        //   isChef === true  -> Chef Management
+        //   isChef !== true  -> Unauthorized
+        // This keeps non-chef users signed in so they can see the access
+        // status screen and automatically enter Chef Management if an
+        // admin grants chef access later.
+>>>>>>> ca06a91 (fixed unauthorization navigation flow)
 
         await saveSession(
 
@@ -1384,9 +1394,8 @@ const Login = () => {
          * Do not call router.replace() from this screen. The root
          * layout owns authenticated navigation and chooses the
          * correct destination from the saved MongoDB user role:
-         *   Admin    -> /admin/all-users
          *   Chef     -> /chefManagement/add-chefs
-         *   Customer -> /(tabs)/Home
+         *   Non-chef  -> /unauthorized
          *
          * This avoids competing navigation calls between login.tsx
          * and app/_layout.tsx.
