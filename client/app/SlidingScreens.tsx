@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const SLIDES = [
+  { id: 0, source: require('../assets/images/slide0.png') },
   { id: 1, source: require('../assets/images/slide1.png') },
   { id: 2, source: require('../assets/images/slide2.png') }, 
   { id: 3, source: require('../assets/images/slide3.png') }, 

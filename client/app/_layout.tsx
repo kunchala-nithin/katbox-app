@@ -185,8 +185,8 @@ function InitialLayout() {
    * Admin:
    *     /admin/all-users
    *
-   * Chef:
-   *     /chefManagement/add-chefs
+   * Chef accounts use the Customer app like customers.
+   * Chef management is available only in the standalone Chef app.
    *
    * Customer:
    *     /(tabs)/Home
@@ -216,10 +216,6 @@ function InitialLayout() {
        */
       if (user.isAdmin) {
         return '/admin/all-users'
-      }
-
-      if (user.isChef) {
-        return '/chefManagement/add-chefs'
       }
 
       return '/(tabs)/Home'
@@ -586,10 +582,9 @@ function InitialLayout() {
              * Explicit notification screen has priority.
              */
             if (data?.screen === 'chef-orders') {
-              router.push(
-                '/chefManagement/add-chefs' as any
-              )
-
+              // Chef-management notifications are handled by the standalone Chef app.
+              // If opened in the Customer app, show the user's customer orders instead.
+              router.push('/(tabs)/Orders' as any)
               return
             }
 
@@ -607,14 +602,6 @@ function InitialLayout() {
             if (user?.isAdmin) {
               router.push(
                 '/admin/all-orders' as any
-              )
-
-              return
-            }
-
-            if (user?.isChef) {
-              router.push(
-                '/chefManagement/add-chefs' as any
               )
 
               return
@@ -654,7 +641,7 @@ function InitialLayout() {
    * Instead:
    *
    *   Customer -> Home
-   *   Chef     -> Chef route
+   *   Chef     -> Customer Home (chef management is in the standalone Chef app)
    *   Admin    -> Admin route
    *
    * AND we skip the "logged-out -> /login" rule while a login
@@ -680,7 +667,6 @@ function InitialLayout() {
      */
     const inTabs = currentSegment === '(tabs)'
     const inScreens = currentSegment === 'screens'
-    const inChef = currentSegment === 'chefManagement'
     const inAdmin = currentSegment === 'admin'
 
     /*
@@ -712,7 +698,6 @@ function InitialLayout() {
       !loginTransitionRef.current &&
       (inTabs ||
         inScreens ||
-        inChef ||
         inAdmin)
     ) {
       console.log(
@@ -842,13 +827,6 @@ function InitialLayout() {
 
       <Stack.Screen
         name="screens"
-        options={{
-          headerShown: false,
-        }}
-      />
-
-      <Stack.Screen
-        name="chefManagement"
         options={{
           headerShown: false,
         }}

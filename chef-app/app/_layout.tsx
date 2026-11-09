@@ -143,10 +143,49 @@ function InitialLayout() {
   const [isAuthenticated, setIsAuthenticated] =
     useState<boolean | null>(null)
 
+  // Tracks whether the first-launch onboarding has been completed.
+  // SecureStore keeps this state across app restarts and app updates.
+  const [hasSeenOnboarding, setHasSeenOnboarding] =
+    useState<boolean | null>(null)
+
   const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     ...FontAwesome.font,
   })
+
+  /*
+   * ------------------------------------------------------------
+   * LOAD ONBOARDING COMPLETION STATE
+   * ------------------------------------------------------------
+   */
+
+  useEffect(() => {
+    let isMounted = true
+
+    const loadOnboardingState = async () => {
+      try {
+        const completed = await SecureStore.getItemAsync(
+          'katbox_chef_onboarding_completed'
+        )
+
+        if (isMounted) {
+          setHasSeenOnboarding(completed === 'true')
+        }
+      } catch (error) {
+        console.log('Could not load Chef onboarding state:', error)
+        // If SecureStore cannot be read, show onboarding rather than skip it.
+        if (isMounted) {
+          setHasSeenOnboarding(false)
+        }
+      }
+    }
+
+    void loadOnboardingState()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   /*
    * ------------------------------------------------------------
@@ -534,7 +573,7 @@ function InitialLayout() {
    */
 
   useEffect(() => {
-    if (isAuthenticated === null) {
+    if (isAuthenticated === null || hasSeenOnboarding === null) {
       return
     }
 
@@ -550,6 +589,7 @@ function InitialLayout() {
       currentSegment === undefined ||
       currentSegment === 'index' ||
       currentSegment === 'login' ||
+      currentSegment === 'SlidingScreens' ||
       currentSegment === 'verify' ||
       currentSegment === 'oauth-callback'
 
@@ -558,8 +598,14 @@ function InitialLayout() {
       !isAuthenticated &&
       (currentSegment === undefined || currentSegment === 'index')
     ) {
-      console.log('🔒 Unauthenticated entry route. Redirecting to login.')
-      router.replace('/login' as any)
+      const destination = hasSeenOnboarding
+        ? '/login'
+        : '/SlidingScreens'
+
+      console.log(
+        `🔒 Unauthenticated entry route. Redirecting to ${destination}.`
+      )
+      router.replace(destination as any)
       return
     }
 
@@ -692,6 +738,7 @@ function InitialLayout() {
     segments,
     router,
     getRoleRoute,
+    hasSeenOnboarding,
   ])
 
   /*
@@ -771,7 +818,8 @@ function InitialLayout() {
 
   if (
     (!fontsLoaded && !fontError) ||
-    isAuthenticated === null
+    isAuthenticated === null ||
+    hasSeenOnboarding === null
   ) {
     return null
   }
@@ -785,6 +833,7 @@ function InitialLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
+      <Stack.Screen name="SlidingScreens" />
       <Stack.Screen name="login" />
       <Stack.Screen name="oauth-callback" />
       <Stack.Screen name="unauthorized" />

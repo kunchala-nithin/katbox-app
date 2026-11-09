@@ -287,9 +287,6 @@ export default function HomeMadeCaterers() {
   // ─── Skeleton delay-threshold state ───
   const [showSkeleton, setShowSkeleton] = useState(false);
 
-  const drawerAnim = useRef(new Animated.Value(0)).current;
-  const [showDrawer, setShowDrawer] = useState(false);
-
   // Category Modal States
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [selectedChef, setSelectedChef] = useState<any>(null);
@@ -311,21 +308,6 @@ export default function HomeMadeCaterers() {
     }));
   };
 
-  const openDrawer = () => {
-    setShowDrawer(true);
-    Animated.spring(drawerAnim, {
-      toValue: 1,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  const closeDrawer = () => {
-    Animated.timing(drawerAnim, {
-      toValue: 0,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => setShowDrawer(false));
-  };
 
   const openCategoryModal = async (chef: any) => {
     if (isModalOpening) return;
@@ -418,10 +400,6 @@ export default function HomeMadeCaterers() {
     });
   };
 
-  const drawerTranslate = drawerAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [Dimensions.get("window").width, 0],
-  });
 
   // ─── SMOOTH ONE-AT-A-TIME CITY SCROLL (iOS + Android) ───
   useEffect(() => {
@@ -1157,64 +1135,6 @@ export default function HomeMadeCaterers() {
         </Pressable>
       </Modal>
 
-      {/* ─── DRAWER ─── */}
-      {showDrawer && (
-        <>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeDrawer}>
-            <BlurView intensity={35} tint="dark" style={StyleSheet.absoluteFill} />
-          </TouchableOpacity>
-
-          <Animated.View
-            style={[
-              styles.drawerContainer,
-              { transform: [{ translateX: drawerTranslate }] },
-            ]}
-          >
-            <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
-            <View style={styles.drawerContent}>
-              <View style={styles.drawerHeader}>
-                <Text style={styles.drawerTitle}>Chef Management</Text>
-                <TouchableOpacity onPress={closeDrawer}>
-                  <Ionicons name="close" size={22} color="#fff" />
-                </TouchableOpacity>
-              </View>
-
-              <TouchableOpacity
-                style={styles.drawerItem}
-                onPress={() => {
-                  closeDrawer();
-                  setTimeout(() => router.push("/chefManagement/add-chefs"), 250);
-                }}
-              >
-                <Ionicons name="person-add-outline" size={20} color="#fff" />
-                <Text style={styles.drawerText}>Add Chef</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.drawerItem}
-                onPress={() => {
-                  closeDrawer();
-                  setTimeout(() => router.push("/chefManagement/add-chefCategory"), 250);
-                }}
-              >
-                <Ionicons name="person-add-outline" size={20} color="#fff" />
-                <Text style={styles.drawerText}>Add ChefCategory</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.drawerItem}
-                onPress={() => {
-                  closeDrawer();
-                  setTimeout(() => router.push("/chefManagement/all-orders"), 250);
-                }}
-              >
-                <Ionicons name="person-add-outline" size={20} color="#fff" />
-                <Text style={styles.drawerText}>All Orders</Text>
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
-        </>
-      )}
     </SafeAreaView>
   );
 }
@@ -1832,25 +1752,4 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
 
-  /* DRAWER STYLES */
-  drawerContainer: {
-    position: "absolute",
-    right: 0,
-    top: 0,
-    bottom: 0,
-    width: "78%",
-    backgroundColor: "rgba(15, 23, 42, 0.95)",
-    overflow: "hidden",
-  },
-  drawerContent: { flex: 1, paddingTop: 60, paddingHorizontal: 20 },
-  drawerHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 30 },
-  drawerTitle: { fontSize: 18, fontWeight: "800", color: "#FFF" },
-  drawerItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-  },
-  drawerText: { marginLeft: 14, fontSize: 15, fontWeight: "600", color: "#FFF" },
 });

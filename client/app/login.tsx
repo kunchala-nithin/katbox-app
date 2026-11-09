@@ -1378,7 +1378,7 @@ const Login = () => {
          * layout owns authenticated navigation and chooses the
          * correct destination from the saved MongoDB user role:
          *   Admin    -> /admin/all-users
-         *   Chef     -> /chefManagement/add-chefs
+         *   Chef     -> /(tabs)/Home (chef management is in the standalone Chef app)
          *   Customer -> /(tabs)/Home
          *
          * This avoids competing navigation calls between login.tsx

@@ -50,7 +50,6 @@ type RoleState =
   | 'loading'
   | 'unauth'
   | 'customer'
-  | 'chef'
   | 'admin'
 
 export default function TabsLayout() {
@@ -103,10 +102,6 @@ export default function TabsLayout() {
             return
           }
 
-          if (cached.isChef) {
-            setRole('chef')
-            return
-          }
 
           setRole('customer')
         }
@@ -127,9 +122,8 @@ export default function TabsLayout() {
 
         if (fresh.isAdmin) {
           setRole('admin')
-        } else if (fresh.isChef) {
-          setRole('chef')
         } else {
+          // Chef accounts use the Customer app normally; management lives in chef-app.
           setRole('customer')
         }
       } catch (e) {
@@ -183,11 +177,6 @@ export default function TabsLayout() {
     )
   }
 
-  if (role === 'chef') {
-    return (
-      <Redirect href="/chefManagement/add-chefs" />
-    )
-  }
 
   // ─── DYNAMIC TAB BAR DIMENSIONS (safe-area aware) ───
   const baseContentHeight = Platform.OS === 'ios' ? 56 : 54
