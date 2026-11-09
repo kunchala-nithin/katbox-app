@@ -171,12 +171,6 @@ export default function UnauthorizedScreen() {
    */
   const leave = async () => {
     if (busy) return;
-<<<<<<< HEAD
-    setBusy(true);
-
-    // Clear the KatBox session and navigate immediately. Clerk sign-out
-    // is best-effort and must never delay local logout/navigation.
-=======
 
     // Stop polling immediately
     if (pollIntervalRef.current) {
@@ -188,22 +182,14 @@ export default function UnauthorizedScreen() {
 
     let localSessionCleared = false;
 
->>>>>>> ca06a91 (fixed unauthorization navigation flow)
     try {
       // Step 1: Clear the KatBox JWT and cached MongoDB user first.
       await removeToken();
-<<<<<<< HEAD
-    } catch (error) {
-      console.log('Local session clear failed:', error);
-=======
       localSessionCleared = true;
       console.log('[Unauthorized] Local session cleared');
     } catch (e) {
       console.log('Local session clear failed:', e);
->>>>>>> ca06a91 (fixed unauthorization navigation flow)
     }
-    notifyAuthChanged();
-    router.replace('/login' as any);
 
     // Step 2: Notify the root auth guard and navigate immediately.
     // Do not wait for Clerk's network sign-out before leaving this screen.
@@ -213,13 +199,6 @@ export default function UnauthorizedScreen() {
     // Step 3: Clerk cleanup is best-effort and happens after navigation.
     try {
       await clerk.signOut();
-<<<<<<< HEAD
-    } catch (error) {
-      console.log('Clerk sign-out failed:', error);
-    } finally {
-      setBusy(false);
-    }
-=======
       console.log('[Unauthorized] Clerk sign-out complete');
     } catch (e) {
       console.log('Clerk sign-out failed:', e);
@@ -258,7 +237,6 @@ export default function UnauthorizedScreen() {
     } finally {
       setCheckingRole(false);
     }
->>>>>>> ca06a91 (fixed unauthorization navigation flow)
   };
 
   return (

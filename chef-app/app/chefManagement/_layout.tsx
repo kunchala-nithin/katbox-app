@@ -1,11 +1,6 @@
 import { Tabs, Redirect } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
-<<<<<<< HEAD
-import { useEffect, useState, useRef } from 'react'
-import { AppState } from 'react-native'
-=======
 import { useEffect, useState, useRef, useCallback } from 'react'
->>>>>>> ca06a91 (fixed unauthorization navigation flow)
 import {
   View,
   StyleSheet,
@@ -16,7 +11,7 @@ import {
   AppState,
   AppStateStatus,
 } from 'react-native'
-import { getUser, getToken, verifyUserFromBackend } from '@/src/lib/authStorage'
+import { getUser, refreshUser, getToken } from '@/src/lib/authStorage'
 import { isTokenExpired } from '@/src/lib/jwtUtils'
 import { subscribeAuth, notifyAuthChanged } from '@/src/lib/authEvents'
 import { useOrderNotifier } from '@/src/hooks/useOrderNotifier'
@@ -24,7 +19,7 @@ import { useOrderNotifier } from '@/src/hooks/useOrderNotifier'
 // Interval (ms) between role checks while user is on chef screens.
 // This ensures that if an admin revokes chef access, the user is
 // immediately bounced out to the /unauthorized screen.
-const CHEF_ROLE_POLL_INTERVAL = 8000
+const CHEF_ROLE_POLL_INTERVAL = 2000
 
 const CHEF_TAB_CONFIG: Record<
   string,
@@ -123,33 +118,28 @@ export default function ChefTabsLayout() {
         }
 
         // /auth/me verifies the role against the current MongoDB record.
-        const verification = await verifyUserFromBackend()
+        const fresh = await refreshUser()
         if (!mounted || currentRequestId !== requestId) return
 
-        if (verification.status === 'error') {
-          // A transient network/server failure is not proof that access
-          // was revoked. Keep the loading gate closed and retry on resume.
-          console.log('ChefTabsLayout: unable to verify role; retaining verification gate.')
-          setAllowed(null)
-          setIsChef(null)
-          return
-        }
-        if (verification.status === 'unauthorized') {
-          setAllowed(false)
+        if (!fresh) {
+          console.log(
+            'ChefTabsLayout: backend role verification failed; denying Chef access.'
+          )
           setIsChef(false)
           return
         }
 
-        const fresh = verification.user
         setIsChef(fresh.isChef === true)
-        setChefUserId(fresh.id || fresh._id ? String(fresh.id || fresh._id) : null)
+        setChefUserId(
+          fresh.id || fresh._id
+            ? String(fresh.id || fresh._id)
+            : null
+        )
         setChefName(fresh.name ? String(fresh.name) : null)
       } catch (e) {
-        // A transient storage/network exception must not be treated as an admin revocation.
-        console.log('ChefTabsLayout auth verification error:', e)
+        console.log('ChefTabsLayout auth error:', e)
         if (mounted && currentRequestId === requestId) {
-          setAllowed(null)
-          setIsChef(null)
+          setIsChef(false)
         }
       }
     }
@@ -157,6 +147,8 @@ export default function ChefTabsLayout() {
     loadOnce()
 
     const unsub = subscribeAuth(() => {
+      // Re-run the complete token + MongoDB role verification after
+      // login/logout or another auth-session change.
       requestId += 1
       hasLoadedRef.current = false
       setAllowed(null)
@@ -166,21 +158,10 @@ export default function ChefTabsLayout() {
       loadOnce()
     })
 
-    const appStateSubscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        // Refresh the role on resume while keeping the current Chef screen mounted.
-        // If the backend confirms revocation, the Redirect below moves to Unauthorized.
-        requestId += 1
-        hasLoadedRef.current = false
-        loadOnce()
-      }
-    })
-
     return () => {
       mounted = false
       requestId += 1
       unsub()
-      appStateSubscription.remove()
     }
   }, [])
 

@@ -512,306 +512,128 @@ const Login = () => {
 
 
       /*
-
        * --------------------------------------------------------
-
-       * START CLERK GOOGLE OAUTH
-
+       * REUSE AN EXISTING CLERK SESSION OR START GOOGLE OAUTH
        * --------------------------------------------------------
-
+       *
+       * Clerk can remain signed in even when the KatBox JWT has
+       * expired or is missing. In that case, starting OAuth again
+       * returns `session_exists`. Reuse the active Clerk identity
+       * and synchronize it with the KatBox backend instead.
        */
-
-
-
-      const {
-
-        createdSessionId,
-
-        setActive,
-
-      } = await startOAuthFlow({
-
-        redirectUrl,
-
-      })
-
-
-
-      /*
-
-       * --------------------------------------------------------
-
-       * USER CANCELLED / NO SESSION
-
-       * --------------------------------------------------------
-
-       */
-
-
-
-      if (
-
-        !createdSessionId ||
-
-        !setActive
-
-      ) {
-
-        console.log(
-
-          '⚠️ Google OAuth was cancelled or no Clerk session was created.'
-
-        )
-
-
-
-        setLoading(false)
-
-
-
-        return
-
-      }
-
-
-
-      console.log(
-
-        '✅ Clerk session created:',
-
-        createdSessionId
-
-      )
-
-
-
-      /*
-
-       * --------------------------------------------------------
-
-       * ACTIVATE CLERK SESSION
-
-       * --------------------------------------------------------
-
-       */
-
-
-
-      await setActive({
-
-        session: createdSessionId,
-
-      })
-
-
-
-      console.log(
-
-        '✅ Clerk session activated.'
-
-      )
-
-
-
-      /*
-
-       * --------------------------------------------------------
-
-       * WAIT FOR CLERK USER
-
-       * --------------------------------------------------------
-
-       *
-
-       * We DO NOT fabricate:
-
-       *
-
-       *     user@gmail.com
-
-       *
-
-       * and we DO NOT fabricate:
-
-       *
-
-       *     clerk_123456
-
-       *
-
-       * We wait for the actual Clerk user.
-
-       *
-
-       * ────────────────────────────────────────────────────────
-
-       * RELIABILITY NOTE
-
-       * ────────────────────────────────────────────────────────
-
-       *
-
-       * `clerk.user` is React-state backed and can be stale
-
-       * inside an async closure. `clerk.client.activeSessions[0].user`
-
-       * is the authoritative source immediately after setActive().
-
-       *
-
-       * We prefer the activeSessions source, fall back to clerk.user,
-
-       * and poll a bit longer on slow Android devices.
-
-       */
-
-
 
       const resolveClerkUser = (): any => {
-
         try {
+          const activeSessions = (clerk as any)?.client?.activeSessions
+          const activeSession = Array.isArray(activeSessions)
+            ? activeSessions[0]
+            : undefined
 
-          const activeSession =
-
-            (clerk as any)?.client?.activeSessions?.[0]
-
-
-
-          const sessionUser =
-
-            activeSession?.user
-
-
-
-          if (sessionUser) {
-
-            return sessionUser
-
+          if (activeSession?.user) {
+            return activeSession.user
           }
-
         } catch (_) {}
 
-
-
         return clerk.user
-
       }
 
+      let currentClerkUser = resolveClerkUser()
+      let createdNewClerkSession = false
 
+      let hasExistingClerkSession = false
+      try {
+        const activeSessions = (clerk as any)?.client?.activeSessions
+        hasExistingClerkSession =
+          (Array.isArray(activeSessions) && activeSessions.length > 0) ||
+          !!(clerk as any)?.session
+      } catch (_) {
+        hasExistingClerkSession = !!currentClerkUser
+      }
 
-      let currentClerkUser =
-
-        resolveClerkUser()
-
-
-
-      for (
-
-        let attempt = 0;
-
-        attempt < 25 &&
-
-        !currentClerkUser;
-
-        attempt++
-
-      ) {
-
+      if (currentClerkUser || hasExistingClerkSession) {
         console.log(
-
-          `⏳ Waiting for Clerk user... attempt ${attempt + 1}/25`
-
+          '♻️ Existing Clerk session detected. Reusing it instead of starting OAuth.'
         )
+      } else {
+        console.log('🔐 No active Clerk session. Starting Google OAuth...')
 
+        const {
+          createdSessionId,
+          setActive,
+        } = await startOAuthFlow({
+          redirectUrl,
+        })
 
-
-        await new Promise(
-
-          (resolve) =>
-
-            setTimeout(
-
-              resolve,
-
-              200
-
-            )
-
-        )
-
-
-
-        /*
-
-         * Re-read the current Clerk user.
-
-         */
-
-        currentClerkUser =
-
-          resolveClerkUser()
-
-      }
-
-
-
-      /*
-
-       * --------------------------------------------------------
-
-       * ENSURE CLERK USER EXISTS
-
-       * --------------------------------------------------------
-
-       */
-
-
-
-      if (!currentClerkUser) {
-
-        console.error(
-
-          '❌ Clerk user was not available after Google OAuth.'
-
-        )
-
-
-
-        try {
-
-          await clerk.signOut()
-
-        } catch (signOutError) {
-
+        if (!createdSessionId || !setActive) {
           console.log(
-
-            '⚠️ Clerk cleanup error:',
-
-            signOutError
-
+            '⚠️ Google OAuth was cancelled or no Clerk session was created.'
           )
-
+          setLoading(false)
+          return
         }
 
+        console.log('✅ Clerk session created:', createdSessionId)
 
+        await setActive({
+          session: createdSessionId,
+        })
 
-        setLoading(false)
-
-
-
-        alert(
-
-          'Google account information could not be retrieved. Please try again.'
-
-        )
-
-
-
-        return
-
+        createdNewClerkSession = true
+        console.log('✅ Clerk session activated.')
       }
 
+      /*
+       * --------------------------------------------------------
+       * WAIT FOR THE CURRENT CLERK USER
+       * --------------------------------------------------------
+       * Read the user from the active Clerk session first, then
+       * fall back to the provider's user state. This works both
+       * after a new OAuth login and when reusing an existing one.
+       */
 
+      currentClerkUser = resolveClerkUser()
+
+      for (
+        let attempt = 0;
+        attempt < 30 && !currentClerkUser;
+        attempt++
+      ) {
+        console.log(
+          `⏳ Waiting for Clerk user... attempt ${attempt + 1}/30`
+        )
+
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        currentClerkUser = resolveClerkUser()
+      }
+
+      /*
+       * --------------------------------------------------------
+       * ENSURE CLERK USER EXISTS
+       * --------------------------------------------------------
+       */
+
+      if (!currentClerkUser) {
+        console.error(
+          '❌ Clerk user was not available from the active session.'
+        )
+
+        // Only clear Clerk when this handler created the session.
+        // Do not destroy a pre-existing session just because the
+        // user object has not hydrated yet.
+        if (createdNewClerkSession) {
+          try {
+            await clerk.signOut()
+          } catch (signOutError) {
+            console.log('⚠️ Clerk cleanup error:', signOutError)
+          }
+        }
+
+        setLoading(false)
+        alert(
+          'Google account information could not be retrieved. Please try again.'
+        )
+        return
+      }
 
       /*
 
@@ -1285,14 +1107,6 @@ const Login = () => {
 
 
 
-<<<<<<< HEAD
-        // Save every valid KatBox identity. The root role guard routes
-        // unapproved users exclusively to /unauthorized; it does not
-        // discard their authenticated session or force Clerk sign-out.
-        if (!res?.data?.token || !res?.data?.user) {
-          throw new Error('The server returned an incomplete KatBox session.');
-        }
-=======
         // Save every valid KatBox session. The root layout checks the
         // MongoDB isChef value and routes:
         //   isChef === true  -> Chef Management
@@ -1300,7 +1114,6 @@ const Login = () => {
         // This keeps non-chef users signed in so they can see the access
         // status screen and automatically enter Chef Management if an
         // admin grants chef access later.
->>>>>>> ca06a91 (fixed unauthorization navigation flow)
 
         await saveSession(
 
