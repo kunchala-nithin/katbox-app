@@ -273,12 +273,33 @@ export default function CheckOutScreen() {
   }, [params.cartId]);
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  // Declare payment state before calculating the amount shown in the modal.
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"upi" | "card" | "netbanking" | "wallet" | "cod" | "">("");
+  const [selectedPaymentOption, setSelectedPaymentOption] = useState<"advance" | "full">("full");
+
+  // QuickBites requires full online payment; Cash on Delivery is unavailable.
+  // The 40% advance option remains available only for Catering, Homemade and MealBox.
+  const isAdvancePaymentEligible =
+    isCateringFlow ||
+    (isHomemadeFlow && !isQuickBitesFlow) ||
+    isMealBoxFlowExplicit;
+
+  // Keep one unpaid KatBox order per payment amount for this checkout session.
+  // Switching UPI/Card/Net Banking/Wallet after cancellation reuses the same order.
+  const pendingPaymentOrdersRef = useRef<Record<string, string>>({});
+  const paymentInProgressRef = useRef(false);
+  const confirmationClosingRef = useRef(false);
+  const [lastPaymentNotice, setLastPaymentNotice] = useState("");
+  const formatINR = (amount: number) => `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const selectedPayNow = isAdvancePaymentEligible && selectedPaymentOption === "advance" ? advanceAmount : numericTotal;
+  const selectedBalanceLater = Math.max(0, Math.round((numericTotal - selectedPayNow) * 100) / 100);
   const confirmScale = useRef(new Animated.Value(0.85)).current;
   const confirmOpacity = useRef(new Animated.Value(0)).current;
   const confirmTranslateY = useRef(new Animated.Value(24)).current;
 
   const openConfirmModal = useCallback(() => {
-    if (loading) return;
+    if (loading || paymentInProgressRef.current || confirmationClosingRef.current) return;
+    setLastPaymentNotice("");
     setShowConfirmModal(true);
     confirmScale.setValue(0.85);
     confirmOpacity.setValue(0);
@@ -293,12 +314,16 @@ export default function CheckOutScreen() {
 
   const closeConfirmModal = useCallback(
     (onClosed?: () => void) => {
+      if (confirmationClosingRef.current) return;
+      confirmationClosingRef.current = true;
       Animated.parallel([
         Animated.timing(confirmScale, { toValue: 0.9, duration: 150, useNativeDriver: true }),
         Animated.timing(confirmOpacity, { toValue: 0, duration: 150, useNativeDriver: true }),
         Animated.timing(confirmTranslateY, { toValue: 18, duration: 150, useNativeDriver: true }),
       ]).start(() => {
+        // Always release the modal, including when its animation is interrupted.
         setShowConfirmModal(false);
+        confirmationClosingRef.current = false;
         if (typeof onClosed === "function") onClosed();
       });
     },
@@ -523,11 +548,6 @@ export default function CheckOutScreen() {
   }, [params.scheduledDatesFormatted, params.scheduledDatesList, deliveryDate, isCateringFlow, isHomemadeFlow]);
 
   // ✅ "razorpay" is now the ONLY payment method — all 5 cards route to it.
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"upi" | "card" | "netbanking" | "wallet" | "cod" | "">("");
-  const [selectedPaymentOption, setSelectedPaymentOption] = useState<"advance" | "full">("full");
-  // QuickBites always requires full online payment or allows cash on delivery.
-  // The 40% advance option remains available only for Catering, Homemade and MealBox.
-  const isAdvancePaymentEligible = isCateringFlow || (isHomemadeFlow && !isQuickBitesFlow) || isMealBoxFlowExplicit;
   const [showDetails, setShowDetails] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -697,6 +717,16 @@ export default function CheckOutScreen() {
   ) => {
     const effectivePaymentMethod = paymentMethodOverride || selectedPaymentMethod;
     const isCashOnDelivery = effectivePaymentMethod === "cod";
+
+    // Cash on Delivery is intentionally unavailable for QuickBites.
+    // Keep this guard in the payment handler as well as the disabled UI so
+    // COD cannot be triggered by stale state or an indirect function call.
+    if (isQuickBites && isCashOnDelivery) {
+      setSelectedPaymentMethod("");
+      Alert.alert("Payment method unavailable", "Cash on Delivery is currently unavailable for QuickBites. Please choose an online payment method.");
+      return;
+    }
+
     const effectivePaymentOption = isQuickBites || isCashOnDelivery
       ? "full"
       : (paymentOptionOverride || selectedPaymentOption);
@@ -704,7 +734,7 @@ export default function CheckOutScreen() {
       ? 0
       : (isAdvancePaymentEligible && effectivePaymentOption === "advance" ? advanceAmount : numericTotal);
     const remainingBalance = Math.max(0, Math.round((numericTotal - payableAmount) * 100) / 100);
-    if (loading) return;
+    if (loading || paymentInProgressRef.current) return;
     if (!effectivePaymentMethod) {
       Alert.alert("Select a payment method", "Please choose a payment method to continue.");
       return;
@@ -714,8 +744,10 @@ export default function CheckOutScreen() {
       return;
     }
 
+    paymentInProgressRef.current = true;
     try {
       setLoading(true);
+      setLastPaymentNotice("");
 
       // Build the complete order payload once. This preserves all existing
       // service-specific fields and saves them before opening Razorpay.
@@ -794,11 +826,19 @@ export default function CheckOutScreen() {
 
       // Step 1: Save the complete KatBox order first. The backend returns
       // the MongoDB orderId required by the Razorpay create-order endpoint.
-      const orderRes = await api.post("/api/orders/create", orderPayload);
-      const createdOrder = orderRes.data?.order;
-      const katboxOrderId = String(createdOrder?.orderId || "").trim();
-      if (!orderRes.data?.success || !katboxOrderId) {
-        throw new Error(orderRes.data?.message || "KatBox could not create your order. Please try again.");
+      // Reuse an existing pending order when the user retries with another
+      // payment method at the same amount. A different advance/full amount
+      // gets its own pending order because the amount is fixed server-side.
+      const paymentKey = `${serviceType}:${payableAmount.toFixed(2)}:${isCashOnDelivery ? "cod" : "online"}`;
+      let katboxOrderId = pendingPaymentOrdersRef.current[paymentKey] || "";
+      if (!katboxOrderId) {
+        const orderRes = await api.post("/api/orders/create", orderPayload);
+        const createdOrder = orderRes.data?.order;
+        katboxOrderId = String(createdOrder?.orderId || "").trim();
+        if (!orderRes.data?.success || !katboxOrderId) {
+          throw new Error(orderRes.data?.message || "KatBox could not create your order. Please try again.");
+        }
+        pendingPaymentOrdersRef.current[paymentKey] = katboxOrderId;
       }
 
       // QuickBites COD is a real placed order, not a gateway transaction.
@@ -856,7 +896,8 @@ export default function CheckOutScreen() {
           String(sdkErr?.code || "").toLowerCase().includes("payment_cancelled") ||
           description.toLowerCase().includes("cancel")
         ) {
-          Alert.alert("Payment cancelled", "Your payment was cancelled. Your order is still pending payment and has not been sent to the chef.");
+          setLastPaymentNotice("Payment cancelled. Choose any payment method to try again; your existing pending order will be reused.");
+          Alert.alert("Payment cancelled", "No payment was confirmed. You can choose another payment method and try again.");
         } else {
           Alert.alert("Payment Failed", description || "Payment could not be completed. Please try again.");
         }
@@ -911,24 +952,38 @@ export default function CheckOutScreen() {
     } finally {
       setIsVerifyingPayment(false);
       setLoading(false);
+      paymentInProgressRef.current = false;
     }
   };
 
-  const handleRazorpayPaymentWithOption = (option: "advance" | "full") => handleRazorpayPayment(option);
-
   // QuickBites skips the amount-choice popup and immediately proceeds with
-  // the selected method for the full order total. COD creates the order directly.
+  // the selected online method for the full order total. Cash on Delivery is disabled.
   const handlePaymentMethodSelection = (
     method: "upi" | "card" | "netbanking" | "wallet" | "cod"
   ) => {
-    if (loading) return;
+    if (loading || paymentInProgressRef.current) return;
     setSelectedPaymentMethod(method);
     setSelectedPaymentOption("full");
     if (isQuickBites) {
       void handleRazorpayPayment("full", method);
       return;
     }
-    openConfirmModal();
+    // Open on the next frame so the selected method is committed before
+    // the amount-choice popup renders, including after SDK cancellation.
+    requestAnimationFrame(() => {
+      if (!paymentInProgressRef.current && !confirmationClosingRef.current) {
+        setLastPaymentNotice("");
+        setShowConfirmModal(true);
+        confirmScale.setValue(0.85);
+        confirmOpacity.setValue(0);
+        confirmTranslateY.setValue(24);
+        Animated.parallel([
+          Animated.spring(confirmScale, { toValue: 1, friction: 7, tension: 65, useNativeDriver: true }),
+          Animated.timing(confirmOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+          Animated.spring(confirmTranslateY, { toValue: 0, friction: 8, tension: 60, useNativeDriver: true }),
+        ]).start();
+      }
+    });
   };
 
   const handleConfirmPlaceOrder = () => {
@@ -937,8 +992,9 @@ export default function CheckOutScreen() {
       Alert.alert("Select a payment method", "Please select a payment method before placing your order.");
       return;
     }
+    const method = selectedPaymentMethod;
     closeConfirmModal(() => {
-      setTimeout(() => { handleRazorpayPayment(); }, 100);
+      requestAnimationFrame(() => { void handleRazorpayPayment("full", method || undefined); });
     });
   };
 
@@ -1648,6 +1704,21 @@ export default function CheckOutScreen() {
           </View>
         )}
 
+        {/* Clear payment amounts before choosing a method. */}
+        {isAdvancePaymentEligible && (
+          <View style={{ marginTop: 18, marginBottom: 8, padding: 15, borderRadius: 16, backgroundColor: "#F3F8F5", borderWidth: 1, borderColor: "#D8E8DC" }}>
+            <Text style={{ color: "#0B3524", fontWeight: "800", fontSize: 14, marginBottom: 10 }}>Your payment options</Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 7 }}>
+              <Text style={{ color: "#4B6657", fontSize: 13 }}>40% advance payment</Text>
+              <Text style={{ color: "#0B3524", fontSize: 14, fontWeight: "900" }}>{formatINR(advanceAmount)}</Text>
+            </View>
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text style={{ color: "#4B6657", fontSize: 13 }}>100% full payment</Text>
+              <Text style={{ color: "#0B3524", fontSize: 14, fontWeight: "900" }}>{formatINR(numericTotal)}</Text>
+            </View>
+            <Text style={{ color: "#6B8174", fontSize: 11, marginTop: 10 }}>Select a payment method below to choose how much to pay now.</Text>
+          </View>
+        )}
         {/* Choose a Payment Method Section */}
         <Text style={styles.choosePaymentHeaderLabel}>Choose a payment method</Text>
 
@@ -1752,30 +1823,52 @@ export default function CheckOutScreen() {
           <Ionicons name="chevron-forward" size={18} color="#5B756C" />
         </TouchableOpacity>
 
-        {/* Cash on Delivery is available ONLY for QuickBites. */}
+        {/* Cash on Delivery is shown as unavailable for QuickBites. */}
         {isQuickBites && (
-          <TouchableOpacity
-            activeOpacity={0.9}
-            onPress={() => handlePaymentMethodSelection("cod")}
+          <View
+            accessibilityRole="text"
+            accessibilityLabel="Cash on Delivery unavailable"
             style={[
               styles.paymentOptionCard,
-              selectedPaymentMethod === "cod" && styles.paymentOptionCardActive,
+              styles.disabledPaymentCard,
+              { opacity: 0.62 },
             ]}
           >
             <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-              <View style={[styles.radioCircle, selectedPaymentMethod === "cod" && styles.radioCircleActive]}>
-                {selectedPaymentMethod === "cod" && <View style={styles.radioInnerDot} />}
-              </View>
-              <View style={styles.paymentIconBox}>
-                <MaterialCommunityIcons name="cash-multiple" size={20} color="#0F382A" />
+              <View
+                style={[
+                  styles.radioCircle,
+                  { borderColor: "#A7B2AD", backgroundColor: "#EEF1EF" },
+                ]}
+              />
+              <View
+                style={[
+                  styles.paymentIconBox,
+                  {
+                    backgroundColor: "#E9EDEA",
+                    borderColor: "#D9E0DC",
+                  },
+                ]}
+              >
+                <MaterialCommunityIcons name="cash-multiple" size={20} color="#89958F" />
               </View>
               <View style={{ marginLeft: 12, flex: 1 }}>
-                <Text style={styles.paymentOptionTitle}>Cash on Delivery</Text>
-                <Text style={styles.paymentOptionSubtitle}>Pay the full amount when your order arrives</Text>
+                <Text style={[styles.paymentOptionTitle, { color: "#89958F" }]}>Cash on Delivery</Text>
+                <Text style={[styles.paymentOptionSubtitle, { color: "#89958F" }]}>Currently unavailable</Text>
               </View>
             </View>
-            <Ionicons name="chevron-forward" size={18} color="#5B756C" />
-          </TouchableOpacity>
+            <Text
+              style={{
+                color: "#89958F",
+                fontSize: 11,
+                fontWeight: "800",
+                letterSpacing: 0.3,
+                marginLeft: 8,
+              }}
+            >
+              UNAVAILABLE
+            </Text>
+          </View>
         )}
 
         {/* Bottom Trust Badge Footer Banner */}
@@ -1956,6 +2049,12 @@ export default function CheckOutScreen() {
         </TouchableOpacity>
       </View>
 
+      {!!lastPaymentNotice && (
+        <View style={{ marginHorizontal: 18, marginTop: 10, padding: 12, borderRadius: 12, backgroundColor: "#FFF8E7", borderWidth: 1, borderColor: "#F1DCA7", flexDirection: "row", alignItems: "center" }}>
+          <Ionicons name="information-circle-outline" size={18} color="#946200" />
+          <Text style={{ flex: 1, marginLeft: 8, color: "#654800", fontSize: 12, lineHeight: 18 }}>{lastPaymentNotice}</Text>
+        </View>
+      )}
       <Text style={styles.termsFooterText}>
         By continuing, you agree to our{" "}
         <Text style={{ color: "#0F382A", fontWeight: "700" }}>Terms & Conditions</Text>
@@ -2025,6 +2124,19 @@ export default function CheckOutScreen() {
 
             {isAdvancePaymentEligible ? (
               <View style={styles.confirmPaymentOptions}>
+                <View style={{ backgroundColor: "#F3F8F5", borderWidth: 1, borderColor: "#D5E9DC", borderRadius: 16, padding: 14, marginBottom: 14 }}>
+                  <Text style={{ fontSize: 11, color: "#567165", fontWeight: "700", letterSpacing: 0.6 }}>TOTAL ORDER VALUE</Text>
+                  <Text style={{ fontSize: 24, fontWeight: "900", color: "#0B3524", marginTop: 4 }}>{formatINR(numericTotal)}</Text>
+                  <View style={{ height: 1, backgroundColor: "#D8E9DF", marginVertical: 10 }} />
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <Text style={{ fontSize: 13, fontWeight: "700", color: "#234838" }}>Pay now ({selectedPaymentOption === "advance" ? "40% advance" : "100% full"})</Text>
+                    <Text style={{ fontSize: 16, fontWeight: "900", color: "#0B5A35" }}>{formatINR(selectedPayNow)}</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
+                    <Text style={{ fontSize: 12, color: "#60786C" }}>Balance payable later</Text>
+                    <Text style={{ fontSize: 13, fontWeight: "800", color: "#314C3E" }}>{formatINR(selectedBalanceLater)}</Text>
+                  </View>
+                </View>
                 <View style={styles.confirmPaymentPillsRow}>
                   <TouchableOpacity
                     style={[
@@ -2045,7 +2157,7 @@ export default function CheckOutScreen() {
                       ]}
                       numberOfLines={1}
                     >
-                      Advance 40% · ₹{advanceAmount.toFixed(2)}
+                      Advance 40% · {formatINR(advanceAmount)}
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -2067,7 +2179,7 @@ export default function CheckOutScreen() {
                       ]}
                       numberOfLines={1}
                     >
-                      Full 100% · ₹{numericTotal.toFixed(2)}
+                      Full 100% · {formatINR(numericTotal)}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -2086,12 +2198,13 @@ export default function CheckOutScreen() {
                     disabled={loading}
                     onPress={() => {
                       const option = selectedPaymentOption;
+                      const method = selectedPaymentMethod;
                       closeConfirmModal(() => {
-                        setTimeout(() => handleRazorpayPaymentWithOption(option), 100);
+                        requestAnimationFrame(() => { void handleRazorpayPayment(option, method || undefined); });
                       });
                     }}
                   >
-                    <Text style={styles.confirmOkBtnText}>Continue</Text>
+                    <Text style={styles.confirmOkBtnText}>Pay {formatINR(selectedPayNow)}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2101,7 +2214,7 @@ export default function CheckOutScreen() {
                   <Text style={styles.confirmCancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.confirmOkBtn, loading && { opacity: 0.75 }]} activeOpacity={0.9} disabled={loading} onPress={handleConfirmPlaceOrder}>
-                  {loading ? <ActivityIndicator size="small" color="#FAF8F5" /> : <Text style={styles.confirmOkBtnText}>Pay ₹{numericTotal.toFixed(2)} Securely</Text>}
+                  {loading ? <ActivityIndicator size="small" color="#FAF8F5" /> : <Text style={styles.confirmOkBtnText}>Pay {formatINR(numericTotal)} Securely</Text>}
                 </TouchableOpacity>
               </View>
             )}

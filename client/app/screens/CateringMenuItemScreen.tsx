@@ -2141,7 +2141,8 @@ const styles = StyleSheet.create({
   itemRowWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
+    // Reduced vertical padding by 2.5 on each side (5 points total).
+    paddingVertical: 9.5,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(15, 56, 42, 0.05)",
   },

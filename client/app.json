@@ -5,7 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": ["katbox", "clerk"],
+    "scheme": [
+      "katbox",
+      "clerk"
+    ],
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -71,7 +74,9 @@
         {
           "photosPermission": "Allow KatBox to access your photos.",
           "savePhotosPermission": "Allow KatBox to save the payment QR scanner to your gallery.",
-          "granularPermissions": ["photo"]
+          "granularPermissions": [
+            "photo"
+          ]
         }
       ],
       [
@@ -86,7 +91,9 @@
       [
         "expo-notifications",
         {
-          "sounds": ["./assets/sounds/alarm.mp3"]
+          "sounds": [
+            "./assets/sounds/alarm.mp3"
+          ]
         }
       ],
       [
@@ -106,9 +113,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "fd682af6-bb21-4cac-a0ef-e73a85a90836"
+        "projectId": "755f263f-5aad-4374-ae7a-0dda8480e0ff"
       }
     },
-    "owner": "ammachetivantalu"
+    "owner": "katbox-app"
   }
 }

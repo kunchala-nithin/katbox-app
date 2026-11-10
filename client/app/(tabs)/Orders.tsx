@@ -33,8 +33,6 @@ import api from "@/src/lib/api";
 import { socket } from "@/src/lib/socket";
 import { getUser } from "@/src/lib/authStorage";
 import { OrdersListSkeleton } from "@/src/components/skeletons/OrderScreenSkeleton";
-// ✅ NEW: Network status banner (slow / offline) — mounted in every branch
-import NetworkStatusBanner from "@/src/components/NetworkStatusBanner";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ✅ Skeleton for the "Loading orders..." state
@@ -1953,8 +1951,6 @@ export default function MyOrdersScreen() {
 
     return (
       <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
-        {/* ✅ Network status banner — absolute at top of the invoice screen */}
-        <NetworkStatusBanner />
 
         <View style={styles.detailsHeaderRow}>
           <TouchableOpacity style={styles.headerIconBtn} onPress={closeInvoiceScreen}>
@@ -2272,8 +2268,6 @@ export default function MyOrdersScreen() {
 
     return (
       <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
-        {/* ✅ Network status banner — absolute at top of the detail screen */}
-        <NetworkStatusBanner />
 
         <View style={styles.detailsHeaderRow}>
           <TouchableOpacity style={styles.headerIconBtn} onPress={closeOrderDetails}>
@@ -3443,8 +3437,6 @@ export default function MyOrdersScreen() {
 
   return (
     <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
-      {/* ✅ Network status banner — absolute at top of the orders list screen */}
-      <NetworkStatusBanner />
 
       <View style={styles.headerRow}>
         {isSearchOpen ? (

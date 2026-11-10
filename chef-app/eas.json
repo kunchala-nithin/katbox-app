@@ -1,3 +1,4 @@
+
 {
   "cli": {
     "version": ">= 24.3.0",
@@ -14,11 +15,16 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://katbox-app.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://katbox-app.onrender.com",
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsua2F0Ym94LmluJA"
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://katbox-app.onrender.com",
+        "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_live_Y2xlcmsua2F0Ym94LmluJA"
+      }
     }
   },
   "submit": {
