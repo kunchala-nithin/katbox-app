@@ -3,14 +3,14 @@ dotenv.config();
 
 import express from "express";
 import jwt from "jsonwebtoken";
-// import twilio from "twilio"; // ⭐ Twilio commented out for future use
+import twilio from "twilio";
 import User, {
   ISavedAddress,
   IActiveAddress,
 } from "../models/User";
 // ✅ NEW: Chef model import — needed to join Chef.orderHistory for chef users
 import Chef from "../models/Chef";
-// import { otpRateLimiter } from "../middleware/otpRateLimit"; // ⭐ Twilio rate limiter commented out
+// Twilio Verify enforces verification checks; a local send throttle below adds an extra guard.
 import {
   AuthRequest,
   protect,
@@ -38,11 +38,11 @@ const normalizeEmail = (email: unknown): string => {
 };
 
 /**
- * Initialize Twilio Client safely.
+ * Twilio Verify configuration.
  *
- * Kept commented out for future OTP login.
+ * These credentials must exist only in the backend environment
+ * (Render), never in the Expo application or a public repository.
  */
-/*
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
@@ -51,7 +51,63 @@ const twilioClient =
   accountSid && authToken
     ? twilio(accountSid, authToken)
     : null;
-*/
+
+/**
+ * Lightweight per-process OTP-send throttle.
+ *
+ * Twilio Verify also applies its configured service limits. For a
+ * multi-instance production deployment, use a shared Redis-backed
+ * rate-limit store as well; this in-memory guard resets on restart
+ * and is not a substitute for distributed rate limiting.
+ */
+const otpSendHistory = new Map<string, number[]>();
+const OTP_SEND_COOLDOWN_MS = 30 * 1000;
+const OTP_SEND_WINDOW_MS = 60 * 60 * 1000;
+const OTP_SEND_MAX_PER_HOUR = 5;
+
+const canSendOtp = (phone: string): {
+  allowed: boolean;
+  retryAfterSeconds?: number;
+} => {
+  const now = Date.now();
+  const recent = (otpSendHistory.get(phone) || []).filter(
+    (timestamp) => now - timestamp < OTP_SEND_WINDOW_MS
+  );
+
+  const lastSentAt = recent[recent.length - 1];
+
+  if (lastSentAt && now - lastSentAt < OTP_SEND_COOLDOWN_MS) {
+    otpSendHistory.set(phone, recent);
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.ceil(
+        (OTP_SEND_COOLDOWN_MS - (now - lastSentAt)) / 1000
+      ),
+    };
+  }
+
+  if (recent.length >= OTP_SEND_MAX_PER_HOUR) {
+    otpSendHistory.set(phone, recent);
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.ceil(
+        (OTP_SEND_WINDOW_MS - (now - recent[0])) / 1000
+      ),
+    };
+  }
+
+  return { allowed: true };
+};
+
+const recordOtpSend = (phone: string): void => {
+  const now = Date.now();
+  const recent = (otpSendHistory.get(phone) || []).filter(
+    (timestamp) => now - timestamp < OTP_SEND_WINDOW_MS
+  );
+
+  recent.push(now);
+  otpSendHistory.set(phone, recent);
+};
 
 /**
  * Helper: build consistent user response payload.
@@ -639,218 +695,261 @@ router.get(
  * SEND OTP VIA TWILIO VERIFY API v2
  * ============================================================
  *
- * COMMENTED OUT - KEPT FOR FUTURE USE
+ * POST /auth/send-otp
+ *
+ * The client sends { phone, name? }. The name is used only if a
+ * new MongoDB user is created after successful OTP verification.
+ * Existing account details are never overwritten by OTP login.
  */
 
-/*
-router.post("/send-otp", otpRateLimiter, async (req, res) => {
+router.post("/send-otp", async (req, res) => {
   try {
-    const { phone } = req.body;
+    const phone =
+      typeof req.body?.phone === "string"
+        ? req.body.phone
+        : "";
 
-    if (!phone) {
+    if (!phone.trim()) {
       return res.status(400).json({
-        message: "Phone required",
+        code: "PHONE_REQUIRED",
+        message: "Mobile number is required.",
       });
     }
 
-    const normalizedPhone =
-      normalizeIndianPhone(phone);
+    const normalizedPhone = normalizeIndianPhone(phone);
 
     if (!normalizedPhone) {
       return res.status(400).json({
-        message: "Invalid mobile number",
+        code: "INVALID_PHONE",
+        message: "Please enter a valid Indian mobile number.",
       });
     }
 
-    if (
-      !twilioClient ||
-      !verifyServiceSid
-    ) {
+    if (!twilioClient || !verifyServiceSid) {
       console.error(
-        "❌ Twilio credentials are not properly configured on the server."
+        "❌ Twilio Verify is not configured. Check backend environment variables."
       );
 
-      return res.status(500).json({
-        message:
-          "Twilio service temporarily unavailable",
+      return res.status(503).json({
+        code: "OTP_SERVICE_UNAVAILABLE",
+        message: "OTP service is temporarily unavailable. Please try again later.",
       });
     }
 
-    console.log(
-      `📱 Requesting Twilio OTP verification for ${normalizedPhone}`
-    );
+    const throttle = canSendOtp(normalizedPhone);
 
-    const verification =
-      await twilioClient.verify.v2
-        .services(verifyServiceSid)
-        .verifications.create({
-          to: normalizedPhone,
-          channel: "sms",
-        });
+    if (!throttle.allowed) {
+      return res.status(429).json({
+        code: "OTP_RATE_LIMITED",
+        message: "Please wait before requesting another OTP.",
+        retryAfterSeconds: throttle.retryAfterSeconds,
+      });
+    }
 
-    console.log(
-      `✅ Twilio verification SID created: ${verification.sid}`
-    );
+    const verification = await twilioClient.verify.v2
+      .services(verifyServiceSid)
+      .verifications.create({
+        to: normalizedPhone,
+        channel: "sms",
+      });
 
-    return res.json({
-      message:
-        "OTP sent successfully via SMS",
+    if (verification.status !== "pending") {
+      console.error(
+        "Twilio returned an unexpected verification status:",
+        verification.status
+      );
+
+      return res.status(502).json({
+        code: "OTP_SEND_FAILED",
+        message: "Unable to send OTP. Please try again.",
+      });
+    }
+
+    recordOtpSend(normalizedPhone);
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent successfully.",
     });
   } catch (error: any) {
     console.error(
       "❌ Twilio send-otp error:",
-      error?.message || error
+      error?.code || error?.message || error
     );
 
-    if (
-      error?.code === 60200 ||
-      error?.status === 400
-    ) {
+    if (error?.code === 60200 || error?.status === 400) {
       return res.status(400).json({
-        message:
-          "Invalid mobile number format",
+        code: "INVALID_PHONE",
+        message: "The mobile number is invalid or cannot receive SMS.",
       });
     }
 
-    if (error?.code === 60203) {
+    if (
+      error?.code === 60203 ||
+      error?.status === 429
+    ) {
       return res.status(429).json({
-        message:
-          "Too many OTP requests. Please try again later.",
+        code: "OTP_RATE_LIMITED",
+        message: "Too many OTP requests. Please try again later.",
       });
     }
 
-    return res.status(500).json({
-      message:
-        "Unable to send OTP. Please try again later.",
+    if (error?.code === 20404) {
+      return res.status(503).json({
+        code: "TWILIO_SERVICE_NOT_FOUND",
+        message: "OTP service configuration is invalid. Please contact support.",
+      });
+    }
+
+    return res.status(502).json({
+      code: "OTP_SEND_FAILED",
+      message: "Unable to send OTP. Please try again later.",
     });
   }
 });
-*/
 
 /*
  * ============================================================
- * VERIFY OTP VIA TWILIO
+ * VERIFY OTP VIA TWILIO VERIFY
  * ============================================================
  *
- * COMMENTED OUT - KEPT FOR FUTURE USE
+ * POST /auth/verify-otp
+ *
+ * Existing phone:
+ *   - Authenticate the existing MongoDB user.
+ *   - Do not modify Google email, Clerk ID, name, addresses,
+ *     isChef, isAdmin, or order history.
+ *
+ * New phone:
+ *   - Create one phone-based user after Twilio approves the code.
+ *   - A later Google login can establish the Google email.
+ *
+ * The JWT response matches the existing Clerk login response.
  */
 
-/*
 router.post("/verify-otp", async (req, res) => {
   try {
-    const {
-      phone,
-      otp,
-      name,
-    } = req.body;
+    const phone =
+      typeof req.body?.phone === "string"
+        ? req.body.phone
+        : "";
 
-    if (!phone || !otp) {
+    const otp =
+      typeof req.body?.otp === "string"
+        ? req.body.otp.trim()
+        : "";
+
+    const suppliedName =
+      typeof req.body?.name === "string"
+        ? req.body.name.trim()
+        : "";
+
+    if (!phone.trim() || !otp) {
       return res.status(400).json({
-        message:
-          "Phone & OTP required",
+        code: "PHONE_AND_OTP_REQUIRED",
+        message: "Mobile number and OTP are required.",
       });
     }
 
-    const normalizedPhone =
-      normalizeIndianPhone(phone);
+    if (!/^\d{6}$/.test(otp)) {
+      return res.status(400).json({
+        code: "INVALID_OTP_FORMAT",
+        message: "Please enter the 6-digit OTP.",
+      });
+    }
+
+    const normalizedPhone = normalizeIndianPhone(phone);
 
     if (!normalizedPhone) {
       return res.status(400).json({
-        message:
-          "Invalid mobile number",
+        code: "INVALID_PHONE",
+        message: "Please enter a valid Indian mobile number.",
       });
     }
 
-    if (
-      !twilioClient ||
-      !verifyServiceSid
-    ) {
+    if (!twilioClient || !verifyServiceSid) {
       console.error(
-        "❌ Twilio credentials are not properly configured on the server."
+        "❌ Twilio Verify is not configured. Check backend environment variables."
       );
 
-      return res.status(500).json({
-        message:
-          "Twilio service temporarily unavailable",
+      return res.status(503).json({
+        code: "OTP_SERVICE_UNAVAILABLE",
+        message: "OTP service is temporarily unavailable. Please try again later.",
       });
     }
 
-    console.log(
-      `🔍 Verifying Twilio OTP for ${normalizedPhone}`
-    );
-
-    const verificationCheck =
-      await twilioClient.verify.v2
-        .services(verifyServiceSid)
-        .verificationChecks.create({
-          to: normalizedPhone,
-          code: otp.trim(),
-        });
-
-    console.log(
-      `📌 Twilio verification check status: ${verificationCheck.status}`
-    );
-
-    if (
-      verificationCheck.status !==
-      "approved"
-    ) {
-      return res.status(400).json({
-        message:
-          "Invalid OTP or verification expired",
-      });
-    }
-
-    let user =
-      await User.findOne({
-        phone: normalizedPhone,
-      });
-
-    const cleanName =
-      name &&
-      typeof name === "string"
-        ? name.trim()
-        : "";
-
-    if (!user) {
-      user = await User.create({
-        phone: normalizedPhone,
-        name:
-          cleanName || "User",
-        savedAddresses: [],
-        activeAddress: null,
-        address: "",
-      });
-
-      console.log(
-        `✨ Created new MongoDB user: '${user.name}' for ${normalizedPhone}`
-      );
-    } else if (
-      cleanName &&
-      (
-        !user.name ||
-        user.name.trim() === "" ||
-        user.name.trim().toLowerCase() === "user"
-      )
-    ) {
-      user.name = cleanName;
-
-      await user.save();
-
-      console.log(
-        `📝 Updated user name to '${cleanName}' for ${normalizedPhone}`
-      );
-    }
-
-    const jwtSecret =
-      process.env.JWT_SECRET;
+    const jwtSecret = process.env.JWT_SECRET;
 
     if (!jwtSecret) {
+      console.error("❌ JWT_SECRET is missing from backend environment variables.");
+
       return res.status(500).json({
-        message:
-          "Server authentication configuration is incomplete.",
+        code: "JWT_SECRET_MISSING",
+        message: "Server authentication configuration is incomplete.",
       });
     }
+
+    const verificationCheck = await twilioClient.verify.v2
+      .services(verifyServiceSid)
+      .verificationChecks.create({
+        to: normalizedPhone,
+        code: otp,
+      });
+
+    if (verificationCheck.status !== "approved") {
+      return res.status(400).json({
+        code: "OTP_NOT_APPROVED",
+        message: "Invalid OTP or verification expired. Please try again.",
+      });
+    }
+
+    // Always resolve by normalized phone before considering account creation.
+    let user = await User.findOne({
+      phone: normalizedPhone,
+    });
+
+    if (!user) {
+      const safeName =
+        suppliedName.length > 0
+          ? suppliedName.slice(0, 80)
+          : "User";
+
+      try {
+        user = await User.create({
+          phone: normalizedPhone,
+          name: safeName,
+          // Do not invent or populate a Google email during OTP login.
+          email: "",
+          savedAddresses: [],
+          activeAddress: null,
+          address: "",
+        });
+      } catch (createError: any) {
+        // A concurrent request may have created the same phone after
+        // the initial lookup. Re-read instead of creating a second user.
+        if (createError?.code === 11000) {
+          user = await User.findOne({
+            phone: normalizedPhone,
+          });
+        } else {
+          throw createError;
+        }
+      }
+
+      if (!user) {
+        return res.status(409).json({
+          code: "ACCOUNT_CREATION_CONFLICT",
+          message: "Unable to create your account. Please try again.",
+        });
+      }
+
+      console.log(
+        `✨ Created phone-authenticated KatBox user: ${user._id}`
+      );
+    }
+
+    // Existing users are intentionally not modified here. In particular,
+    // their Google email, Clerk ID, role flags and profile data remain intact.
 
     const token = jwt.sign(
       {
@@ -864,33 +963,54 @@ router.post("/verify-otp", async (req, res) => {
       }
     );
 
-    return res.json({
+    return res.status(200).json({
+      success: true,
       token,
       user: buildUserResponse(user),
     });
   } catch (error: any) {
     console.error(
       "❌ Twilio verify-otp error:",
-      error?.message || error
+      error?.code || error?.message || error
     );
 
     if (
-      error?.status === 404 ||
-      error?.code === 20404
+      error?.code === 20404 ||
+      error?.status === 404
     ) {
       return res.status(400).json({
-        message:
-          "OTP expired or not found",
+        code: "OTP_EXPIRED_OR_NOT_FOUND",
+        message: "OTP expired or not found. Please request a new OTP.",
       });
     }
 
-    return res.status(400).json({
-      message:
-        "Verification failed. Please request a new OTP.",
+    if (
+      error?.code === 60200 ||
+      error?.status === 400
+    ) {
+      return res.status(400).json({
+        code: "OTP_VERIFICATION_FAILED",
+        message: "Invalid OTP or verification expired.",
+      });
+    }
+
+    if (
+      error?.code === 60202 ||
+      error?.code === 60203 ||
+      error?.status === 429
+    ) {
+      return res.status(429).json({
+        code: "OTP_ATTEMPTS_LIMITED",
+        message: "Too many verification attempts. Please request a new OTP later.",
+      });
+    }
+
+    return res.status(500).json({
+      code: "OTP_VERIFICATION_ERROR",
+      message: "Verification failed. Please request a new OTP.",
     });
   }
 });
-*/
 
 /*
  * ============================================================

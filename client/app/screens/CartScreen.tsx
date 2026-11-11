@@ -116,6 +116,8 @@ export default function CartScreen() {
   const [discount, setDiscount] = useState(0);
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
   const [coupons, setCoupons] = useState<any[]>([]);
+  const couponRemovedForCart = useRef<string | null>(null);
+  const autoCouponAttemptedForCart = useRef<string | null>(null);
   const [soundInstance, setSoundInstance] = useState<any>(null);
 
   // Active state tab parameter for managing selections preview layout
@@ -275,18 +277,22 @@ export default function CartScreen() {
   const loadCouponsForChef = async (targetChefIdOrName: string) => {
     if (!targetChefIdOrName) {
       setCoupons([]);
-      return;
+      return [];
     }
     try {
       const res = await api.get(`/api/chefs/${targetChefIdOrName}/coupons`);
       if (res.data && res.data.success) {
-        setCoupons(res.data.coupons || []);
+        const loadedCoupons = Array.isArray(res.data.coupons) ? res.data.coupons : [];
+        setCoupons(loadedCoupons);
+        return loadedCoupons;
       } else {
         setCoupons([]);
+        return [];
       }
     } catch (e) {
       console.log("Error loading chef-specific coupons:", e);
       setCoupons([]);
+      return [];
     }
   };
 
@@ -676,6 +682,29 @@ export default function CartScreen() {
   // For catering, no add-on amount is included in this calculation.
   const finalTotal = Math.max(0, subtotal + deliveryPrice - discount);
 
+  // Show only coupons that are valid for this cart's service type (plus
+  // chef-wide coupons that do not specify a serviceType).
+  const serviceEligibleCoupons = React.useMemo(() => {
+    const normalizeServiceType = (value: any) =>
+      String(value || "").toLowerCase().trim().replace(/[\s_-]/g, "");
+    return (Array.isArray(coupons) ? coupons : [])
+      .filter((coupon: any) => {
+        const couponService = normalizeServiceType(coupon?.serviceType);
+        const minimumOrder = Number(coupon?.minOrder) || 0;
+        return (
+          (!couponService || couponService === normalizeServiceType(derivedServiceType)) &&
+          minimumOrder <= Number(subtotal || 0)
+        );
+      })
+      .sort((a: any, b: any) => {
+        const currentService = normalizeServiceType(derivedServiceType);
+        const aSpecific = normalizeServiceType(a?.serviceType) === currentService ? 1 : 0;
+        const bSpecific = normalizeServiceType(b?.serviceType) === currentService ? 1 : 0;
+        return bSpecific - aSpecific;
+      });
+  }, [coupons, derivedServiceType, subtotal]);
+
+
   const openSheet = () => {
     sheetAnim.setValue(SCREEN_HEIGHT * 0.7);
     previewBackdropAnim.setValue(0);
@@ -918,9 +947,11 @@ export default function CartScreen() {
     const matchedLocal = (coupons || []).find(
       (c: any) => String(c.code || "").toUpperCase() === String(code || "").toUpperCase()
     );
-    const localService = String(matchedLocal?.serviceType || "").toLowerCase().trim();
+    const normalizeCouponServiceType = (value: any) =>
+      String(value || "").toLowerCase().trim().replace(/[\s_-]/g, "");
+    const localService = normalizeCouponServiceType(matchedLocal?.serviceType);
 
-    if (localService && localService !== derivedServiceType) {
+    if (localService && localService !== normalizeCouponServiceType(derivedServiceType)) {
       showNotApplicablePopup({
         code,
         couponServiceType: localService,
@@ -982,6 +1013,73 @@ export default function CartScreen() {
     }
   };
 
+  // Automatically apply the first coupon eligible for this cart's service type.
+  // A coupon for another service is never auto-applied, and a customer removal
+  // remains respected for the lifetime of this cart.
+  useEffect(() => {
+    const cartId = String(cartData?._id || "");
+    if (!cartId || !cartHasItem || !coupons.length) return;
+    if (couponRemovedForCart.current === cartId) return;
+    if (autoCouponAttemptedForCart.current === cartId) return;
+
+    const normalizeServiceType = (value: any) =>
+      String(value || "").toLowerCase().trim().replace(/[\s_-]/g, "");
+
+    const eligibleCoupons = coupons
+      .filter((coupon: any) => {
+        const couponService = normalizeServiceType(coupon?.serviceType);
+        const minimumOrder = Number(coupon?.minOrder) || 0;
+        return (
+          (!couponService || couponService === normalizeServiceType(derivedServiceType)) &&
+          minimumOrder <= Number(subtotal || 0)
+        );
+      })
+      .sort((a: any, b: any) => {
+        const currentService = normalizeServiceType(derivedServiceType);
+        const aSpecific = normalizeServiceType(a?.serviceType) === currentService ? 1 : 0;
+        const bSpecific = normalizeServiceType(b?.serviceType) === currentService ? 1 : 0;
+        return bSpecific - aSpecific;
+      });
+
+    // Mark this cart as checked before starting the asynchronous request so
+    // state updates cannot trigger duplicate coupon applications.
+    autoCouponAttemptedForCart.current = cartId;
+
+    const existingCoupon = String(cartData?.couponCode || appliedCoupon || "").trim();
+    if (existingCoupon) {
+      const existingCouponData = coupons.find(
+        (coupon: any) =>
+          String(coupon?.code || "").toUpperCase() === existingCoupon.toUpperCase()
+      );
+      const existingService = normalizeServiceType(existingCouponData?.serviceType);
+      if (!existingCouponData || !existingService || existingService === normalizeServiceType(derivedServiceType)) {
+        return;
+      }
+
+      // Clear a previously saved coupon if it belongs to a different service.
+      setAppliedCoupon(null);
+      setDiscount(0);
+      syncCouponStateWithBackend(null, 0).then(() => {
+        const nextCoupon = eligibleCoupons[0];
+        if (nextCoupon?.code) applyCoupon(nextCoupon.code);
+      });
+      return;
+    }
+
+    const nextCoupon = eligibleCoupons[0];
+    if (nextCoupon?.code) {
+      applyCoupon(nextCoupon.code);
+    }
+  }, [
+    cartData?._id,
+    cartData?.couponCode,
+    cartHasItem,
+    coupons,
+    derivedServiceType,
+    appliedCoupon,
+    subtotal,
+  ]);
+
   const cardScale = celebrationMasterAnim.interpolate({
     inputRange: [0, 1, 2],
     outputRange: [0.1, 1, 0.7],
@@ -1024,7 +1122,7 @@ export default function CartScreen() {
     outputRange: ["0deg", "360deg"],
   });
 
-  const inlineCouponHeightMax = coupons.length > 1 ? (coupons.length - 1) * 145 : 0;
+  const inlineCouponHeightMax = serviceEligibleCoupons.length > 1 ? (serviceEligibleCoupons.length - 1) * 145 : 0;
   const inlineExpansionHeight = inlineCouponExpandAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, inlineCouponHeightMax],
@@ -1903,6 +2001,7 @@ export default function CartScreen() {
               <TouchableOpacity
                 style={styles.daawathRemoveCouponBtn}
                 onPress={async () => {
+                  couponRemovedForCart.current = String(cartData?._id || "");
                   setDiscount(0);
                   setAppliedCoupon(null);
                   await syncCouponStateWithBackend(null, 0);
@@ -1912,7 +2011,7 @@ export default function CartScreen() {
                 <Text style={styles.daawathRemoveCouponText}>Remove</Text>
               </TouchableOpacity>
             </View>
-          ) : coupons.length > 0 ? (
+          ) : serviceEligibleCoupons.length > 0 ? (
             <View style={{ flexDirection: "column" }}>
               <View style={styles.daawathPremiumCouponCard}>
                 <View style={styles.daawathLeftAccentLine} />
@@ -1925,27 +2024,27 @@ export default function CartScreen() {
                     }}
                   >
                     <View style={styles.daawathCouponPill}>
-                      <Text style={styles.daawathPremiumCouponTitle}>{coupons[0].code}</Text>
+                      <Text style={styles.daawathPremiumCouponTitle}>{serviceEligibleCoupons[0].code}</Text>
                     </View>
                     <TouchableOpacity
                       style={styles.daawathPremiumApplyBtn}
-                      onPress={() => applyCoupon(coupons[0].code)}
+                      onPress={() => applyCoupon(serviceEligibleCoupons[0].code)}
                       activeOpacity={0.88}
                     >
                       <Text style={styles.daawathPremiumApplyText}>Apply Now</Text>
                     </TouchableOpacity>
                   </View>
                   <Text style={styles.daawathPremiumCouponDesc}>
-                    {coupons[0].type === "FLAT" || coupons[0].type === "flat"
-                      ? `Flat ₹${coupons[0].value} OFF order`
-                      : `${coupons[0].value}% OFF up to ₹${coupons[0].maxDiscount || 500}`}
+                    {serviceEligibleCoupons[0].type === "FLAT" || serviceEligibleCoupons[0].type === "flat"
+                      ? `Flat ₹${serviceEligibleCoupons[0].value} OFF order`
+                      : `${serviceEligibleCoupons[0].value}% OFF up to ₹${serviceEligibleCoupons[0].maxDiscount || 500}`}
                   </Text>
                   {/* ✅ service-type chip */}
-                  {!!coupons[0].serviceType && (
+                  {!!serviceEligibleCoupons[0].serviceType && (
                     <View style={styles.couponServiceTypeChipRow}>
                       <Ionicons name="git-branch-outline" size={11} color="#0F382A" />
                       <Text style={styles.couponServiceTypeChipText}>
-                        Valid for {getServiceLabel(coupons[0].serviceType)}
+                        Valid for {getServiceLabel(serviceEligibleCoupons[0].serviceType)}
                       </Text>
                     </View>
                   )}
@@ -1958,8 +2057,8 @@ export default function CartScreen() {
                       style={{ marginRight: 5 }}
                     />
                     <Text style={styles.daawathPremiumCouponMeta}>
-                      {coupons[0].description ||
-                        `Valid on bookings above ₹${coupons[0].minOrder || 0}`}
+                      {serviceEligibleCoupons[0].description ||
+                        `Valid on bookings above ₹${serviceEligibleCoupons[0].minOrder || 0}`}
                     </Text>
                   </View>
                 </View>
@@ -1973,7 +2072,7 @@ export default function CartScreen() {
                     overflow: "hidden",
                   }}
                 >
-                  {coupons.slice(1).map((coupon, index) => (
+                  {serviceEligibleCoupons.slice(1).map((coupon, index) => (
                     <View key={index} style={[styles.daawathPremiumCouponCard, { marginTop: 12 }]}>
                       <View
                         style={[
@@ -2063,14 +2162,14 @@ export default function CartScreen() {
             </View>
           )}
 
-          {coupons.length > 1 && !appliedCoupon && (
+          {serviceEligibleCoupons.length > 1 && !appliedCoupon && (
             <TouchableOpacity
               style={styles.viewAllOffersLinkRow}
               onPress={toggleInlineCouponsView}
               activeOpacity={0.85}
             >
               <Text style={styles.linkText}>
-                {expandedCoupons ? "Collapse coupons" : `View all ${coupons.length} coupons`}
+                {expandedCoupons ? "Collapse coupons" : `View all ${serviceEligibleCoupons.length} coupons`}
               </Text>
               <Animated.View
                 style={[

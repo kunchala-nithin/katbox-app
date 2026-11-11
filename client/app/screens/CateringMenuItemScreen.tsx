@@ -2051,8 +2051,12 @@ const styles = StyleSheet.create({
   categoryCardBlock: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
-    padding: 16,
-    marginBottom: 18,
+    // ✅ REDUCED VERTICAL SIZE: tighter vertical padding (was 16) while
+    //    keeping horizontal padding intact so layout stays balanced.
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    // ✅ REDUCED VERTICAL SIZE: smaller bottom gap between cards (was 18).
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.08)",
     shadowColor: "#0F382A",
@@ -2065,7 +2069,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 14
+    // ✅ REDUCED VERTICAL SIZE: smaller gap under header (was 14).
+    marginBottom: 8
   },
   titleWithBadgeGroup: {
     flexDirection: "row",
@@ -2141,8 +2146,8 @@ const styles = StyleSheet.create({
   itemRowWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    // Reduced vertical padding by 2.5 on each side (5 points total).
-    paddingVertical: 9.5,
+    // ✅ REDUCED VERTICAL SIZE: tighter item row (was 12).
+    paddingVertical: 6,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(15, 56, 42, 0.05)",
   },
@@ -2186,10 +2191,13 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   itemThumbImage: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    marginRight: 14,
+    // ✅ REDUCED VERTICAL SIZE: 40×40 square thumbnail (was 48×48) so each
+    //    item row is noticeably shorter. Width kept proportional (square)
+    //    so the thumbnail still looks correct.
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    marginRight: 12,
     backgroundColor: "#E5ECE8"
   },
   itemMetaMiddle: {
@@ -2259,9 +2267,12 @@ const styles = StyleSheet.create({
   categoryFooterHintBox: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 12,
+    // ✅ REDUCED VERTICAL SIZE: smaller top gap (was 12) and tighter
+    //    vertical padding (was 10) — horizontal padding preserved.
+    marginTop: 6,
     backgroundColor: "rgba(15, 56, 42, 0.06)",
-    padding: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "rgba(15, 56, 42, 0.09)",

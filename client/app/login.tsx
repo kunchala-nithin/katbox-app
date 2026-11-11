@@ -280,90 +280,53 @@ const Login = () => {
 
 
   /*
-
    * ============================================================
-
    * TWILIO SEND OTP FUNCTION
-
-   * COMMENTED OUT FOR FUTURE USE
-
    * ============================================================
-
    */
 
-
-
-  /*
-
   const sendOTP = async () => {
-
     if (!name.trim()) {
-
-      setNameError('Please enter your name')
-
+      setNameError('Please enter your username')
       nameRef.current?.focus()
-
       return
-
     }
 
-
+    if (phoneNumber.length !== 10) {
+      alert('Please enter a valid 10-digit mobile number')
+      phoneRef.current?.focus()
+      return
+    }
 
     try {
-
       setLoading(true)
 
-
-
       await api.post('/auth/send-otp', {
-
         phone: `+91${phoneNumber}`,
-
         name: name.trim(),
-
       })
-
-
-
-      setLoading(false)
-
-
 
       router.push({
-
-        pathname: `/verify/+91${phoneNumber}` as any,
-
+        pathname: '/verify/[phone]',
         params: {
-
+          phone: `+91${phoneNumber}`,
           name: name.trim(),
-
         },
-
-      })
-
+      } as any)
     } catch (error: any) {
-
-      setLoading(false)
-
-
-
-      console.error(error)
-
-
-
-      alert(
-
-        'Failed to send OTP. Please try again.'
-
+      console.error(
+        'KatBox OTP send error:',
+        error?.response?.data?.code || error?.message
       )
 
+      alert(
+        error?.response?.data?.message ||
+          'Failed to send OTP. Please try again.'
+      )
+    } finally {
+      setLoading(false)
     }
-
   }
-
-  */
-
-
 
   /*
 
@@ -1755,7 +1718,7 @@ const Login = () => {
 
             <Text style={styles.loadingText}>
 
-              Signing in with Google...
+              Please wait...
 
             </Text>
 
@@ -2385,93 +2348,53 @@ const Login = () => {
 
 
 
-            {/* TWILIO BUTTON & UI
-
-                COMMENTED OUT - KEPT FOR FUTURE USE */}
-
-
-
-            {/*
+            {/* MOBILE OTP LOGIN ALTERNATIVE */}
 
             <Animated.View
-
               entering={FadeInUp
-
-                .delay(500)
-
-                .duration(500)}
-
+                .delay(550)
+                .duration(450)}
+              style={{
+                alignItems: 'center',
+                marginTop: 2,
+                marginBottom: 12,
+              }}
             >
+              <Text
+                style={{
+                  color: '#999',
+                  fontSize: 11,
+                  fontWeight: '600',
+                  marginBottom: 7,
+                }}
+              >
+                OR
+              </Text>
 
               <TouchableOpacity
-
-                activeOpacity={0.9}
-
-                style={[
-
-                  styles.button,
-
-                  isEnabled &&
-
-                    styles.buttonEnabled,
-
-                ]}
-
-                disabled={
-
-                  !isEnabled ||
-
-                  loading
-
-                }
-
+                activeOpacity={0.7}
+                disabled={!isEnabled || loading}
                 onPress={sendOTP}
-
+                accessibilityRole="button"
+                accessibilityLabel="Use mobile number instead and receive an OTP"
+                style={{
+                  paddingVertical: 5,
+                  paddingHorizontal: 10,
+                  opacity: isEnabled && !loading ? 1 : 0.45,
+                }}
               >
-
-                <View
-
-                  style={styles.buttonInner}
-
+                <Text
+                  style={{
+                    color: '#38512F',
+                    fontSize: 13,
+                    fontWeight: '700',
+                    textDecorationLine: 'underline',
+                  }}
                 >
-
-                  <Text
-
-                    style={styles.buttonText}
-
-                  >
-
-                    Login via OTP
-
-                  </Text>
-
-
-
-                  <Ionicons
-
-                    name="arrow-forward"
-
-                    size={16}
-
-                    color="#fff"
-
-                    style={
-
-                      styles.buttonIcon
-
-                    }
-
-                  />
-
-                </View>
-
+                  Use mobile number instead?
+                </Text>
               </TouchableOpacity>
-
             </Animated.View>
-
-            */}
-
-
 
             {/* INFO TEXT BANNER */}
 

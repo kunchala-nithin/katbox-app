@@ -42,27 +42,28 @@ const CHEF_MENUS_ENDPOINT = (chefId: string) =>
 
 // ─── KatBox Theme Colors ───────────────────────────────────────────────
 const COLORS = {
-  background: "#F8FAFC",
+  // KatBox brand palette: deep forest green, fresh leaf green, and warm neutrals.
+  background: "#F6F8F5",
   surface: "#FFFFFF",
-  surfaceMuted: "#F1F5F9",
-  primary: "#2D6A4F", // KatBox Deep Green
-  primarySoft: "#D1FAE5", // KatBox Soft Green
-  text: "#0B261D", // Dark Forest Text
-  textMuted: "#64748B",
-  textFaint: "#94A3B8",
-  border: "#E2E8F0",
-  danger: "#DC2626",
-  userBubble: "#40916C", // KatBox Bright Green
+  surfaceMuted: "#EAF0EB",
+  primary: "#245C43",
+  primarySoft: "#E2F0E7",
+  text: "#173528",
+  textMuted: "#627568",
+  textFaint: "#91A197",
+  border: "#DCE7DF",
+  danger: "#C62828",
+  userBubble: "#347A56",
   userBubbleText: "#FFFFFF",
-  // Action card theme colors
-  cateringBg: "#FFF4E6",
-  cateringIcon: "#F97316",
-  mealBoxBg: "#EAF8EE",
-  mealBoxIcon: "#16A34A",
-  faqBg: "#EFE8FF",
-  faqIcon: "#7C3AED",
-  ordersBg: "#E6F0FF",
-  ordersIcon: "#2563EB",
+  // Consistent green-family accents for every assistant action.
+  cateringBg: "#EAF3EC",
+  cateringIcon: "#245C43",
+  mealBoxBg: "#E2F0E7",
+  mealBoxIcon: "#347A56",
+  faqBg: "#EDF4EF",
+  faqIcon: "#3F7658",
+  ordersBg: "#E8F1EB",
+  ordersIcon: "#2D694B",
 };
 
 type LanguagePack = {
@@ -1179,22 +1180,42 @@ export default function KatBoxAssistant() {
   );
 
   const renderChatStream = () => (
-    <ScrollView ref={scrollRef} style={styles.chatScroll} contentContainerStyle={styles.chatContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}>
-      {messages.filter((m) => m.id !== "welcome").map(renderBubble)}
-    </ScrollView>
+    <View style={styles.chatBackground}>
+      <View pointerEvents="none" style={styles.chatDoodles}>
+        <Text style={[styles.chatDoodle, { top: 18, left: 18, transform: [{ rotate: "-18deg" }] }]}>🥬</Text>
+        <Text style={[styles.chatDoodle, { top: 76, right: 26, transform: [{ rotate: "16deg" }] }]}>🍋</Text>
+        <Text style={[styles.chatDoodle, { top: 158, left: 38, transform: [{ rotate: "-12deg" }] }]}>🥕</Text>
+        <Text style={[styles.chatDoodle, { top: 232, right: 18, transform: [{ rotate: "22deg" }] }]}>🍅</Text>
+        <Text style={[styles.chatDoodle, { top: 312, left: 12, transform: [{ rotate: "14deg" }] }]}>🥑</Text>
+        <Text style={[styles.chatDoodle, { top: 394, right: 40, transform: [{ rotate: "-20deg" }] }]}>🍲</Text>
+        <Text style={[styles.chatDoodle, { top: 474, left: 28, transform: [{ rotate: "18deg" }] }]}>🌶️</Text>
+        <Text style={[styles.chatDoodle, { top: 550, right: 14, transform: [{ rotate: "-12deg" }] }]}>🥦</Text>
+        <Text style={[styles.chatDoodle, { top: 630, left: 42, transform: [{ rotate: "-16deg" }] }]}>🍚</Text>
+        <Text style={[styles.chatDoodle, { top: 706, right: 30, transform: [{ rotate: "12deg" }] }]}>🥗</Text>
+        <Text style={[styles.chatDoodle, { top: 784, left: 12, transform: [{ rotate: "-10deg" }] }]}>🫑</Text>
+        <Text style={[styles.chatDoodle, { top: 866, right: 42, transform: [{ rotate: "18deg" }] }]}>🍃</Text>
+      </View>
+      <ScrollView ref={scrollRef} style={styles.chatScroll} contentContainerStyle={styles.chatContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}>
+        {messages.filter((m) => m.id !== "welcome").map(renderBubble)}
+      </ScrollView>
+    </View>
   );
 
   return (
-    <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.surface} />
+    <SafeAreaView style={[styles.safeArea, { paddingTop: insets.top, backgroundColor: showChat ? COLORS.primary : COLORS.surface }]}>
+      <StatusBar barStyle={showChat ? "light-content" : "dark-content"} backgroundColor={showChat ? COLORS.primary : COLORS.surface} />
       <KeyboardAvoidingView style={styles.keyboardContainer} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}>
-        <View style={styles.header}>
+        <View style={[styles.header, showChat && styles.chatHeader]}>
           <TouchableOpacity accessibilityLabel="Go back" onPress={() => router.back()} style={styles.headerIconBtn} activeOpacity={0.75}>
-            <Ionicons name="chevron-back" size={26} color={COLORS.text} />
+            <Ionicons name="chevron-back" size={26} color={showChat ? COLORS.surface : COLORS.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>{pack.headerTitle}</Text>
+          {showChat && <View style={styles.headerBotAvatar}><Ionicons name="restaurant" size={21} color={COLORS.primary} /></View>}
+          <View style={styles.headerTextWrap}>
+            <Text style={[styles.headerTitle, showChat && styles.chatHeaderTitle]}>{pack.headerTitle}</Text>
+            {showChat && <Text style={styles.headerSubtitle}>Your food companion</Text>}
+          </View>
           <TouchableOpacity accessibilityLabel="More options" onPress={openHistory} style={styles.headerIconBtn} activeOpacity={0.75}>
-            <Ionicons name="ellipsis-vertical" size={22} color={COLORS.text} />
+            <Ionicons name="ellipsis-vertical" size={22} color={showChat ? COLORS.surface : COLORS.text} />
           </TouchableOpacity>
         </View>
 
@@ -1252,9 +1273,14 @@ export default function KatBoxAssistant() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.surface },
   keyboardContainer: { flex: 1 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 10, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceMuted },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 10, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  chatHeader: { minHeight: 66, paddingVertical: 9, backgroundColor: COLORS.primary, borderBottomWidth: 0 },
   headerIconBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  headerBotAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.surface, alignItems: "center", justifyContent: "center", marginRight: 10 },
+  headerTextWrap: { flex: 1, justifyContent: "center" },
   headerTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, letterSpacing: 0.1 },
+  chatHeaderTitle: { color: COLORS.surface, fontSize: 16, letterSpacing: 0 },
+  headerSubtitle: { color: "#DCEDE1", fontSize: 11.5, marginTop: 2, fontWeight: "500" },
   
   welcomeScroll: { flex: 1, backgroundColor: COLORS.background },
   welcomeContent: { paddingHorizontal: 20, paddingTop: 32, alignItems: "center" },
@@ -1269,7 +1295,10 @@ const styles = StyleSheet.create({
   bigActionTitle: { fontSize: 15.5, fontWeight: "800", color: COLORS.text, marginBottom: 3 },
   bigActionSubtitle: { fontSize: 12.5, color: COLORS.textMuted, lineHeight: 17 },
   
-  chatScroll: { flex: 1, backgroundColor: COLORS.background },
+  chatBackground: { flex: 1, backgroundColor: "#E4F2E7", overflow: "hidden" },
+  chatDoodles: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
+  chatDoodle: { position: "absolute", fontSize: 23, color: "#477B58", opacity: 0.14 },
+  chatScroll: { flex: 1, backgroundColor: "transparent", zIndex: 1 },
   chatContent: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 20 },
   messageRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 14 },
   userMessageRow: { justifyContent: "flex-end" },
@@ -1319,7 +1348,7 @@ const styles = StyleSheet.create({
   chefName: { color: COLORS.text, fontSize: 15, fontWeight: "900" },
   chefLocation: { color: COLORS.textMuted, fontSize: 11.5, marginTop: 2 },
   chefCount: { color: COLORS.primary, fontSize: 11.5, fontWeight: "700", marginTop: 4 },
-  menuRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderTopWidth: 1, borderTopColor: COLORS.surfaceMuted, gap: 12 },
+  menuRow: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderTopWidth: 1, borderTopColor: COLORS.border, gap: 12 },
   menuImage: { width: 68, height: 68, borderRadius: 12, backgroundColor: COLORS.background },
   menuImageFallback: { width: 68, height: 68, borderRadius: 12, backgroundColor: COLORS.primarySoft, alignItems: "center", justifyContent: "center" },
   menuName: { color: COLORS.text, fontSize: 13.5, fontWeight: "800", lineHeight: 18 },
@@ -1337,8 +1366,8 @@ const styles = StyleSheet.create({
   orderMetaValue: { color: COLORS.text, fontSize: 12.5, fontWeight: "700" },
   orderChef: { color: COLORS.primary, fontSize: 12, marginTop: 8 },
   
-  composerContainer: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === "ios" ? 8 : 12, backgroundColor: COLORS.surface, borderTopWidth: 1, borderTopColor: COLORS.surfaceMuted },
-  inputRow: { flexDirection: "row", alignItems: "center", backgroundColor: COLORS.background, borderRadius: 24, borderWidth: 1, borderColor: COLORS.border, paddingLeft: 16, paddingRight: 6, minHeight: 48 },
+  composerContainer: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: Platform.OS === "ios" ? 8 : 10, backgroundColor: "#F8FBF7", borderTopWidth: 1, borderTopColor: "#CFE0D2" },
+  inputRow: { flexDirection: "row", alignItems: "center", backgroundColor: COLORS.surface, borderRadius: 26, borderWidth: 1, borderColor: "#CFE0D2", paddingLeft: 16, paddingRight: 6, minHeight: 50 },
   input: { flex: 1, color: COLORS.text, fontSize: 14.5, paddingVertical: 10, paddingHorizontal: 0, maxHeight: 100 },
   sendBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.primary, alignItems: "center", justifyContent: "center", marginLeft: 8 },
   sendBtnDisabled: { opacity: 0.45 },
@@ -1353,7 +1382,7 @@ const styles = StyleSheet.create({
   historyTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 4 },
   historySubtitle: { fontSize: 13, color: COLORS.textMuted, marginBottom: 16 },
   historyEmpty: { fontSize: 14, color: COLORS.textMuted, textAlign: "center", padding: 20 },
-  historyItem: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.surfaceMuted },
+  historyItem: { flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border },
   historyItemText: { fontSize: 14, fontWeight: "600", color: COLORS.text },
   historyItemDate: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
 });

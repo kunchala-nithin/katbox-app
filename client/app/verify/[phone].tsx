@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   StyleSheet,
   Text,
@@ -22,7 +22,7 @@ import { saveSession } from '@/src/lib/authStorage'
 import { notifyAuthChanged } from '@/src/lib/authEvents'
 
 const CELL_COUNT = 6
-const RESEND_TIME = 15
+const RESEND_TIME = 30
 
 const Page = () => {
   const router = useRouter()
@@ -36,6 +36,10 @@ const Page = () => {
   const [loading, setLoading] = useState(false)
   const [resendTimer, setResendTimer] = useState(RESEND_TIME)
 
+  // Prevent duplicate verification requests when React renders more than once
+  // while the six-digit code is present.
+  const verificationInProgress = useRef(false)
+
   const ref = useBlurOnFulfill({
     value: code,
     cellCount: CELL_COUNT,
@@ -46,24 +50,16 @@ const Page = () => {
     setValue: setCode,
   })
 
-  useEffect(() => {
-    if (code.length === 6) {
-      verifyOtp()
-    }
-  }, [code])
-
-  useEffect(() => {
-    if (resendTimer === 0) return
-
-    const interval = setInterval(
-      () => setResendTimer(t => t - 1),
-      1000
-    )
-
-    return () => clearInterval(interval)
-  }, [resendTimer])
-
   const verifyOtp = async () => {
+    if (
+      code.length !== CELL_COUNT ||
+      verificationInProgress.current
+    ) {
+      return
+    }
+
+    verificationInProgress.current = true
+
     try {
       setLoading(true)
 
@@ -73,42 +69,75 @@ const Page = () => {
         name: name ? String(name).trim() : undefined,
       })
 
+      if (!res?.data?.token || !res?.data?.user) {
+        throw new Error('The server returned an invalid login response.')
+      }
+
       await saveSession(res.data.token, res.data.user)
 
+      // The root layout listens for this event and selects the correct
+      // destination based on the MongoDB role (admin or customer home).
       notifyAuthChanged()
-
-      // Explicitly navigate to the Home screen after successful authentication.
-      // Home.tsx is inside the (tabs) route group.
-      router.replace('/(tabs)/Home' as any)
     } catch (error: any) {
       Alert.alert(
         'Verification Failed',
-        error?.response?.data?.message || 'Invalid OTP'
+        error?.response?.data?.message ||
+          error?.message ||
+          'Invalid OTP. Please try again.'
       )
 
       setCode('')
     } finally {
       setLoading(false)
+      verificationInProgress.current = false
     }
   }
 
+  useEffect(() => {
+    if (code.length === CELL_COUNT) {
+      void verifyOtp()
+    }
+  }, [code])
+
+  useEffect(() => {
+    if (resendTimer === 0) return
+
+    const interval = setInterval(
+      () => setResendTimer(t => Math.max(0, t - 1)),
+      1000
+    )
+
+    return () => clearInterval(interval)
+  }, [resendTimer])
+
   const resendOtp = async () => {
+    if (loading || resendTimer > 0) return
+
     try {
       setLoading(true)
 
       await api.post('/auth/send-otp', {
         phone,
-        name,
+        name: name ? String(name).trim() : undefined,
       })
 
+      setCode('')
       setResendTimer(RESEND_TIME)
 
-      Alert.alert('OTP Sent', 'A new OTP has been sent')
+      Alert.alert('OTP Sent', 'A new verification code has been sent.')
     } catch (error: any) {
+      const retryAfter = Number(
+        error?.response?.data?.retryAfterSeconds
+      )
+
+      if (Number.isFinite(retryAfter) && retryAfter > 0) {
+        setResendTimer(retryAfter)
+      }
+
       Alert.alert(
         'Resend Blocked',
         error?.response?.data?.message ||
-          'Too many requests. Please wait.'
+          'Too many requests. Please wait before trying again.'
       )
     } finally {
       setLoading(false)
@@ -150,6 +179,7 @@ const Page = () => {
             right: 10,
           }}
           activeOpacity={0.7}
+          disabled={loading}
         >
           <Ionicons
             name="chevron-back"
@@ -184,9 +214,14 @@ const Page = () => {
           ref={ref}
           {...props}
           value={code}
-          onChangeText={setCode}
+          onChangeText={value => {
+            if (!loading) {
+              setCode(value.replace(/\D/g, '').slice(0, CELL_COUNT))
+            }
+          }}
           cellCount={CELL_COUNT}
           keyboardType="number-pad"
+          editable={!loading}
           renderCell={({ index, symbol, isFocused }) => (
             <View
               key={index}
@@ -217,6 +252,7 @@ const Page = () => {
             <TouchableOpacity
               onPress={resendOtp}
               activeOpacity={0.75}
+              disabled={loading}
             >
               <Text style={styles.resendText}>
                 Resend OTP
