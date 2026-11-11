@@ -1,3 +1,4 @@
+
 import Colors from '@/constants/Colors'
 
 import { api } from '@/src/lib/api'
@@ -91,6 +92,16 @@ const Login = () => {
   const [loading, setLoading] = useState(false)
 
   const [nameError, setNameError] = useState('')
+
+  /*
+   * Authentication mode:
+   *
+   * false = Google login
+   * true  = Mobile OTP login
+   *
+   * The mode switch is independent of name and phone validation.
+   */
+  const [isPhoneOtpMode, setIsPhoneOtpMode] = useState(false)
 
 
 
@@ -286,47 +297,94 @@ const Login = () => {
    */
 
   const sendOTP = async () => {
-    if (!name.trim()) {
-      setNameError('Please enter your username')
-      nameRef.current?.focus()
+
+    if (loading) {
       return
     }
+
+    if (!name.trim()) {
+
+      setNameError('Please enter your username')
+
+      nameRef.current?.focus()
+
+      return
+
+    }
+
+
 
     if (phoneNumber.length !== 10) {
+
       alert('Please enter a valid 10-digit mobile number')
+
       phoneRef.current?.focus()
+
       return
+
     }
+
+
 
     try {
+
       setLoading(true)
 
+
+
       await api.post('/auth/send-otp', {
+
         phone: `+91${phoneNumber}`,
+
         name: name.trim(),
+
       })
 
+
+
       router.push({
+
         pathname: '/verify/[phone]',
+
         params: {
+
           phone: `+91${phoneNumber}`,
+
           name: name.trim(),
+
         },
+
       } as any)
+
     } catch (error: any) {
+
       console.error(
+
         'KatBox OTP send error:',
+
         error?.response?.data?.code || error?.message
+
       )
 
+
+
       alert(
+
         error?.response?.data?.message ||
+
           'Failed to send OTP. Please try again.'
+
       )
+
     } finally {
+
       setLoading(false)
+
     }
+
   }
+
+
 
   /*
 
@@ -341,6 +399,10 @@ const Login = () => {
 
 
   const handleGoogleLogin = async () => {
+
+    if (loading) {
+      return
+    }
 
     /*
 
@@ -409,33 +471,61 @@ const Login = () => {
     // Production Clerk can take a moment to initialize on a cold app launch.
     // Wait briefly for the provider instead of immediately showing an alert.
     if (!clerkLoadedRef.current) {
+
       setLoading(true)
+
       console.log('⏳ Waiting for Clerk Production to finish initializing...')
 
+
+
       let attempts = 0
+
       while (!clerkLoadedRef.current && attempts < 50) {
+
         await new Promise((resolve) => setTimeout(resolve, 200))
+
         attempts += 1
+
       }
+
+
 
       setLoading(false)
 
+
+
       if (!clerkLoadedRef.current) {
+
         console.error(
+
           '❌ Clerk did not finish initializing within 10 seconds. Check the Production publishable key, Clerk custom-domain DNS/SSL, and network access.'
+
         )
+
         alert(
+
           'KatBox authentication is taking too long to connect. Please check your internet connection and try again. If this continues, the Production Clerk connection needs to be checked.'
+
         )
+
         return
+
       }
+
     }
 
+
+
     try {
+
       setLoading(true)
 
+
+
       console.log(
+
         '🔐 Starting Google OAuth...'
+
       )
 
 
@@ -2058,9 +2148,7 @@ const Login = () => {
 
             {/* PREVIOUSLY USED GOOGLE ACCOUNT */}
 
-
-
-            {lastUsedEmail ? (
+            {!isPhoneOtpMode && lastUsedEmail ? (
 
               <Animated.View
 
@@ -2220,11 +2308,7 @@ const Login = () => {
 
 
 
-            {/* GOOGLE SOCIAL LOGIN BUTTON VIA CLERK
-
-                Disabled until Name & Mobile are filled */}
-
-
+            {/* GOOGLE / PHONE OTP AUTHENTICATION BUTTON */}
 
             <Animated.View
 
@@ -2274,9 +2358,29 @@ const Login = () => {
 
                 }}
 
-                onPress={
+                onPress={() => {
 
-                  handleGoogleLogin
+                  if (isPhoneOtpMode) {
+
+                    void sendOTP()
+
+                  } else {
+
+                    void handleGoogleLogin()
+
+                  }
+
+                }}
+
+                accessibilityRole="button"
+
+                accessibilityLabel={
+
+                  isPhoneOtpMode
+
+                    ? 'Send OTP'
+
+                    : 'Continue with Google'
 
                 }
 
@@ -2296,7 +2400,15 @@ const Login = () => {
 
                   <Ionicons
 
-                    name="logo-google"
+                    name={
+
+                      isPhoneOtpMode
+
+                        ? 'phone-portrait-outline'
+
+                        : 'logo-google'
+
+                    }
 
                     size={18}
 
@@ -2318,7 +2430,11 @@ const Login = () => {
 
                   >
 
-                    Continue with Google
+                    {isPhoneOtpMode
+
+                      ? 'Send OTP'
+
+                      : 'Continue with Google'}
 
                   </Text>
 
@@ -2326,7 +2442,15 @@ const Login = () => {
 
                   <Ionicons
 
-                    name="arrow-forward"
+                    name={
+
+                      isPhoneOtpMode
+
+                        ? 'chatbox-ellipses-outline'
+
+                        : 'arrow-forward'
+
+                    }
 
                     size={16}
 
@@ -2348,53 +2472,117 @@ const Login = () => {
 
 
 
-            {/* MOBILE OTP LOGIN ALTERNATIVE */}
+            {/* MOBILE OTP / GOOGLE LOGIN MODE SWITCH */}
 
             <Animated.View
+
               entering={FadeInUp
+
                 .delay(550)
+
                 .duration(450)}
+
               style={{
+
                 alignItems: 'center',
+
                 marginTop: 2,
+
                 marginBottom: 12,
+
               }}
+
             >
+
               <Text
+
                 style={{
+
                   color: '#999',
+
                   fontSize: 11,
+
                   fontWeight: '600',
+
                   marginBottom: 7,
+
                 }}
+
               >
+
                 OR
+
               </Text>
 
+
+
               <TouchableOpacity
+
                 activeOpacity={0.7}
-                disabled={!isEnabled || loading}
-                onPress={sendOTP}
-                accessibilityRole="button"
-                accessibilityLabel="Use mobile number instead and receive an OTP"
-                style={{
-                  paddingVertical: 5,
-                  paddingHorizontal: 10,
-                  opacity: isEnabled && !loading ? 1 : 0.45,
+
+                disabled={loading}
+
+                onPress={() => {
+
+                  setIsPhoneOtpMode((previous) => !previous)
+
+                  setNameError('')
+
                 }}
+
+                accessibilityRole="button"
+
+                accessibilityLabel={
+
+                  isPhoneOtpMode
+
+                    ? 'Continue with Google instead'
+
+                    : 'Use mobile number instead'
+
+                }
+
+                style={{
+
+                  paddingVertical: 5,
+
+                  paddingHorizontal: 10,
+
+                  opacity: loading ? 0.45 : 1,
+
+                }}
+
               >
+
                 <Text
+
                   style={{
+
                     color: '#38512F',
+
                     fontSize: 13,
+
                     fontWeight: '700',
+
                     textDecorationLine: 'underline',
+
                   }}
+
                 >
-                  Use mobile number instead?
+
+                  {isPhoneOtpMode
+
+                    ? 'Continue with Google instead?'
+
+                    : 'Use mobile number instead?'}
+
                 </Text>
+
               </TouchableOpacity>
+
             </Animated.View>
+
+
 
             {/* INFO TEXT BANNER */}
 
@@ -2428,11 +2616,11 @@ const Login = () => {
 
               <Text style={styles.infoText}>
 
-                Secure authentication powered by
+                {isPhoneOtpMode
 
-                Clerk and Google. Your details remain
+                  ? 'Secure mobile authentication powered by Twilio. Your OTP verifies your registered mobile number.'
 
-                completely private and safe.
+                  : 'Secure authentication powered by Clerk and Google. Your details remain completely private and safe.'}
 
               </Text>
 
@@ -2661,66 +2849,128 @@ const Login = () => {
             </Animated.View>
 
             {/* LEGAL LINKS — open the official KatBox website pages */}
+
             <View
+
               style={{
+
                 flexDirection: 'row',
+
                 flexWrap: 'wrap',
+
                 justifyContent: 'center',
+
                 alignItems: 'center',
+
                 paddingHorizontal: 18,
+
                 paddingTop: 18,
+
                 paddingBottom: 12,
+
               }}
+
             >
+
               <TouchableOpacity
+
                 activeOpacity={0.7}
+
                 onPress={() => {
+
                   void WebBrowser.openBrowserAsync('https://katbox.in/terms-and-conditions')
+
                 }}
+
                 accessibilityRole="link"
+
                 accessibilityLabel="Terms and Conditions"
+
               >
+
                 <Text style={{ color: '#38512F', fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' }}>
+
                   Terms & Conditions
+
                 </Text>
+
               </TouchableOpacity>
+
+
 
               <Text style={{ color: '#94A3B8', fontSize: 12, paddingHorizontal: 8 }}>•</Text>
 
+
+
               <TouchableOpacity
+
                 activeOpacity={0.7}
+
                 onPress={() => {
+
                   void WebBrowser.openBrowserAsync('https://katbox.in/privacy-policy')
+
                 }}
+
                 accessibilityRole="link"
+
                 accessibilityLabel="Privacy Policy"
+
               >
+
                 <Text style={{ color: '#38512F', fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' }}>
+
                   Privacy Policy
+
                 </Text>
+
               </TouchableOpacity>
+
+
 
               <Text style={{ color: '#94A3B8', fontSize: 12, paddingHorizontal: 8 }}>•</Text>
 
+
+
               <TouchableOpacity
+
                 activeOpacity={0.7}
+
                 onPress={() => {
+
                   void WebBrowser.openBrowserAsync('https://katbox.in/refund-cancellation-policy')
+
                 }}
+
                 accessibilityRole="link"
+
                 accessibilityLabel="Refund and Cancellation Policy"
+
               >
+
                 <Text style={{ color: '#38512F', fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' }}>
+
                   Refund Policy
+
                 </Text>
+
               </TouchableOpacity>
+
             </View>
+
+
 
           </Animated.View>
 
+
+
         </ScrollView>
 
+
+
       </ImageBackground>
+
+
 
     </KeyboardAvoidingView>
 

@@ -739,10 +739,16 @@ router.post("/send-otp", async (req, res) => {
     const throttle = canSendOtp(normalizedPhone);
 
     if (!throttle.allowed) {
+      const retryAfterSeconds = throttle.retryAfterSeconds || 1;
+
+      // Let HTTP clients know when the local KatBox cooldown expires.
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+
       return res.status(429).json({
         code: "OTP_RATE_LIMITED",
+        source: "KATBOX",
         message: "Please wait before requesting another OTP.",
-        retryAfterSeconds: throttle.retryAfterSeconds,
+        retryAfterSeconds,
       });
     }
 
@@ -772,37 +778,51 @@ router.post("/send-otp", async (req, res) => {
       message: "OTP sent successfully.",
     });
   } catch (error: any) {
-    console.error(
-      "❌ Twilio send-otp error:",
-      error?.code || error?.message || error
-    );
+    // Log Twilio's diagnostic fields so a rejected request can be
+    // distinguished from KatBox's own local rate limiter.
+    // Never log the OTP, Auth Token, or other credentials.
+    console.error("❌ Twilio send-otp error:", {
+      code: error?.code,
+      status: error?.status,
+      message: error?.message,
+      moreInfo: error?.moreInfo,
+    });
 
     if (error?.code === 60200 || error?.status === 400) {
       return res.status(400).json({
         code: "INVALID_PHONE",
+        source: "TWILIO",
         message: "The mobile number is invalid or cannot receive SMS.",
       });
     }
 
+    // 60203 is Twilio Verify's maximum-send-attempts error.
+    // 20429 is Twilio's API rate-limit response. A generic HTTP 429
+    // from Twilio is also reported separately from KatBox's throttle.
     if (
       error?.code === 60203 ||
+      error?.code === 20429 ||
       error?.status === 429
     ) {
       return res.status(429).json({
-        code: "OTP_RATE_LIMITED",
-        message: "Too many OTP requests. Please try again later.",
+        code: "TWILIO_RATE_LIMITED",
+        source: "TWILIO",
+        message:
+          "Twilio has temporarily limited OTP requests for this number. Please wait before trying again.",
       });
     }
 
     if (error?.code === 20404) {
       return res.status(503).json({
         code: "TWILIO_SERVICE_NOT_FOUND",
+        source: "TWILIO",
         message: "OTP service configuration is invalid. Please contact support.",
       });
     }
 
     return res.status(502).json({
       code: "OTP_SEND_FAILED",
+      source: "TWILIO",
       message: "Unable to send OTP. Please try again later.",
     });
   }
