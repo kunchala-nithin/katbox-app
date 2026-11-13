@@ -4,6 +4,7 @@ dotenv.config();
 import express from "express";
 import jwt from "jsonwebtoken";
 import twilio from "twilio";
+import { verifyToken } from "@clerk/backend";
 import User, {
   ISavedAddress,
   IActiveAddress,
@@ -211,378 +212,163 @@ const requireAdmin = async (
  * ============================================================
  */
 
+/**
+ * Resolve the identity from a signed Clerk session token and Clerk's
+ * server-side user API. Never trust email or clerkId sent in the request body.
+ */
+const getVerifiedClerkIdentity = async (req: express.Request) => {
+  const clerkSecret = process.env.CLERK_SECRET_KEY;
+  if (!clerkSecret) throw new Error("CLERK_SECRET_KEY_MISSING");
+
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Bearer ")) throw new Error("CLERK_TOKEN_REQUIRED");
+  const sessionToken = authHeader.slice(7).trim();
+  if (!sessionToken) throw new Error("CLERK_TOKEN_REQUIRED");
+
+  const payload = await verifyToken(sessionToken, { secretKey: clerkSecret });
+  const clerkId = typeof payload.sub === "string" ? payload.sub : "";
+  if (!clerkId) throw new Error("INVALID_CLERK_IDENTITY");
+
+  const response = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(clerkId)}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${clerkSecret}`, "Content-Type": "application/json" },
+  });
+  if (!response.ok) throw new Error("CLERK_USER_LOOKUP_FAILED");
+  const clerkUser: any = await response.json();
+  const primaryId = clerkUser.primary_email_address_id;
+  const emailRecord = Array.isArray(clerkUser.email_addresses)
+    ? clerkUser.email_addresses.find((item: any) => item.id === primaryId) ||
+      clerkUser.email_addresses.find((item: any) => item.verification?.status === "verified")
+    : null;
+  if (!emailRecord || emailRecord.verification?.status !== "verified") {
+    throw new Error("VERIFIED_GOOGLE_EMAIL_REQUIRED");
+  }
+
+  const email = normalizeEmail(emailRecord.email_address);
+  if (!email) throw new Error("VERIFIED_GOOGLE_EMAIL_REQUIRED");
+  return {
+    clerkId,
+    email,
+    name: [clerkUser.first_name, clerkUser.last_name].filter(Boolean).join(" ").trim(),
+  };
+};
+
+const issueKatboxToken = (user: any) => {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) throw new Error("JWT_SECRET_MISSING");
+  return jwt.sign(
+    { userId: user._id, _id: user._id, id: user._id },
+    jwtSecret,
+    { expiresIn: "30d" }
+  );
+};
+
+/**
+ * POST /auth/clerk-login
+ * Existing linked Google account: log in immediately.
+ * New Google registration or OTP-only account: send phone OTP and return
+ * a short-lived, signed challenge. MongoDB is not changed until OTP passes.
+ */
 router.post("/clerk-login", async (req, res) => {
   try {
-    const {
-      email,
-      name,
-      phone,
-      clerkId,
-    } = req.body;
-
-    /*
-     * --------------------------------------------------------
-     * BASIC VALIDATION
-     * --------------------------------------------------------
-     */
-
-    const normalizedEmail =
-      normalizeEmail(email);
-
-    const normalizedPhone = phone
-      ? normalizeIndianPhone(phone)
-      : "";
-
-    const cleanName =
-      name &&
-      typeof name === "string"
-        ? name.trim()
-        : "User";
-
-    /*
-     * Google login must provide:
-     *
-     * - real Google email
-     * - real Clerk ID
-     * - mobile number
-     */
-    if (!normalizedEmail) {
-      return res.status(400).json({
-        code: "EMAIL_REQUIRED",
-        message:
-          "Google email is required.",
-      });
-    }
-
-    if (!clerkId || typeof clerkId !== "string") {
-      return res.status(400).json({
-        code: "CLERK_ID_REQUIRED",
-        message:
-          "Clerk user ID is required.",
-      });
-    }
+    const phone = typeof req.body?.phone === "string" ? req.body.phone : "";
+    const normalizedPhone = normalizeIndianPhone(phone);
+    const suppliedName = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "";
 
     if (!normalizedPhone) {
-      return res.status(400).json({
-        code: "PHONE_REQUIRED",
-        message:
-          "Valid mobile number is required.",
+      return res.status(400).json({ code: "PHONE_REQUIRED", message: "Enter a valid Indian mobile number." });
+    }
+    if (!twilioClient || !verifyServiceSid) {
+      return res.status(503).json({ code: "OTP_SERVICE_UNAVAILABLE", message: "OTP service is temporarily unavailable." });
+    }
+
+    let identity: { clerkId: string; email: string; name: string };
+    try {
+      identity = await getVerifiedClerkIdentity(req);
+    } catch (error: any) {
+      const code = error?.message || "INVALID_CLERK_SESSION";
+      const status = code === "CLERK_SECRET_KEY_MISSING" ? 500 : 401;
+      return res.status(status).json({
+        code,
+        message: status === 500 ? "Authentication configuration is incomplete." : "Your Google sign-in session could not be verified. Please sign in again.",
       });
     }
 
-    console.log(
-      "🔐 Katbox Clerk login request:",
-      {
-        email: normalizedEmail,
-        phone: normalizedPhone,
-        clerkId,
-      }
-    );
+    const { clerkId, email } = identity;
+    const cleanName = suppliedName || identity.name || "User";
+    const phoneUser = await User.findOne({ phone: normalizedPhone });
+    const emailUser = await User.findOne({ email });
+    const clerkUser = await User.findOne({ clerkId });
 
-    /*
-     * ========================================================
-     * STEP 1 — FIND USER BY MOBILE FIRST
-     * ========================================================
-     *
-     * This is the most important change.
-     */
-
-    let user = await User.findOne({
-      phone: normalizedPhone,
-    });
-
-    /*
-     * ========================================================
-     * EXISTING MOBILE NUMBER
-     * ========================================================
-     */
-
-    if (user) {
-      console.log(
-        `🔎 Existing Katbox user found for mobile ${normalizedPhone}`
-      );
-
-      const existingEmail =
-        normalizeEmail(user.email);
-
-      /*
-       * ------------------------------------------------------
-       * EXISTING MOBILE + EXISTING EMAIL
-       * ------------------------------------------------------
-       *
-       * If the stored Google email differs from the newly
-       * selected Google email, reject the login.
-       */
-
-      if (
-        existingEmail &&
-        existingEmail !== normalizedEmail
-      ) {
-        console.log(
-          "🚫 Google email mismatch for existing mobile:",
-          {
-            phone: normalizedPhone,
-            registeredEmail: existingEmail,
-            attemptedEmail: normalizedEmail,
-          }
-        );
-
+    if (emailUser && String(emailUser.phone || "") && emailUser.phone !== normalizedPhone) {
+      return res.status(409).json({ code: "EMAIL_ALREADY_USED", message: "This Google email is already linked to another mobile number." });
+    }
+    if (clerkUser && String(clerkUser.phone || "") && clerkUser.phone !== normalizedPhone) {
+      return res.status(409).json({ code: "CLERK_ACCOUNT_ALREADY_LINKED", message: "This Google account is already linked to another mobile number." });
+    }
+    if (phoneUser) {
+      const existingEmail = normalizeEmail(phoneUser.email);
+      if (existingEmail && existingEmail !== email) {
         return res.status(409).json({
           code: "EMAIL_MISMATCH",
-          message:
-            "This mobile number is already registered with a different Google email.",
+          message: "This mobile number is already registered with a different Google email.",
           registeredEmail: existingEmail,
         });
       }
-
-      /*
-       * ------------------------------------------------------
-       * EXISTING MOBILE + SAME EMAIL
-       * ------------------------------------------------------
-       *
-       * Login is allowed.
-       *
-       * We can safely update missing Clerk ID/name/email.
-       */
-
-      let updated = false;
-
-      /*
-       * If the old user has no email, save the verified
-       * Google email.
-       */
-      if (!existingEmail) {
-        user.email = normalizedEmail;
-        updated = true;
+      if (phoneUser.clerkId && phoneUser.clerkId !== clerkId) {
+        return res.status(409).json({ code: "CLERK_ACCOUNT_MISMATCH", message: "This KatBox account is already linked to a different Google account." });
       }
-
-      /*
-       * If Clerk ID is missing, attach the current Clerk ID.
-       */
-      if (!user.clerkId || user.clerkId !== clerkId) {
-        user.clerkId = clerkId;
-        updated = true;
+      // A previously linked email is sufficient to recover the same Clerk ID.
+      // An OTP-only account has no email and must prove phone ownership first.
+      if (existingEmail === email && !phoneUser.clerkId) {
+        phoneUser.clerkId = clerkId;
+        await phoneUser.save();
+        const token = issueKatboxToken(phoneUser);
+        return res.status(200).json({ success: true, token, user: buildUserResponse(phoneUser) });
       }
-
-      /*
-       * If the user's name is empty/default, update it.
-       */
-      if (
-        cleanName &&
-        (
-          !user.name ||
-          user.name.trim() === "" ||
-          user.name.trim().toLowerCase() === "user"
-        )
-      ) {
-        user.name = cleanName;
-        updated = true;
-      }
-
-      /*
-       * The mobile number is already normalized.
-       */
-      if (user.phone !== normalizedPhone) {
-        user.phone = normalizedPhone;
-        updated = true;
-      }
-
-      if (updated) {
-        await user.save();
-
-        console.log(
-          `📝 Updated existing MongoDB user '${user.name}'`
-        );
-      } else {
-        console.log(
-          `✅ Existing user authenticated: '${user.name}'`
-        );
+      if (existingEmail === email && phoneUser.clerkId === clerkId) {
+        const token = issueKatboxToken(phoneUser);
+        return res.status(200).json({ success: true, token, user: buildUserResponse(phoneUser) });
       }
     }
 
-    /*
-     * ========================================================
-     * NO USER FOR MOBILE
-     * ========================================================
-     *
-     * Before creating a new user, make sure the Google email
-     * isn't already attached to a different mobile number.
-     */
-
-    if (!user) {
-      const emailUser =
-        await User.findOne({
-          email: normalizedEmail,
-        });
-
-      /*
-       * ------------------------------------------------------
-       * EMAIL ALREADY BELONGS TO ANOTHER MOBILE
-       * ------------------------------------------------------
-       */
-
-      if (emailUser) {
-        const existingPhone =
-          emailUser.phone || "";
-
-        /*
-         * This should normally never happen because we already
-         * searched by phone, but it protects the database from
-         * account duplication.
-         */
-
-        if (
-          existingPhone &&
-          existingPhone !== normalizedPhone
-        ) {
-          console.log(
-            "🚫 Google email already belongs to another mobile:",
-            {
-              email: normalizedEmail,
-              registeredPhone: existingPhone,
-              attemptedPhone: normalizedPhone,
-            }
-          );
-
-          return res.status(409).json({
-            code: "EMAIL_ALREADY_USED",
-            message:
-              "This Google email is already registered with another mobile number.",
-          });
-        }
-
-        /*
-         * If the email user exists but doesn't have a phone,
-         * attach the current phone.
-         */
-        user = emailUser;
-
-        let updated = false;
-
-        if (!user.phone) {
-          user.phone = normalizedPhone;
-          updated = true;
-        }
-
-        if (!user.clerkId || user.clerkId !== clerkId) {
-          user.clerkId = clerkId;
-          updated = true;
-        }
-
-        if (
-          cleanName &&
-          (
-            !user.name ||
-            user.name.trim() === "" ||
-            user.name.trim().toLowerCase() === "user"
-          )
-        ) {
-          user.name = cleanName;
-          updated = true;
-        }
-
-        if (updated) {
-          await user.save();
-        }
-      }
+    const throttle = canSendOtp(normalizedPhone);
+    if (!throttle.allowed) {
+      const retryAfterSeconds = throttle.retryAfterSeconds || 1;
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      return res.status(429).json({ code: "OTP_RATE_LIMITED", message: "Please wait before requesting another OTP.", retryAfterSeconds });
     }
 
-    /*
-     * ========================================================
-     * CREATE NEW USER
-     * ========================================================
-     */
-
-    if (!user) {
-      user = await User.create({
-        clerkId,
-        email: normalizedEmail,
-        phone: normalizedPhone,
-        name: cleanName || "User",
-        savedAddresses: [],
-        activeAddress: null,
-        address: "",
-      });
-
-      console.log(
-        `✨ Created new MongoDB user via Clerk: '${user.name}'`
-      );
+    const verification = await twilioClient.verify.v2.services(verifyServiceSid).verifications.create({
+      to: normalizedPhone,
+      channel: "sms",
+    });
+    if (verification.status !== "pending") {
+      return res.status(502).json({ code: "OTP_SEND_FAILED", message: "Unable to send OTP. Please try again." });
     }
+    recordOtpSend(normalizedPhone);
 
-    /*
-     * ========================================================
-     * ISSUE KATBOX JWT
-     * ========================================================
-     */
-
-    const jwtSecret =
-      process.env.JWT_SECRET;
-
-    if (!jwtSecret) {
-      console.error(
-        "❌ JWT_SECRET is missing from environment variables."
-      );
-
-      return res.status(500).json({
-        code: "JWT_SECRET_MISSING",
-        message:
-          "Server authentication configuration is incomplete.",
-      });
-    }
-
-    const token = jwt.sign(
-      {
-        userId: user._id,
-        _id: user._id,
-        id: user._id,
-      },
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) return res.status(500).json({ code: "JWT_SECRET_MISSING", message: "Server authentication configuration is incomplete." });
+    const challengeToken = jwt.sign(
+      { purpose: "google_phone_link", phone: normalizedPhone, email, clerkId, name: cleanName },
       jwtSecret,
-      {
-        expiresIn: "30d",
-      }
+      { expiresIn: "10m" }
     );
 
-    console.log(
-      "✅ Katbox authentication successful:",
-      {
-        userId: user._id,
-        email: user.email,
-        phone: user.phone,
-        isChef: user.isChef,
-        isAdmin: user.isAdmin,
-      }
-    );
-
-    return res.json({
-      token,
-      user: buildUserResponse(user),
+    return res.status(200).json({
+      success: true,
+      requiresPhoneVerification: true,
+      challengeToken,
+      phone: normalizedPhone,
+      message: "We sent an OTP to verify your mobile number.",
     });
   } catch (error: any) {
-    console.error(
-      "❌ Clerk login error:",
-      error?.message || error
-    );
-
-    /*
-     * Handle Mongo duplicate-key errors cleanly.
-     */
     if (error?.code === 11000) {
-      console.error(
-        "❌ MongoDB duplicate key:",
-        error?.keyValue
-      );
-
-      return res.status(409).json({
-        code: "ACCOUNT_ALREADY_EXISTS",
-        message:
-          "An account with these details already exists. Please use your registered Google account.",
-      });
+      return res.status(409).json({ code: "ACCOUNT_ALREADY_EXISTS", message: "This account is already linked. Please sign in with your registered details." });
     }
-
-    return res.status(500).json({
-      message:
-        "Clerk authentication synchronization failed.",
-    });
+    console.error("Google login synchronization failed:", error?.message || error);
+    return res.status(500).json({ code: "GOOGLE_LOGIN_FAILED", message: "Unable to complete Google sign-in. Please try again." });
   }
 });
 
@@ -1029,6 +815,108 @@ router.post("/verify-otp", async (req, res) => {
       code: "OTP_VERIFICATION_ERROR",
       message: "Verification failed. Please request a new OTP.",
     });
+  }
+});
+
+/**
+ * POST /auth/verify-google-otp
+ * Verifies the short-lived challenge and Twilio OTP, then creates or links
+ * exactly one MongoDB account. Client-supplied email/Clerk ID are ignored.
+ */
+router.post("/verify-google-otp", async (req, res) => {
+  try {
+    const challengeToken = typeof req.body?.challengeToken === "string" ? req.body.challengeToken : "";
+    const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
+    if (!challengeToken || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ code: "INVALID_GOOGLE_OTP_REQUEST", message: "A valid verification code is required." });
+    }
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret || !twilioClient || !verifyServiceSid) {
+      return res.status(503).json({ code: "AUTH_SERVICE_UNAVAILABLE", message: "Verification is temporarily unavailable." });
+    }
+
+    let challenge: any;
+    try {
+      challenge = jwt.verify(challengeToken, jwtSecret);
+    } catch {
+      return res.status(401).json({ code: "GOOGLE_LINK_CHALLENGE_EXPIRED", message: "This verification session expired. Please start Google sign-in again." });
+    }
+    if (challenge?.purpose !== "google_phone_link" || !challenge.phone || !challenge.email || !challenge.clerkId) {
+      return res.status(401).json({ code: "INVALID_GOOGLE_LINK_CHALLENGE", message: "Please restart Google sign-in." });
+    }
+
+    const verificationCheck = await twilioClient.verify.v2.services(verifyServiceSid).verificationChecks.create({
+      to: challenge.phone,
+      code: otp,
+    });
+    if (verificationCheck.status !== "approved") {
+      return res.status(400).json({ code: "OTP_NOT_APPROVED", message: "Invalid OTP or verification expired. Please try again." });
+    }
+
+    const normalizedEmail = normalizeEmail(challenge.email);
+    const normalizedPhone = normalizeIndianPhone(challenge.phone);
+    if (!normalizedEmail || !normalizedPhone) {
+      return res.status(400).json({ code: "INVALID_GOOGLE_LINK_CHALLENGE", message: "Please restart Google sign-in." });
+    }
+
+    const [phoneUser, emailUser, clerkUser] = await Promise.all([
+      User.findOne({ phone: normalizedPhone }),
+      User.findOne({ email: normalizedEmail }),
+      User.findOne({ clerkId: challenge.clerkId }),
+    ]);
+
+    if (emailUser && String(emailUser.phone || "") && emailUser.phone !== normalizedPhone) {
+      return res.status(409).json({ code: "EMAIL_ALREADY_USED", message: "This Google email is already linked to another mobile number." });
+    }
+    if (clerkUser && String(clerkUser.phone || "") && clerkUser.phone !== normalizedPhone) {
+      return res.status(409).json({ code: "CLERK_ACCOUNT_ALREADY_LINKED", message: "This Google account is already linked to another mobile number." });
+    }
+    if (phoneUser && normalizeEmail(phoneUser.email) && normalizeEmail(phoneUser.email) !== normalizedEmail) {
+      return res.status(409).json({ code: "EMAIL_MISMATCH", message: "This mobile number is already registered with a different Google email." });
+    }
+    if (phoneUser && phoneUser.clerkId && phoneUser.clerkId !== challenge.clerkId) {
+      return res.status(409).json({ code: "CLERK_ACCOUNT_MISMATCH", message: "This KatBox account is already linked to a different Google account." });
+    }
+    if (emailUser && phoneUser && String(emailUser._id) !== String(phoneUser._id)) {
+      return res.status(409).json({ code: "ACCOUNT_LINK_CONFLICT", message: "These Google and mobile details belong to different KatBox accounts. Contact support." });
+    }
+    if (clerkUser && phoneUser && String(clerkUser._id) !== String(phoneUser._id)) {
+      return res.status(409).json({ code: "ACCOUNT_LINK_CONFLICT", message: "These sign-in details belong to different KatBox accounts. Contact support." });
+    }
+
+    let user = phoneUser || emailUser || clerkUser;
+    if (!user) {
+      user = await User.create({
+        phone: normalizedPhone,
+        name: typeof challenge.name === "string" && challenge.name.trim() ? challenge.name.trim().slice(0, 80) : "User",
+        email: normalizedEmail,
+        clerkId: challenge.clerkId,
+        savedAddresses: [],
+        activeAddress: null,
+        address: "",
+      });
+    } else {
+      user.phone = normalizedPhone;
+      if (!normalizeEmail(user.email)) user.email = normalizedEmail;
+      if (!user.clerkId) user.clerkId = challenge.clerkId;
+      if ((!user.name || user.name.trim().toLowerCase() === "user") && challenge.name) user.name = String(challenge.name).trim().slice(0, 80);
+      await user.save();
+    }
+
+    const token = issueKatboxToken(user);
+    return res.status(200).json({ success: true, token, user: buildUserResponse(user) });
+  } catch (error: any) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ code: "ACCOUNT_LINK_CONFLICT", message: "This account was linked in another request. Please sign in again." });
+    }
+    console.error("Google phone verification failed:", error?.code || error?.message || error);
+    if (error?.code === 20404 || error?.status === 404) {
+      return res.status(400).json({ code: "OTP_EXPIRED_OR_NOT_FOUND", message: "OTP expired or not found. Please request a new OTP." });
+    }
+    if (error?.code === 60200 || error?.status === 400) {
+      return res.status(400).json({ code: "OTP_VERIFICATION_FAILED", message: "Invalid OTP or verification expired." });
+    }
+    return res.status(500).json({ code: "GOOGLE_PHONE_VERIFICATION_FAILED", message: "Unable to verify your mobile number. Please try again." });
   }
 });
 

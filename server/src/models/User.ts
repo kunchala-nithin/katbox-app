@@ -1,4 +1,3 @@
-
 import mongoose, { Schema, Document } from "mongoose";
 
 export interface ISavedAddress {
@@ -162,20 +161,16 @@ const userSchema = new Schema<IUser>(
     /*
      * Indian mobile number
      *
-     * Phone numbers are stored in normalized E.164 format.
-     * Example: +919876543210
-     *
-     * The field itself does not create a normal index.
-     * A partial unique index is declared below instead.
-     *
-     * Empty legacy phone values are excluded from that index,
-     * so multiple existing documents with phone: "" are allowed.
+     * A partial unique index below enforces one non-empty
+     * phone number per MongoDB user. Empty legacy values are
+     * excluded so multiple unlinked records can be migrated.
      */
     phone: {
       type: String,
       required: true,
       default: "",
       trim: true,
+      index: true,
     },
 
     /*
@@ -254,26 +249,31 @@ const userSchema = new Schema<IUser>(
 );
 
 /*
- * IMPORTANT: Unique phone-number protection
+ * Authentication identity constraints.
  *
- * Enforces:
- * - One non-empty phone number can belong to only one user.
- * - Multiple legacy documents with phone: "" are allowed.
- * - Existing users retain their account information.
- *
- * Phone numbers must be normalized before being saved.
+ * Empty phone/email values are excluded so OTP-only users can keep an
+ * empty email until they link Google. Before deploying these indexes,
+ * check and resolve any existing duplicate non-empty phone/email values.
  */
 userSchema.index(
   { phone: 1 },
   {
     unique: true,
-    name: "phone_unique_nonempty",
     partialFilterExpression: {
-      phone: {
-        $type: "string",
-        $gt: "",
-      },
+      phone: { $type: "string", $gt: "" },
     },
+    name: "uniq_nonempty_user_phone",
+  }
+);
+
+userSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      email: { $type: "string", $gt: "" },
+    },
+    name: "uniq_nonempty_user_email",
   }
 );
 

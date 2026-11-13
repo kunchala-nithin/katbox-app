@@ -27,9 +27,11 @@ const RESEND_TIME = 30
 const Page = () => {
   const router = useRouter()
 
-  const { phone, name } = useLocalSearchParams<{
+  const { phone, name, mode, challengeToken } = useLocalSearchParams<{
     phone: string
     name?: string
+    mode?: string
+    challengeToken?: string
   }>()
 
   const [code, setCode] = useState('')
@@ -63,11 +65,22 @@ const Page = () => {
     try {
       setLoading(true)
 
-      const res = await api.post('/auth/verify-otp', {
-        phone,
-        otp: code,
-        name: name ? String(name).trim() : undefined,
-      })
+      const isGoogleLink = mode === 'google'
+
+      if (isGoogleLink && !challengeToken) {
+        throw new Error('Google verification session is missing. Please start again.')
+      }
+
+      const res = isGoogleLink
+        ? await api.post('/auth/verify-google-otp', {
+            challengeToken: String(challengeToken),
+            otp: code,
+          })
+        : await api.post('/auth/verify-otp', {
+            phone,
+            otp: code,
+            name: name ? String(name).trim() : undefined,
+          })
 
       if (!res?.data?.token || !res?.data?.user) {
         throw new Error('The server returned an invalid login response.')
