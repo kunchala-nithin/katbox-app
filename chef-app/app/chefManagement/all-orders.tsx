@@ -980,7 +980,7 @@ export default function AllOrdersScreen() {
             importance: Notifications.AndroidImportance?.MAX ?? 5,
             vibrationPattern: [0, 500, 250, 500],
             lightColor: '#22C55E',
-            sound: 'default',
+            sound: 'alarm',
             enableVibrate: true,
           });
         }
@@ -1053,11 +1053,11 @@ export default function AllOrdersScreen() {
     clearAlarmAndSnoozeCycle();
 
     startOrderAlarmSound();
-    triggerChefPushNotification(orderItem);
 
+    // Remote push is delivered by the OS; keep this interval limited to
+    // the foreground in-app alarm to avoid duplicate tray notifications.
     alarmIntervalRef.current = setInterval(() => {
       startOrderAlarmSound();
-      triggerChefPushNotification(orderItem);
     }, 180000);
   };
 

@@ -916,7 +916,9 @@ export default function HomeScreen() {
       const token = tokenData?.data;
       if (!token) return false;
 
-      await api.patch('/api/auth/update-profile', { pushToken: token });
+      const currentUser = await getUser();
+      const pushRole = currentUser?.isAdmin === true ? 'admin' : 'customer';
+      await api.patch('/api/auth/update-profile', { pushToken: token, pushRole });
       console.log('📲 Push token registered from Home:', token);
       return true;
     } catch (err) {

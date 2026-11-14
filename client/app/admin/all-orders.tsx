@@ -699,12 +699,12 @@ export default function AdminAllOrdersScreen() {
       if (!Notifications) return;
       try {
         if (Platform.OS === 'android' && Notifications.setNotificationChannelAsync) {
-          await Notifications.setNotificationChannelAsync('admin_orders', {
+          await Notifications.setNotificationChannelAsync('admin_orders_alarm', {
             name: 'Platform Admin Alerts',
             importance: Notifications.AndroidImportance?.MAX ?? 5,
             vibrationPattern: [0, 500, 250, 500],
             lightColor: '#2563EB',
-            sound: 'default',
+            sound: 'alarm',
             enableVibrate: true,
           });
         }
@@ -776,11 +776,11 @@ export default function AdminAllOrdersScreen() {
   const initAlarmCycleForPendingOrder = (orderItem: any) => {
     clearAlarmAndSnoozeCycle();
     startOrderAlarmSound();
-    triggerAdminPushNotification(orderItem);
 
+    // Do not schedule a second local notification here. The backend sends
+    // the OS push; this screen owns only the foreground repeating alarm.
     alarmIntervalRef.current = setInterval(() => {
       startOrderAlarmSound();
-      triggerAdminPushNotification(orderItem);
     }, 180000);
   };
 

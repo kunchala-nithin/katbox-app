@@ -569,58 +569,27 @@ function InitialLayout() {
     /*
      * Notification tap navigation.
      */
-    const subscription =
-      Notifications.addNotificationResponseReceivedListener(
-        async (response) => {
-          try {
-            const data =
-              response.notification.request.content.data
-
-            const user = await getUser()
-
-            /*
-             * Explicit notification screen has priority.
-             */
-            if (data?.screen === 'chef-orders') {
-              // Chef-management notifications are handled by the standalone Chef app.
-              // If opened in the Customer app, show the user's customer orders instead.
-              router.push('/(tabs)/Orders' as any)
-              return
-            }
-
-            if (data?.screen === 'admin-orders') {
-              router.push(
-                '/admin/all-orders' as any
-              )
-
-              return
-            }
-
-            /*
-             * Otherwise use the user's role.
-             */
-            if (user?.isAdmin) {
-              router.push(
-                '/admin/all-orders' as any
-              )
-
-              return
-            }
-
-            /*
-             * Normal customer.
-             */
-            router.push(
-              '/(tabs)/Orders' as any
-            )
-          } catch (err) {
-            console.log(
-              '❌ Notification navigation error:',
-              err
-            )
-          }
+    const handleNotificationResponse = async (response: Notifications.NotificationResponse | null) => {
+      if (!response) return
+      try {
+        const data: any = response.notification.request.content.data || {}
+        const user = await getUser()
+        if (data?.screen === 'admin-orders' && user?.isAdmin === true) {
+          router.push('/admin/all-orders' as any)
+          return
         }
-      )
+        // Chef pushes are routed to the customer's own order list if the
+        // notification is opened on a customer/admin installation.
+        router.push('/(tabs)/Orders' as any)
+      } catch (err) {
+        console.log('❌ Notification navigation error:', err)
+      }
+    }
+
+    const subscription = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse)
+    void Promise.resolve(Notifications.getLastNotificationResponseAsync?.()).then(handleNotificationResponse).catch((err) => {
+      console.log('Cold-start notification response lookup failed:', err)
+    })
 
     return () => {
       isMounted = false

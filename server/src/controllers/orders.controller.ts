@@ -535,9 +535,9 @@ setInterval(async () => {
 
       if (shouldNotify && order.userId) {
         const userDoc = await User.findById(order.userId);
-        if (userDoc && userDoc.pushToken) {
+        if (userDoc && (userDoc.customerPushToken || userDoc.pushToken)) {
           await sendExpoPushNotification(
-            userDoc.pushToken,
+            String(userDoc.customerPushToken || userDoc.pushToken),
             'We value your feedback!',
             'Please take a moment to rate your recent order and chef.',
             { orderId: order.orderId, screen: 'orders' }
@@ -1515,9 +1515,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       if (finalUserId) {
         io.to(finalUserId).emit("new_order_placed", savedOrder);
         const customerDoc = await User.findById(finalUserId);
-        if (customerDoc?.pushToken) {
+        if (customerDoc?.customerPushToken || customerDoc?.pushToken) {
           await sendExpoPushNotification(
-            customerDoc.pushToken,
+            String(customerDoc.customerPushToken || customerDoc.pushToken),
             isCashOnDelivery ? "QuickBites Order Placed 🎉" : "Order Placed - Verification Pending 🕒",
             isCashOnDelivery
               ? `Your QuickBites order #${savedOrder.orderId} is confirmed. ₹${savedOrder.totalAmount} is payable on delivery.`
@@ -1540,9 +1540,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           io.to(chefUserId).emit("new_chef_order", savedOrder);
           io.to(chefUserId).emit("order_updated", savedOrder);
           const chefUser = await User.findById(chefUserId);
-          if (chefUser?.pushToken && isValidExpoToken(chefUser.pushToken)) {
+          if ((chefUser?.chefPushToken || chefUser?.pushToken) && isValidExpoToken(chefUser.chefPushToken || chefUser.pushToken)) {
             await sendExpoPush({
-              token: String(chefUser.pushToken),
+              token: String(chefUser.chefPushToken || chefUser.pushToken),
               title: `🔔 New QuickBites COD Order ${savedOrder.orderId}`,
               body: `${savedOrder.userName || "Customer"} placed a ₹${savedOrder.totalAmount} Cash on Delivery order.`,
               data: { orderId: savedOrder.orderId, screen: "chef-orders", role: "chef", chefId: chefUserId },
@@ -1571,16 +1571,19 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       try {
         const admins = await User.find({
           isAdmin: true,
-          pushToken: { $exists: true, $ne: "" },
-        }).select("pushToken name");
+          $or: [
+            { adminPushToken: { $exists: true, $ne: "" } },
+            { pushToken: { $exists: true, $ne: "" } },
+          ],
+        }).select("adminPushToken pushToken name");
 
         const validAdmins = admins.filter((a: any) =>
-          isValidExpoToken(a.pushToken)
+          isValidExpoToken(a.adminPushToken || a.pushToken)
         );
 
         if (validAdmins.length > 0) {
           const adminPayloads = validAdmins.map((admin: any) => ({
-            token: String(admin.pushToken),
+            token: String(admin.adminPushToken || admin.pushToken),
             title: `🚨 New Order ${savedOrder.orderId}`,
             body: `${savedOrder.userName || "A customer"} placed an order of ₹${savedOrder.totalAmount}. Tap to review.`,
             data: {
@@ -1697,9 +1700,9 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
         io.to(order.userId).emit("advance_payment_verified", updatedOrder);
         io.to(order.userId).emit("order_updated", updatedOrder);
         const userDoc = await User.findById(order.userId);
-        if (userDoc?.pushToken) {
+        if (userDoc?.customerPushToken || userDoc?.pushToken) {
           await sendExpoPushNotification(
-            userDoc.pushToken,
+            String(userDoc.customerPushToken || userDoc.pushToken),
             "Advance Payment Verified! 🎉",
             `Your advance payment for order #${order.orderId} has been verified by the team.`,
             { orderId: order.orderId, screen: "orders" }
@@ -1738,9 +1741,9 @@ export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
          data.role = "chef" + data.chefId for client-side routing
          and chef-scoped alarms.
          ────────────────────────────────────────────────────────── */
-      if (chefUserDoc?.pushToken && isValidExpoToken(chefUserDoc.pushToken)) {
+      if ((chefUserDoc?.chefPushToken || chefUserDoc?.pushToken) && isValidExpoToken(chefUserDoc.chefPushToken || chefUserDoc.pushToken)) {
         await sendExpoPush({
-          token: String(chefUserDoc.pushToken),
+          token: String(chefUserDoc.chefPushToken || chefUserDoc.pushToken),
           title: `🔔 New Verified Order ${order.orderId}`,
           body: `${order.userName || "Customer"} → ₹${order.totalAmount}. Tap to accept now!`,
           data: {
@@ -2130,10 +2133,10 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
     try {
       if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
         const customerDoc = await User.findById(updatedOrder.userId);
-        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+        if ((customerDoc?.customerPushToken || customerDoc?.pushToken) && isValidExpoToken(customerDoc.customerPushToken || customerDoc.pushToken)) {
           const msg = getCustomerStatusMessage(normalized, updatedOrder.orderId);
           await sendExpoPush({
-            token: String(customerDoc.pushToken),
+            token: String(customerDoc.customerPushToken || customerDoc.pushToken),
             title: msg.title,
             body: msg.body,
             data: {
@@ -2352,10 +2355,10 @@ export const cancelOrderByCustomer = async (req: AuthRequest, res: Response) => 
     try {
       if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
         const customerDoc = await User.findById(updatedOrder.userId);
-        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+        if ((customerDoc?.customerPushToken || customerDoc?.pushToken) && isValidExpoToken(customerDoc.customerPushToken || customerDoc.pushToken)) {
           const msg = getCustomerStatusMessage("Cancelled", updatedOrder.orderId);
           await sendExpoPush({
-            token: String(customerDoc.pushToken),
+            token: String(customerDoc.customerPushToken || customerDoc.pushToken),
             title: msg.title,
             body: msg.body,
             data: {
@@ -2507,9 +2510,9 @@ export const processRefund = async (req: AuthRequest, res: Response) => {
     try {
       if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
         const customerDoc = await User.findById(updatedOrder.userId);
-        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+        if ((customerDoc?.customerPushToken || customerDoc?.pushToken) && isValidExpoToken(customerDoc.customerPushToken || customerDoc.pushToken)) {
           await sendExpoPush({
-            token: String(customerDoc.pushToken),
+            token: String(customerDoc.customerPushToken || customerDoc.pushToken),
             title: "💸 Refund Processed",
             body: `Your refund of ₹${refundAmountNum} for order #${updatedOrder.orderId} has been processed.`,
             data: {
@@ -2649,10 +2652,10 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
     try {
       if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
         const customerDoc = await User.findById(order.userId);
-        if (customerDoc?.pushToken && isValidExpoToken(customerDoc.pushToken)) {
+        if ((customerDoc?.customerPushToken || customerDoc?.pushToken) && isValidExpoToken(customerDoc.customerPushToken || customerDoc.pushToken)) {
           const baseMsg = getCustomerStatusMessage(normalizedStatus, order.orderId);
           await sendExpoPush({
-            token: String(customerDoc.pushToken),
+            token: String(customerDoc.customerPushToken || customerDoc.pushToken),
             title: `${baseMsg.title} • ${dateStr}`,
             body: baseMsg.body,
             data: {

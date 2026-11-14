@@ -7,8 +7,10 @@ import Chef from "../models/Chef";
 import { io } from "..";
 import {
   sendExpoPush,
+  sendExpoPushBatch,
   isValidExpoToken,
   ORDER_ALARM_SOUND,
+  ADMIN_ORDER_CHANNEL_ID,
   CHEF_ORDER_CHANNEL_ID,
 } from "../utils/expoPush";
 
@@ -251,9 +253,44 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
         io.to(chefIdentifier).emit("new_chef_order", updatedOrder);
         io.to(chefIdentifier).emit("order_updated", updatedOrder);
       }
-      if (chefUser?.pushToken && isValidExpoToken(chefUser.pushToken)) {
+      // Notify the customer that payment was verified. This is a normal
+      // OS notification; the customer does not receive the admin/chef alarm.
+      const customerUser: any = await User.findById(order.userId).select("customerPushToken pushToken");
+      const customerToken = String(customerUser?.customerPushToken || customerUser?.pushToken || "");
+      if (customerToken && isValidExpoToken(customerToken)) {
         await sendExpoPush({
-          token: String(chefUser.pushToken),
+          token: customerToken,
+          title: "Payment successful — order placed!",
+          body: `Your payment for order #${order.orderId} was received. We’re preparing your order.`,
+          data: { orderId: String(order.orderId), screen: "customer-orders", role: "customer" },
+          sound: "default",
+          priority: "high",
+        });
+      }
+
+      // Admins receive a payment-confirmed alert as well as the initial
+      // order-created alert. Role-specific tokens avoid sending to a
+      // standalone Chef app installation by mistake.
+      const admins: any[] = await User.find({ isAdmin: true }).select("adminPushToken pushToken").lean();
+      const adminPayloads = admins
+        .map((admin) => String(admin.adminPushToken || admin.pushToken || ""))
+        .filter((token) => isValidExpoToken(token))
+        .map((token) => ({
+          token,
+          title: `💳 Payment received — ${order.orderId}`,
+          body: `${order.userName || "Customer"} paid ₹${expectedPaymentAmount} for a ₹${order.totalAmount} order.`,
+          data: { orderId: String(order.orderId), screen: "admin-orders", role: "admin" },
+          sound: ORDER_ALARM_SOUND,
+          channelId: ADMIN_ORDER_CHANNEL_ID,
+          priority: "max" as const,
+          vibrate: [0, 600, 300, 600, 300],
+        }));
+      if (adminPayloads.length) await sendExpoPushBatch(adminPayloads);
+
+      if (chefUser?.chefPushToken || chefUser?.pushToken) {
+        const chefToken = String(chefUser.chefPushToken || chefUser.pushToken || "");
+        if (isValidExpoToken(chefToken)) await sendExpoPush({
+          token: chefToken,
           title: `🔔 New Paid Order ${order.orderId}`,
           body: `${order.userName || "Customer"} paid ₹${expectedPaymentAmount} ${Number(order.balanceAmountToCollect || 0) > 0 ? "advance" : "in full"} for an order of ₹${order.totalAmount}. Tap to accept now!`,
           data: {

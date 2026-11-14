@@ -1257,6 +1257,7 @@ router.patch(
         savedAddresses,
         activeAddress,
         pushToken,
+        pushRole,
       } = req.body;
 
       const updateFields: any = {};
@@ -1279,10 +1280,33 @@ router.patch(
       }
 
       if (pushToken !== undefined) {
-        updateFields.pushToken =
-          typeof pushToken === "string"
-            ? pushToken.trim()
-            : pushToken;
+        const normalizedPushToken =
+          typeof pushToken === "string" ? pushToken.trim() : "";
+
+        if (normalizedPushToken) {
+          // Role is derived from the persisted MongoDB account, not trusted
+          // from the client. A standalone Chef app can therefore never
+          // overwrite the customer/admin app's token.
+          const tokenOwner: any = await User.findById(userId).select("isAdmin isChef");
+          const requestedRole = String(pushRole || "").toLowerCase();
+          const allowedRole =
+            requestedRole === "admin" ? tokenOwner?.isAdmin === true :
+            requestedRole === "chef" ? tokenOwner?.isChef === true :
+            requestedRole === "customer" ? tokenOwner?.isAdmin !== true && tokenOwner?.isChef !== true : false;
+
+          if (!tokenOwner || !allowedRole) {
+            return res.status(403).json({
+              success: false,
+              message: "The requested notification app role is not enabled for this account.",
+            });
+          }
+
+          const tokenField = `${requestedRole}PushToken`;
+          updateFields[tokenField] = normalizedPushToken;
+          // Keep the legacy token populated for old app builds while new
+          // server senders prefer the role-specific fields.
+          updateFields.pushToken = normalizedPushToken;
+        }
       }
 
       /*
@@ -1801,6 +1825,7 @@ router.put(
         savedAddresses,
         activeAddress,
         pushToken,
+        pushRole,
       } = req.body;
 
       const updateFields: any = {};
@@ -1821,10 +1846,33 @@ router.put(
       }
 
       if (pushToken !== undefined) {
-        updateFields.pushToken =
-          typeof pushToken === "string"
-            ? pushToken.trim()
-            : pushToken;
+        const normalizedPushToken =
+          typeof pushToken === "string" ? pushToken.trim() : "";
+
+        if (normalizedPushToken) {
+          // Role is derived from the persisted MongoDB account, not trusted
+          // from the client. A standalone Chef app can therefore never
+          // overwrite the customer/admin app's token.
+          const tokenOwner: any = await User.findById(userId).select("isAdmin isChef");
+          const requestedRole = String(pushRole || "").toLowerCase();
+          const allowedRole =
+            requestedRole === "admin" ? tokenOwner?.isAdmin === true :
+            requestedRole === "chef" ? tokenOwner?.isChef === true :
+            requestedRole === "customer" ? tokenOwner?.isAdmin !== true && tokenOwner?.isChef !== true : false;
+
+          if (!tokenOwner || !allowedRole) {
+            return res.status(403).json({
+              success: false,
+              message: "The requested notification app role is not enabled for this account.",
+            });
+          }
+
+          const tokenField = `${requestedRole}PushToken`;
+          updateFields[tokenField] = normalizedPushToken;
+          // Keep the legacy token populated for old app builds while new
+          // server senders prefer the role-specific fields.
+          updateFields.pushToken = normalizedPushToken;
+        }
       }
 
       /*
