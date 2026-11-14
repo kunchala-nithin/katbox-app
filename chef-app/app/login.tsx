@@ -58,8 +58,6 @@ import * as Linking from 'expo-linking'
 
 import {
 
-  getLastUsedEmail,
-
   saveSession,
 
 } from '@/src/lib/authStorage'
@@ -94,14 +92,6 @@ const Login = () => {
 
 
 
-  /*
-
-   * Previously used Google email.
-
-   */
-
-  const [lastUsedEmail, setLastUsedEmail] = useState('')
-
 
 
   const router = useRouter()
@@ -128,7 +118,7 @@ const Login = () => {
 
 
 
-  const { isLoaded: isClerkLoaded } = useAuth()
+  const { isLoaded: isClerkLoaded, getToken } = useAuth()
 
   const { startOAuthFlow } = useOAuth({
 
@@ -226,56 +216,6 @@ const Login = () => {
     return () => clearTimeout(timer)
 
   }, [])
-
-
-
-  /*
-
-   * ============================================================
-
-   * LOAD PREVIOUS GOOGLE EMAIL FOR THIS MOBILE NUMBER
-
-   * ============================================================
-
-   */
-
-
-
-  const loadRememberedEmail = async (phone: string) => {
-
-    try {
-
-      if (phone.length !== 10) {
-
-        setLastUsedEmail('')
-
-        return
-
-      }
-
-
-
-      const email = await getLastUsedEmail(`+91${phone}`)
-
-      setLastUsedEmail(email || '')
-
-    } catch (error) {
-
-      console.log('Could not load remembered Google email:', error)
-
-      setLastUsedEmail('')
-
-    }
-
-  }
-
-
-
-  useEffect(() => {
-
-    void loadRememberedEmail(phoneNumber)
-
-  }, [phoneNumber])
 
 
 
@@ -831,23 +771,63 @@ const Login = () => {
 
       try {
 
-        res = await api.post(
+        const clerkSessionToken = await getToken()
 
-          '/auth/clerk-login',
+        if (!clerkSessionToken) {
+          throw new Error('CLERK_SESSION_TOKEN_UNAVAILABLE')
+        }
+
+        const chefAuthResponse = await fetch(
+
+          `${api.defaults.baseURL}/auth/chef/clerk-login`,
 
           {
 
-            email: userEmail,
+            method: 'POST',
 
-            name: name.trim(),
+            headers: {
 
-            phone: `+91${phoneNumber}`,
+              'Content-Type': 'application/json',
 
-            clerkId: clerkUserId,
+              Authorization: `Bearer ${clerkSessionToken}`,
+
+            },
+
+            body: JSON.stringify({
+
+              name: name.trim(),
+
+              phone: `+91${phoneNumber}`,
+
+            }),
 
           }
 
         )
+
+        const chefAuthData = await chefAuthResponse.json()
+
+        if (!chefAuthResponse.ok) {
+
+          const chefAuthError: any = new Error(
+
+            chefAuthData?.message || 'Chef Google sign-in failed.'
+
+          )
+
+          chefAuthError.response = {
+
+            status: chefAuthResponse.status,
+
+            data: chefAuthData,
+
+          }
+
+          throw chefAuthError
+
+        }
+
+        res = { data: chefAuthData }
 
       } catch (backendError: any) {
 
@@ -1101,7 +1081,7 @@ const Login = () => {
 
          *
 
-         * Remembered Google email is stored separately above.
+         * The Chef app does not display or suggest previously used Google accounts.
 
          */
 
@@ -1919,170 +1899,6 @@ const Login = () => {
               </View>
 
             </Animated.View>
-
-
-
-            {/* PREVIOUSLY USED GOOGLE ACCOUNT */}
-
-
-
-            {lastUsedEmail ? (
-
-              <Animated.View
-
-                entering={FadeInUp
-
-                  .delay(450)
-
-                  .duration(400)}
-
-              >
-
-                <TouchableOpacity
-
-                  activeOpacity={0.75}
-
-                  disabled={loading}
-
-                  onPress={() => {
-
-                    if (!name.trim()) {
-
-                      setNameError(
-
-                        'Please enter your username'
-
-                      )
-
-                      nameRef.current?.focus()
-
-                      return
-
-                    }
-
-
-
-                    if (phoneNumber.length !== 10) {
-
-                      alert(
-
-                        'Please enter a valid 10-digit mobile number'
-
-                      )
-
-                      phoneRef.current?.focus()
-
-                      return
-
-                    }
-
-
-
-                    handleGoogleLogin()
-
-                  }}
-
-                  accessibilityRole="button"
-
-                  accessibilityLabel={
-
-                    `Sign in with ${lastUsedEmail}`
-
-                  }
-
-                  style={
-
-                    styles.rememberedEmailContainer
-
-                  }
-
-                >
-
-                  <Ionicons
-
-                    name="mail-outline"
-
-                    size={14}
-
-                    color="#38512F"
-
-                    style={
-
-                      styles.rememberedEmailIcon
-
-                    }
-
-                  />
-
-
-
-                  <View
-
-                    style={
-
-                      styles.rememberedEmailContent
-
-                    }
-
-                  >
-
-                    <Text
-
-                      style={
-
-                        styles.rememberedEmailLabel
-
-                      }
-
-                    >
-
-                      Previously used Google account
-
-                    </Text>
-
-
-
-                    <Text
-
-                      style={
-
-                        styles.rememberedEmailText
-
-                      }
-
-                      numberOfLines={1}
-
-                    >
-
-                      {lastUsedEmail}
-
-                    </Text>
-
-                  </View>
-
-
-
-                  <Ionicons
-
-                    name="arrow-forward-circle-outline"
-
-                    size={20}
-
-                    color="#38512F"
-
-                    style={
-
-                      styles.rememberedEmailArrow
-
-                    }
-
-                  />
-
-                </TouchableOpacity>
-
-              </Animated.View>
-
-            ) : null}
 
 
 

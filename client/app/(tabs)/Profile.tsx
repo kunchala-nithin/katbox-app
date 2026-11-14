@@ -47,7 +47,7 @@ const FAQ_CATEGORIES: FAQCategory[] = [
     items: [
       {
         q: "How long does delivery take?",
-        a: "Quick Bites: 75 minutes. Homemade & Meal Box: same-day slot. Catering: on your event date.",
+        a: "Delivery usually takes 75–90 minutes in total, including cooking and delivery time.",
       },
       {
         q: "Can I track my order?",
@@ -74,7 +74,7 @@ const FAQ_CATEGORIES: FAQCategory[] = [
     items: [
       {
         q: "What payment methods do you accept?",
-        a: "UPI, Cards, Wallets via Cashfree. Cash on Delivery (COD) for Homemade and Quick Bites.",
+        a: "Pay securely using UPI, debit cards, credit cards, and other payment options available through Razorpay. Cash on Delivery (COD) is available for eligible Homemade and Quick Bites orders.",
       },
       {
         q: "Why do Meal Box and Catering orders need an advance?",
@@ -82,7 +82,7 @@ const FAQ_CATEGORIES: FAQCategory[] = [
       },
       {
         q: "Is my payment secure?",
-        a: "Yes. All online payments go through Cashfree, a PCI-DSS-compliant gateway. We never store your card details.",
+        a: "Yes. Online payments on KatBox are processed through Razorpay’s secure payment infrastructure, which follows PCI DSS security standards for payment-card data. Your bank or payment provider may also apply additional authentication. For your safety, complete payments only through the official KatBox checkout and never share your OTP, UPI PIN, card PIN, or CVV with anyone claiming to represent KatBox. If a payment issue occurs, contact our support team through the app.",
       },
       {
         q: "How long do refunds take?",
@@ -120,7 +120,7 @@ const FAQ_CATEGORIES: FAQCategory[] = [
     items: [
       {
         q: "How early should I book catering?",
-        a: "3–5 days in advance for small events. 7–10 days for large functions (100+ guests).",
+        a: "18–24 hours before the event starts.",
       },
       {
         q: "Can I customise the catering menu or guest count?",
@@ -139,7 +139,7 @@ const FAQ_CATEGORIES: FAQCategory[] = [
       },
       {
         q: "Do you offer bulk orders for homemade items?",
-        a: "Yes. For 10+ units, contact +91 9133450555 or katbox.in@gmail.com for special pricing.",
+        a: "Yes. For 10+ units, contact +91 8886444041 or katbox.in@gmail.com for special pricing.",
       },
     ],
   },
@@ -154,7 +154,7 @@ const FAQ_CATEGORIES: FAQCategory[] = [
       },
       {
         q: "How do I contact support?",
-        a: "Call: +91 9133450555 · Email: katbox.in@gmail.com · In-app: Profile → Help & Support.",
+        a: "Call: +91 8886444041 · Email: katbox.in@gmail.com · In-app: Profile → Help & Support.",
       },
       {
         q: "How do I delete my Katbox account?",
@@ -449,7 +449,7 @@ export default function ProfileScreen() {
 
   // 📞 Call support handler — opens the phone dialer
   const handleCallSupport = async () => {
-    const phoneUrl = "tel:+9133450555";
+    const phoneUrl = "tel:+8886444041";
     try {
       const supported = await Linking.canOpenURL(phoneUrl);
       if (supported) {
@@ -1493,7 +1493,7 @@ export default function ProfileScreen() {
                     style={styles.helpActionSubtitle}
                     numberOfLines={1}
                   >
-                    +91 9133450555
+                    +91 8886444041
                   </Text>
                 </View>
 

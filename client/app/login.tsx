@@ -58,8 +58,6 @@ import * as Linking from 'expo-linking'
 
 import {
 
-  getLastUsedEmail,
-
   saveSession,
 
 } from '@/src/lib/authStorage'
@@ -94,16 +92,6 @@ const Login = () => {
 
   // Switches the primary authentication action between Google and OTP.
   const [isOtpLoginMode, setIsOtpLoginMode] = useState(false)
-
-
-
-  /*
-
-   * Previously used Google email.
-
-   */
-
-  const [lastUsedEmail, setLastUsedEmail] = useState('')
 
 
 
@@ -229,56 +217,6 @@ const Login = () => {
     return () => clearTimeout(timer)
 
   }, [])
-
-
-
-  /*
-
-   * ============================================================
-
-   * LOAD PREVIOUS GOOGLE EMAIL FOR THIS MOBILE NUMBER
-
-   * ============================================================
-
-   */
-
-
-
-  const loadRememberedEmail = async (phone: string) => {
-
-    try {
-
-      if (phone.length !== 10) {
-
-        setLastUsedEmail('')
-
-        return
-
-      }
-
-
-
-      const email = await getLastUsedEmail(`+91${phone}`)
-
-      setLastUsedEmail(email || '')
-
-    } catch (error) {
-
-      console.log('Could not load remembered Google email:', error)
-
-      setLastUsedEmail('')
-
-    }
-
-  }
-
-
-
-  useEffect(() => {
-
-    void loadRememberedEmail(phoneNumber)
-
-  }, [phoneNumber])
 
 
 
@@ -2066,170 +2004,6 @@ const Login = () => {
 
 
 
-            {/* PREVIOUSLY USED GOOGLE ACCOUNT */}
-
-
-
-            {!isOtpLoginMode && lastUsedEmail ? (
-
-              <Animated.View
-
-                entering={FadeInUp
-
-                  .delay(450)
-
-                  .duration(400)}
-
-              >
-
-                <TouchableOpacity
-
-                  activeOpacity={0.75}
-
-                  disabled={loading}
-
-                  onPress={() => {
-
-                    if (!name.trim()) {
-
-                      setNameError(
-
-                        'Please enter your username'
-
-                      )
-
-                      nameRef.current?.focus()
-
-                      return
-
-                    }
-
-
-
-                    if (phoneNumber.length !== 10) {
-
-                      alert(
-
-                        'Please enter a valid 10-digit mobile number'
-
-                      )
-
-                      phoneRef.current?.focus()
-
-                      return
-
-                    }
-
-
-
-                    handleGoogleLogin()
-
-                  }}
-
-                  accessibilityRole="button"
-
-                  accessibilityLabel={
-
-                    `Sign in with ${lastUsedEmail}`
-
-                  }
-
-                  style={
-
-                    styles.rememberedEmailContainer
-
-                  }
-
-                >
-
-                  <Ionicons
-
-                    name="mail-outline"
-
-                    size={14}
-
-                    color="#38512F"
-
-                    style={
-
-                      styles.rememberedEmailIcon
-
-                    }
-
-                  />
-
-
-
-                  <View
-
-                    style={
-
-                      styles.rememberedEmailContent
-
-                    }
-
-                  >
-
-                    <Text
-
-                      style={
-
-                        styles.rememberedEmailLabel
-
-                      }
-
-                    >
-
-                      Previously used Google account
-
-                    </Text>
-
-
-
-                    <Text
-
-                      style={
-
-                        styles.rememberedEmailText
-
-                      }
-
-                      numberOfLines={1}
-
-                    >
-
-                      {lastUsedEmail}
-
-                    </Text>
-
-                  </View>
-
-
-
-                  <Ionicons
-
-                    name="arrow-forward-circle-outline"
-
-                    size={20}
-
-                    color="#38512F"
-
-                    style={
-
-                      styles.rememberedEmailArrow
-
-                    }
-
-                  />
-
-                </TouchableOpacity>
-
-              </Animated.View>
-
-            ) : null}
-
-
-
             {/* PRIMARY AUTHENTICATION BUTTON
                 Google mode: continue with Google.
                 OTP mode: send an OTP to the entered mobile number. */}
@@ -3039,91 +2813,6 @@ const styles = StyleSheet.create({
 
   },
 
-
-
-  /*
-
-   * ==========================================================
-
-   * PREVIOUS GOOGLE EMAIL
-
-   * ==========================================================
-
-   */
-
-
-
-  rememberedEmailContainer: {
-
-    flexDirection: 'row',
-
-    alignItems: 'center',
-
-    backgroundColor: '#F5F8F2',
-
-    borderWidth: 1,
-
-    borderColor: '#E1E8DC',
-
-    borderRadius: 10,
-
-    paddingHorizontal: 10,
-
-    paddingVertical: 8,
-
-    marginBottom: 10,
-
-  },
-
-
-
-  rememberedEmailIcon: {
-
-    marginRight: 8,
-
-  },
-
-
-
-  rememberedEmailArrow: {
-
-    marginLeft: 8,
-
-  },
-
-
-
-  rememberedEmailContent: {
-
-    flex: 1,
-
-  },
-
-
-
-  rememberedEmailLabel: {
-
-    fontSize: 9,
-
-    color: '#777',
-
-    marginBottom: 2,
-
-    fontWeight: '600',
-
-  },
-
-
-
-  rememberedEmailText: {
-
-    fontSize: 11,
-
-    color: '#2C402E',
-
-    fontWeight: '600',
-
-  },
 
 
 

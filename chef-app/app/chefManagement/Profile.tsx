@@ -190,7 +190,7 @@ const CHEF_FAQ_CATEGORIES: FAQCategory[] = [
 
         q: "When do I get paid?",
 
-        a: "Payouts are processed every Monday for the previous week's completed orders.",
+        a: "Payouts are processed within 5–6 hours after an order is completed.",
 
       },
 
@@ -298,7 +298,7 @@ const CHEF_FAQ_CATEGORIES: FAQCategory[] = [
 
         q: "How do I contact chef support?",
 
-        a: "Call: +91 9133450555 · Email: katbox.in@mail.com · In-app: Profile → Help & Support.",
+        a: "Call: +91 8886444041 · Email: katbox.in@mail.com · In-app: Profile → Help & Support.",
 
       },
 
@@ -778,7 +778,7 @@ export default function ChefProfileScreen() {
 
   const handleCallSupport = async () => {
 
-    const phoneUrl = "tel:+9133450555";
+    const phoneUrl = "tel:+918886444041";
 
     try {
 
@@ -2114,7 +2114,7 @@ export default function ChefProfileScreen() {
 
                   <Text style={styles.helpActionSubtitle} numberOfLines={1}>
 
-                    +91 9133450555
+                    +91 8886444041
 
                   </Text>
 

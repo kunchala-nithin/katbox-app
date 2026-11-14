@@ -264,6 +264,183 @@ const issueKatboxToken = (user: any) => {
 };
 
 /**
+ * POST /auth/chef/clerk-login
+ * Standalone Chef app Google sign-in.
+ *
+ * IMPORTANT: This is deliberately separate from /auth/clerk-login.
+ * Client/Admin OTP and Google authentication behavior is not changed.
+ * The Clerk session token is verified server-side; email and Clerk ID
+ * are never trusted from the request body.
+ */
+router.post("/chef/clerk-login", async (req, res) => {
+  try {
+    const normalizedPhone = normalizeIndianPhone(
+      typeof req.body?.phone === "string" ? req.body.phone : ""
+    );
+    const suppliedName =
+      typeof req.body?.name === "string"
+        ? req.body.name.trim().slice(0, 80)
+        : "";
+
+    if (!normalizedPhone) {
+      return res.status(400).json({
+        code: "PHONE_REQUIRED",
+        message: "Enter a valid Indian mobile number.",
+      });
+    }
+
+    let identity: { clerkId: string; email: string; name: string };
+    try {
+      identity = await getVerifiedClerkIdentity(req);
+    } catch (error: any) {
+      const code = error?.message || "INVALID_CLERK_SESSION";
+      const status = code === "CLERK_SECRET_KEY_MISSING" ? 500 : 401;
+      return res.status(status).json({
+        code,
+        message:
+          status === 500
+            ? "Authentication configuration is incomplete."
+            : "Your Google sign-in session could not be verified. Please sign in again.",
+      });
+    }
+
+    const { clerkId, email } = identity;
+    const cleanName = suppliedName || identity.name || "User";
+
+    const [phoneUser, emailUser, clerkUser] = await Promise.all([
+      User.findOne({ phone: normalizedPhone }),
+      User.findOne({ email }),
+      User.findOne({ clerkId }),
+    ]);
+
+    // A phone number already associated with a different Google identity
+    // must never be silently reassigned by the Chef app.
+    if (phoneUser) {
+      const existingEmail = normalizeEmail(phoneUser.email);
+      if (!existingEmail || existingEmail !== email) {
+        return res.status(409).json({
+          code: "PHONE_ACCOUNT_LINK_REQUIRED",
+          message:
+            "This mobile number is already associated with a KatBox account. Sign in using its registered Google account or contact support.",
+        });
+      }
+      if (phoneUser.clerkId && phoneUser.clerkId !== clerkId) {
+        return res.status(409).json({
+          code: "CLERK_ACCOUNT_MISMATCH",
+          message:
+            "This KatBox account is already linked to a different Google account.",
+        });
+      }
+    }
+
+    if (
+      emailUser &&
+      String(emailUser.phone || "") &&
+      emailUser.phone !== normalizedPhone
+    ) {
+      return res.status(409).json({
+        code: "EMAIL_ALREADY_USED",
+        message:
+          "This Google email is already linked to another mobile number.",
+      });
+    }
+
+    if (
+      clerkUser &&
+      String(clerkUser.phone || "") &&
+      clerkUser.phone !== normalizedPhone
+    ) {
+      return res.status(409).json({
+        code: "CLERK_ACCOUNT_ALREADY_LINKED",
+        message:
+          "This Google account is already linked to another mobile number.",
+      });
+    }
+
+    if (
+      emailUser &&
+      phoneUser &&
+      String(emailUser._id) !== String(phoneUser._id)
+    ) {
+      return res.status(409).json({
+        code: "ACCOUNT_LINK_CONFLICT",
+        message:
+          "These Google and mobile details belong to different KatBox accounts. Contact support.",
+      });
+    }
+
+    if (
+      clerkUser &&
+      phoneUser &&
+      String(clerkUser._id) !== String(phoneUser._id)
+    ) {
+      return res.status(409).json({
+        code: "ACCOUNT_LINK_CONFLICT",
+        message:
+          "These sign-in details belong to different KatBox accounts. Contact support.",
+      });
+    }
+
+    let user: any = phoneUser || emailUser || clerkUser;
+
+    if (!user) {
+      // New accounts are ordinary KatBox users. Chef access is granted only
+      // by the existing admin-controlled isChef flag; it is never set here.
+      user = await User.create({
+        phone: normalizedPhone,
+        name: cleanName,
+        email,
+        clerkId,
+        savedAddresses: [],
+        activeAddress: null,
+        address: "",
+      });
+    } else {
+      if (user.phone && user.phone !== normalizedPhone) {
+        return res.status(409).json({
+          code: "PHONE_MISMATCH",
+          message:
+            "This Google account is already linked to another mobile number.",
+        });
+      }
+      user.phone = normalizedPhone;
+      if (!normalizeEmail(user.email)) user.email = email;
+      if (!user.clerkId) user.clerkId = clerkId;
+      if (
+        (!user.name || user.name.trim().toLowerCase() === "user") &&
+        cleanName
+      ) {
+        user.name = cleanName;
+      }
+      await user.save();
+    }
+
+    const token = issueKatboxToken(user);
+    return res.status(200).json({
+      success: true,
+      token,
+      user: buildUserResponse(user),
+    });
+  } catch (error: any) {
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        code: "ACCOUNT_LINK_CONFLICT",
+        message:
+          "This account was linked in another request. Please sign in again.",
+      });
+    }
+    console.error(
+      "Chef Google login synchronization failed:",
+      error?.code || error?.message || error
+    );
+    return res.status(500).json({
+      code: "CHEF_GOOGLE_LOGIN_FAILED",
+      message: "Unable to complete Google sign-in. Please try again.",
+    });
+  }
+});
+
+/**
  * POST /auth/clerk-login
  * Existing linked Google account: log in immediately.
  * New Google registration or OTP-only account: send phone OTP and return
