@@ -30,6 +30,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { useEffect, useRef } from "react";
+import { useRouter } from "expo-router";
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
@@ -95,6 +96,7 @@ export function useOrderNotifier(
   options: UseOrderNotifierOptions = {}
 ): void {
   const { enabled = true, chefUserId = null, chefName = null } = options;
+  const router = useRouter();
 
   // Refs so the effect can stay mounted without re-subscribing on
   // every render when these props change. We read fresh values
@@ -277,7 +279,7 @@ export function useOrderNotifier(
         if (!token) return;
 
         // Idempotent — the backend just overwrites `pushToken`.
-        await api.patch("/api/auth/update-profile", { pushToken: token });
+        await api.patch("/api/auth/update-profile", { pushToken: token, pushRole: roleRef.current });
 
         console.log(
           `[useOrderNotifier:${roleRef.current}] 📲 push token refreshed`
@@ -412,6 +414,22 @@ export function useOrderNotifier(
       }
     };
 
+    // Notification taps are handled here for the standalone Chef app and
+    // the Admin tab group. The handler is role-gated and supports cold start.
+    const handleNotificationResponse = (response: Notifications.NotificationResponse | null) => {
+      if (!response) return;
+      const data: any = response.notification?.request?.content?.data || {};
+      const dataRole = String(data.role || "").toLowerCase();
+      if (dataRole && dataRole !== roleRef.current) return;
+      const expectedScreen = roleRef.current === "admin" ? "admin-orders" : "chef-orders";
+      if (String(data.screen || "").toLowerCase() !== expectedScreen) return;
+      router.push((roleRef.current === "admin" ? "/admin/all-orders" : "/chefmanagement/all-orders") as any);
+    };
+    const responseSub = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
+    void Promise.resolve(Notifications.getLastNotificationResponseAsync?.()).then((response) => {
+      if (!cancelled) handleNotificationResponse(response);
+    }).catch((error) => console.log("[useOrderNotifier] cold-start response lookup failed:", error));
+
     // ─────────────────────────────────────────────────────────
     // 6. BOOTSTRAP
     // ─────────────────────────────────────────────────────────
@@ -473,7 +491,8 @@ export function useOrderNotifier(
 
       // Notification listener
       try {
-        notificationSub.remove();
+        notificationSub?.remove?.();
+        responseSub?.remove?.();
       } catch (err) {
         console.log("[useOrderNotifier] notification cleanup error:", err);
       }
@@ -500,5 +519,5 @@ export function useOrderNotifier(
       // Clear the dedupe map for this mount.
       rungOrderIdsRef.current.clear();
     };
-  }, [enabled, role]);
+  }, [enabled, role, router]);
 }

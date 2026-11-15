@@ -548,6 +548,7 @@ function InitialLayout() {
           api
             .patch('/api/auth/update-profile', {
               pushToken: token,
+              pushRole: 'customer',
             })
             .catch((err) => {
               console.log(

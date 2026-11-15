@@ -487,6 +487,7 @@ function InitialLayout() {
           api
             .patch('/api/auth/update-profile', {
               pushToken: token,
+              pushRole: 'chef',
             })
             .catch((err) => {
               console.log(
