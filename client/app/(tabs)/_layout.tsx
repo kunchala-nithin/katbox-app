@@ -188,6 +188,7 @@ export default function TabsLayout() {
 
   return (
     <Tabs
+      initialRouteName="Home"
       screenOptions={{
         headerShown: false,
         tabBarStyle: {

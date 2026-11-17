@@ -1,3 +1,4 @@
+
 import { router } from 'expo-router'
 import { useEffect } from 'react'
 import { Image, StatusBar, StyleSheet, View } from 'react-native'
@@ -7,20 +8,32 @@ import { isTokenExpired } from '@/src/lib/jwtUtils'
 
 export default function Splash() {
   useEffect(() => {
+    let isMounted = true
+
     const timer = setTimeout(async () => {
       try {
         const token = await getToken()
+
+        if (!isMounted) return
+
         if (token && !isTokenExpired(token)) {
-          router.replace('/(tabs)/Home')
+          router.replace('/(tabs)/Home' as any)
         } else {
-          router.replace('/SlidingScreens')
+          router.replace('/SlidingScreens' as any)
         }
-      } catch {
-        router.replace('/SlidingScreens')
+      } catch (error) {
+        console.log('Splash navigation error:', error)
+
+        if (isMounted) {
+          router.replace('/SlidingScreens' as any)
+        }
       }
     }, 2500)
 
-    return () => clearTimeout(timer)
+    return () => {
+      isMounted = false
+      clearTimeout(timer)
+    }
   }, [])
 
   return (

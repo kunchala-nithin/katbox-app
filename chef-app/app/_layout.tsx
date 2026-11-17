@@ -1,6 +1,6 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome'
 import { useFonts } from 'expo-font'
-import { Stack, useRouter, useSegments } from 'expo-router'
+import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Platform, AppState, AppStateStatus } from 'react-native'
@@ -125,6 +125,7 @@ export default function RootLayout() {
 function InitialLayout() {
   const router = useRouter()
   const segments = useSegments()
+  const rootNavigationState = useRootNavigationState()
 
   const logoutTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -469,12 +470,12 @@ function InitialLayout() {
    */
 
   useEffect(() => {
-    if ((fontsLoaded || !!fontError) && isAuthenticated !== null) {
+    if ((fontsLoaded || !!fontError) && isAuthenticated !== null && hasSeenOnboarding !== null && rootNavigationState?.key) {
       void SplashScreen.hideAsync().catch((error) => {
         console.log('Could not hide splash screen:', error)
       })
     }
-  }, [fontsLoaded, fontError, isAuthenticated])
+  }, [fontsLoaded, fontError, isAuthenticated, hasSeenOnboarding, rootNavigationState?.key])
 
   /*
    * ------------------------------------------------------------
@@ -553,7 +554,8 @@ function InitialLayout() {
    */
 
   useEffect(() => {
-    if (isAuthenticated === null || hasSeenOnboarding === null) {
+    // Wait until the root Stack has mounted before issuing redirects.
+    if (!rootNavigationState?.key || isAuthenticated === null || hasSeenOnboarding === null) {
       return
     }
 
@@ -719,6 +721,7 @@ function InitialLayout() {
     router,
     getRoleRoute,
     hasSeenOnboarding,
+    rootNavigationState?.key,
   ])
 
   /*
@@ -792,22 +795,10 @@ function InitialLayout() {
 
   /*
    * ------------------------------------------------------------
-   * WAIT FOR INITIAL AUTH + FONTS
-   * ------------------------------------------------------------
-   */
-
-  if (
-    (!fontsLoaded && !fontError) ||
-    isAuthenticated === null ||
-    hasSeenOnboarding === null
-  ) {
-    return null
-  }
-
-  /*
-   * ------------------------------------------------------------
    * STACK ROUTES
    * ------------------------------------------------------------
+   * Keep the root navigator mounted while auth, onboarding, and fonts
+   * initialize. The native splash screen remains visible until ready.
    */
 
   return (

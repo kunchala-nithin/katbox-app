@@ -1,6 +1,6 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome'
 import { useFonts } from 'expo-font'
-import { Stack, useRouter, useSegments } from 'expo-router'
+import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Platform } from 'react-native'
@@ -134,6 +134,7 @@ export default function RootLayout() {
 function InitialLayout() {
   const router = useRouter()
   const segments = useSegments()
+  const rootNavigationState = useRootNavigationState()
 
   const logoutTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -528,10 +529,10 @@ function InitialLayout() {
    */
 
   useEffect(() => {
-    if (fontsLoaded && isAuthenticated !== null) {
+    if (fontsLoaded && isAuthenticated !== null && rootNavigationState?.key) {
       SplashScreen.hideAsync()
     }
-  }, [fontsLoaded, isAuthenticated])
+  }, [fontsLoaded, isAuthenticated, rootNavigationState?.key])
 
   /*
    * ------------------------------------------------------------
@@ -621,7 +622,10 @@ function InitialLayout() {
    */
 
   useEffect(() => {
-    if (isAuthenticated === null) {
+    // Do not dispatch router.replace until the root Stack is mounted.
+    // Returning null before mounting Stack used to let auth redirects race
+    // Expo Router's initial route registration.
+    if (!rootNavigationState?.key || isAuthenticated === null) {
       return
     }
 
@@ -639,6 +643,7 @@ function InitialLayout() {
      */
     const isPublicRoute =
       currentSegment === undefined ||
+      currentSegment === 'index' ||
       currentSegment === 'SlidingScreens' ||
       currentSegment === 'login' ||
       currentSegment === 'verify' ||
@@ -657,6 +662,16 @@ function InitialLayout() {
      * saveSession() completes and the moment checkAuth()
      * finishes resolving the new token.
      */
+
+    if (
+      !isAuthenticated &&
+      !loginTransitionRef.current &&
+      (currentSegment === undefined || currentSegment === 'index')
+    ) {
+      console.log('🔒 Unauthenticated entry route. Redirecting to onboarding.')
+      router.replace('/SlidingScreens' as any)
+      return
+    }
 
     if (
       !isAuthenticated &&
@@ -716,6 +731,7 @@ function InitialLayout() {
     segments,
     router,
     getRoleRoute,
+    rootNavigationState?.key,
   ])
 
   /*
@@ -725,25 +741,17 @@ function InitialLayout() {
    *
    * IMPORTANT:
    *
-   * null means:
-   *
-   *   "Authentication is currently being checked."
-   *
-   * We intentionally render nothing here so the login screen
-   * cannot appear during a successful login transition.
+   * The root Stack stays mounted during initialization so Expo Router
+   * can register routes before the auth guard dispatches navigation.
+   * The native splash screen remains visible until auth and fonts are ready.
    */
-
-  if (
-    !fontsLoaded ||
-    isAuthenticated === null
-  ) {
-    return null
-  }
 
   /*
    * ------------------------------------------------------------
    * STACK ROUTES
    * ------------------------------------------------------------
+   * Keep the root navigator mounted during auth/font initialization.
+   * The native splash screen remains visible until both are ready.
    */
 
   return (
