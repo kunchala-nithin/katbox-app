@@ -17,6 +17,8 @@ import bannerRoutes from "./routes/banner.routes";
 import websiteMessageRoutes from "./routes/websiteMessage.routes";
 import assistantRoutes from "./routes/assistant.routes";
 import { setSocketServer } from "./utils/socket";
+import { processNotificationOutbox, processOrderAlarmRepeats } from "./utils/orderNotifications";
+
 
 dotenv.config();
 const app = express();
@@ -45,6 +47,9 @@ io.use((socket, next) => {
 });
 
 app.use(cors());
+// Razorpay webhook signature validation needs the exact raw bytes. Mount this
+// parser before express.json() so the webhook body is not transformed.
+app.use("/api/payments/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/auth", authRoutes);
@@ -59,7 +64,28 @@ app.use("/api/banners", bannerRoutes);
 app.use("/api/messages", websiteMessageRoutes);
 app.use("/api/assistant", assistantRoutes);
 
-connectDB();
+let notificationWorkerRunning = false;
+let orderAlarmRepeatWorkerRunning = false;
+void connectDB().then(() => {
+  // Durable notification outbox worker. It continues independently of
+  // request lifetimes and recovers stale processing jobs after a crash.
+  setInterval(() => {
+    if (notificationWorkerRunning) return;
+    notificationWorkerRunning = true;
+    void processNotificationOutbox(30)
+      .catch((error) => console.error("Notification outbox worker error:", error))
+      .finally(() => { notificationWorkerRunning = false; });
+  }, 5_000);
+  // Repeating chef/admin alarm scheduler. The durable schedule lives in
+  // MongoDB, so it survives API restarts and resumes after reconnecting.
+  setInterval(() => {
+    if (orderAlarmRepeatWorkerRunning) return;
+    orderAlarmRepeatWorkerRunning = true;
+    void processOrderAlarmRepeats(30)
+      .catch((error) => console.error("Order alarm repeat worker error:", error))
+      .finally(() => { orderAlarmRepeatWorkerRunning = false; });
+  }, 5_000);
+});
 app.route("/health")
   .get((_req, res) => res.status(200).json({ status: "OK" }))
   .head((_req, res) => res.status(200).end());

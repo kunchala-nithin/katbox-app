@@ -425,8 +425,6 @@ export default function OrderConfirmationScreen() {
     ? Number(storedBalanceAmount)
     : Math.max(0, Math.round((numericTotal - advancePaidAmount) * 100) / 100);
 
-  const utrNumber = dbOrder?.utrNumber || "";
-
   const subtotal = dbOrder ? dbOrder.subtotal : Number(params.subtotal) || Number(totalAmount);
   const deliveryPrice = dbOrder ? dbOrder.deliveryPrice : Number(params.deliveryPrice) || 0;
   const deliveryDistanceKm = Number(dbOrder?.deliveryDistanceKm ?? params.deliveryDistanceKm ?? 0);
@@ -951,7 +949,7 @@ export default function OrderConfirmationScreen() {
             {`Payment of ₹${advancePaidAmount.toFixed(2)} was successful and\nyour ${isCateringFlow ? "catering event booking" : (isHomemadeFlow ? "homemade order" : "order")} is confirmed.`}
           </Text>
 
-          {/* Order ID & UTR Pill */}
+          {/* Order ID */}
           <View style={styles.orderIdBadgePill}>
             <Text style={styles.orderIdLabelText}>Order ID</Text>
             <Text style={styles.orderIdValueText}>{orderId}</Text>
@@ -965,13 +963,6 @@ export default function OrderConfirmationScreen() {
               </View>
             </TouchableOpacity>
           </View>
-
-          {utrNumber ? (
-            <View style={[styles.orderIdBadgePill, { marginTop: 8, borderColor: "rgba(16, 124, 65, 0.4)" }]}>
-              <Text style={[styles.orderIdLabelText, { color: "#34D399" }]}>Payment Ref</Text>
-              <Text style={styles.orderIdValueText}>{utrNumber}</Text>
-            </View>
-          ) : null}
         </View>
       </View>
 

@@ -20,13 +20,29 @@ export { ErrorBoundary } from 'expo-router'
 SplashScreen.preventAutoHideAsync()
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    const content: any = notification?.request?.content || {}
+    const data: any = content.data || {}
+    const channelId = String(content.channelId || data.channelId || "")
+    const isOrderAlarm =
+      channelId === "admin_orders_alarm_v2" ||
+      channelId === "chef_orders_alarm_v2" ||
+      content.sound === "alarm_10s.mp3" ||
+      content.sound === "alarm_10s" ||
+      content.sound === "alarm.mp3" ||
+      content.sound === "alarm"
+
+    return {
+      shouldShowAlert: true,
+      // In the foreground use the role hook's singleton audio alarm. This
+      // avoids Android playing both notification-channel sound and JS audio.
+      // In background/terminated states Android still plays channel sound.
+      shouldPlaySound: !isOrderAlarm,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }
+  },
 })
 
 /* ─────────────────────────────────────────────────────────────
@@ -47,8 +63,8 @@ if (Platform.OS === 'android') {
   ;(async () => {
     try {
       const alarmChannels = [
-        { id: 'admin_orders_alarm', name: 'Admin Order Alarms' },
-        { id: 'chef_orders_alarm', name: 'Chef Order Alarms' },
+        { id: 'admin_orders_alarm_v2', name: 'Admin Order Alarms' },
+        { id: 'chef_orders_alarm_v2', name: 'Chef Order Alarms' },
       ]
 
       for (const ch of alarmChannels) {
@@ -56,7 +72,7 @@ if (Platform.OS === 'android') {
           name: ch.name,
           importance: Notifications.AndroidImportance?.MAX ?? 5,
           vibrationPattern: [0, 600, 300, 600, 300],
-          sound: 'alarm',
+          sound: 'alarm_10s',
           enableVibrate: true,
           bypassDnd: true,
           lockscreenVisibility:
@@ -524,79 +540,58 @@ function InitialLayout() {
    */
 
   useEffect(() => {
+    if (isAuthenticated !== true) return;
     let isMounted = true
 
     const registerPushNotifications = async () => {
       try {
-        /*
-         * Expo Go on Android does not support remote push
-         * notifications.
-         */
         const isExpoGo = Constants.appOwnership === 'expo'
-
-        if (isExpoGo) {
-          console.log(
-            '📱 Running in Expo Go - skipping remote push token registration'
-          )
-
-          return
-        }
-
+        if (isExpoGo) return
         const token = await registerForPushNotificationsAsync()
-
         if (token && isMounted) {
-          api
-            .patch('/api/auth/update-profile', {
-              pushToken: token,
-              pushRole: 'customer',
-            })
-            .catch((err) => {
-              console.log(
-                '❌ Push token save error:',
-                err
-              )
-            })
+          await api.post('/api/auth/notification-token', { token, role: 'customer' })
         }
       } catch (err) {
-        console.log(
-          '❌ Push notification registration error:',
-          err
-        )
+        console.log('❌ Customer push registration error:', err)
       }
     }
 
-    registerPushNotifications()
-
-    /*
-     * Notification tap navigation.
-     */
-    const handleNotificationResponse = async (response: Notifications.NotificationResponse | null) => {
-      if (!response) return
+    const handleNotificationResponse = async (response: Notifications.NotificationResponse) => {
       try {
         const data: any = response.notification.request.content.data || {}
         const user = await getUser()
-        if (data?.screen === 'admin-orders' && user?.isAdmin === true) {
+        if (!isMounted || !user) return
+        const role = String(data.role || '').toLowerCase()
+        if ((data?.screen === 'admin-orders' || role === 'admin') && user.isAdmin === true) {
           router.push('/admin/all-orders' as any)
-          return
+        } else {
+          // Chef notifications opened in the Customer app fall back to the
+          // user's customer order history; Chef operations stay in Chef app.
+          router.push('/(tabs)/Orders' as any)
         }
-        // Chef pushes are routed to the customer's own order list if the
-        // notification is opened on a customer/admin installation.
-        router.push('/(tabs)/Orders' as any)
+        void Notifications.clearLastNotificationResponseAsync().catch(() => undefined)
       } catch (err) {
         console.log('❌ Notification navigation error:', err)
       }
     }
 
-    const subscription = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse)
-    void Promise.resolve(Notifications.getLastNotificationResponseAsync?.()).then(handleNotificationResponse).catch((err) => {
-      console.log('Cold-start notification response lookup failed:', err)
+    void registerPushNotifications()
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      void handleNotificationResponse(response)
     })
+    const pushTokenRefreshSubscription = Notifications.addPushTokenListener(() => {
+      if (isMounted) void registerPushNotifications()
+    })
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => { if (response) return handleNotificationResponse(response) })
+      .catch((err) => console.log('Customer notification cold-start error:', err))
 
     return () => {
       isMounted = false
       subscription.remove()
+      pushTokenRefreshSubscription.remove()
     }
-  }, [router])
+  }, [router, isAuthenticated])
 
   /*
    * ------------------------------------------------------------

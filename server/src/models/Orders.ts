@@ -192,6 +192,8 @@ export interface IBaseOrder extends Document {
 
   orderId: string;
 
+  idempotencyKey?: string;
+
   userId?: string;
 
   userName?: string;
@@ -670,6 +672,7 @@ const BaseOrderSchema: Schema = new Schema(
   {
 
     orderId: { type: String, required: true, unique: true },
+    idempotencyKey: { type: String, default: "" },
 
     userId: { type: String, default: "", index: true },
 
@@ -903,6 +906,15 @@ const BaseOrderSchema: Schema = new Schema(
 );
 
 
+
+BaseOrderSchema.index(
+  { idempotencyKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { idempotencyKey: { $type: "string", $gt: "" } },
+    name: "uniq_order_idempotency_key",
+  }
+);
 
 const Order: Model<IBaseOrder> =
 

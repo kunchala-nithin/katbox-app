@@ -21,6 +21,8 @@ import {
   ADMIN_ORDER_CHANNEL_ID,
   CHEF_ORDER_CHANNEL_ID,
 } from "../utils/expoPush";
+import { queueOrderNotification, stopOrderAlarmSchedules } from "../utils/orderNotifications";
+
 
 interface AuthRequest extends Request {
   user?: {
@@ -75,6 +77,17 @@ const CANCELLATION_NOT_PERMITTED_MESSAGE =
 
 const CANCELLATION_NOT_PERMITTED_NOTE =
   "Cancellation is not permitted once food preparation has begun. Cancellation charges apply and are payable to the chef as compensation for ingredients and preparation already undertaken. Please contact support.";
+
+const tokensFor = (user: any, role: "customer" | "chef" | "admin"): string[] => {
+  const roleTokens = role === "admin"
+    ? user?.adminPushTokens
+    : role === "chef"
+      ? user?.chefPushTokens
+      : user?.customerPushTokens;
+  const scopedTokens = Array.isArray(roleTokens) ? roleTokens : [];
+  const legacy = scopedTokens.length === 0 && typeof user?.pushToken === "string" ? [user.pushToken] : [];
+  return [...new Set([...scopedTokens, ...legacy])].filter((token) => isValidExpoToken(token));
+};
 
 /* ─────────────────────────────────────────────────────────────────
    ✅ Helper — Build the cancellation-fee / refund patch for a given order.
@@ -535,9 +548,9 @@ setInterval(async () => {
 
       if (shouldNotify && order.userId) {
         const userDoc = await User.findById(order.userId);
-        if (userDoc && (userDoc.customerPushToken || userDoc.pushToken)) {
+        if (userDoc && userDoc.pushToken) {
           await sendExpoPushNotification(
-            String(userDoc.customerPushToken || userDoc.pushToken),
+            userDoc.pushToken,
             'We value your feedback!',
             'Please take a moment to rate your recent order and chef.',
             { orderId: order.orderId, screen: 'orders' }
@@ -557,9 +570,9 @@ setInterval(async () => {
 /**
  * POST /api/orders/create
  *
- * IMPORTANT: When an order is created, it goes ONLY to the Admin.
- * The chef is NOT notified here. Chef receives the order only after
- * admin verifies advance payment via /verify-advance.
+ * Razorpay orders are saved in Payment Pending state and are not exposed
+ * to the chef until backend verification confirms a captured payment.
+ * The legacy manual verification route has been removed.
  *
  * ✅ NOTE: For the Razorpay flow, orders are created via
  *    POST /api/payments/verify (see payments.controller.ts), which
@@ -625,6 +638,7 @@ setInterval(async () => {
  *       schedule's status without touching the others.
  */
 export const createOrder = async (req: AuthRequest, res: Response) => {
+  let idempotencyKey = "";
   try {
     const rawUserId = req.user?.userId || req.user?._id || req.user?.id || req.body?.userId;
 
@@ -661,7 +675,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       totalAmount,
       advancePaidAmount,
       balanceAmountToCollect,
-      utrNumber,
       paymentMethod,
       selections,
       items,
@@ -713,7 +726,6 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
     const safeDeliveryAddress = coerceToString(deliveryAddress);
     const safeDeliveryDate = coerceToString(deliveryDate);
     const safeAppliedCoupon = coerceToString(appliedCoupon);
-    const safeUtrNumber = coerceToString(utrNumber);
     const safePaymentMethod = coerceToString(paymentMethod);
     const safeRestaurantName = coerceToString(restaurantName);
     const safeRestaurantImage = coerceToString(restaurantImage);
@@ -825,22 +837,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Handle Screenshot Upload if provided via multer
-    let screenshotData = { url: "", cloudinaryId: "" };
-    const uploadedFile = req.file;
-    if (uploadedFile) {
-      try {
-        const uploadRes = await uploadBufferToCloudinary(uploadedFile.buffer);
-        screenshotData = {
-          url: uploadRes.secure_url,
-          cloudinaryId: uploadRes.public_id,
-        };
-      } catch (uploadErr) {
-        console.log("Screenshot upload warning:", uploadErr);
-      }
-    }
-
-    const generatedOrderId = "KB" + Date.now().toString().slice(-8);
+    // Manual UTR/screenshot proof is no longer accepted or uploaded.
 
     // ✅ CRITICAL FIX: Parse upcomingDeliveries when it arrives as a JSON string
     //    from multipart/form-data (CheckoutScreen always does JSON.stringify).
@@ -892,15 +889,19 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
     const normalizedPaymentMethod = String(safePaymentMethod || "").trim().toLowerCase();
     const isCashOnDelivery = normalizedPaymentMethod === "cod" || normalizedPaymentMethod === "cash" || normalizedPaymentMethod === "cash_on_delivery";
-    if (isCashOnDelivery && resolvedServiceType !== "quickbites") {
-      return res.status(400).json({
-        success: false,
-        message: "Cash on Delivery is available only for QuickBites orders.",
-      });
-    }
+    // COD remains supported by the backend for every service type so the
+    // server-side order lifecycle is complete. The customer checkout UI keeps
+    // COD visible but disabled across Homemade, Catering, MealBox and QuickBites.
 
     let numericTotal = Number(totalAmount) || 0;
     const isRazorpayPayment = ["razorpay", "upi", "card", "netbanking", "wallet"].includes(normalizedPaymentMethod);
+    if (!isCashOnDelivery && !isRazorpayPayment) {
+      return res.status(400).json({
+        success: false,
+        message: "Unsupported payment method. Please use Razorpay.",
+        code: "UNSUPPORTED_PAYMENT_METHOD",
+      });
+    }
     // QuickBites does not support advance payments. Other service types retain
     // the existing 40% advance / 100% full-payment choice.
     const isAdvanceEligibleService = ["catering", "homemade", "mealbox"].includes(resolvedServiceType);
@@ -1039,9 +1040,9 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       (Number(subtotal) || 0) + finalDeliveryPrice - (Number(discount) || 0)
     );
     // The backend recalculates the payable amount from its final server-side total.
-    // QuickBites online payment is always 100%; QuickBites COD collects nothing
-    // now and leaves the full order total outstanding. Other service types retain
-    // the existing advance/full-payment calculation.
+    // QuickBites online payment is always 100%; COD for every service type
+    // collects nothing now and leaves the full order total outstanding.
+    // Other online service types retain the existing advance/full calculation.
     if (isCashOnDelivery) {
       finalAdvance = 0;
     } else if (resolvedServiceType === "quickbites") {
@@ -1057,6 +1058,25 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         : Math.round(numericTotal * 0.40 * 100) / 100;
     }
     finalBalance = Math.max(0, Math.round((numericTotal - finalAdvance) * 100) / 100);
+
+    // A retry for the same authenticated user, cart and server-calculated
+    // payable amount reuses the original KatBox order. Changing between the
+    // 40% advance and full payment creates a distinct idempotency key.
+    const safeCartId = coerceToString(cartId);
+    if (safeCartId) {
+      idempotencyKey = `${finalUserId}:${safeCartId}:${resolvedServiceType}:${Math.round(finalAdvance * 100)}`;
+      const existingOrder: any = await Order.findOne({ idempotencyKey });
+      if (existingOrder) {
+        return res.status(200).json({
+          success: true,
+          duplicate: true,
+          message: "This checkout order was already created.",
+          order: existingOrder,
+        });
+      }
+    }
+
+    const generatedOrderId = "KB" + Date.now().toString().slice(-8);
 
     // ────────────────────────────────────────────────────────────────
     // ✅ Compute absolute delivery timestamps at order placement.
@@ -1217,6 +1237,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
       const newHomemadeOrder = new ModelToUse({
         orderId: generatedOrderId,
+        idempotencyKey,
         userId: finalUserId,
         userName: coerceToString(userName),
         userPhone: finalUserPhone,
@@ -1252,12 +1273,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         totalAmount: numericTotal,
         advancePaidAmount: finalAdvance,
         balanceAmountToCollect: finalBalance,
-        utrNumber: safeUtrNumber,
-        advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: isCashOnDelivery,
-        paymentMethod: safePaymentMethod || "cod",
+        paymentMethod: safePaymentMethod,
         paymentOption: isCashOnDelivery ? "full" : (isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full"),
-        paymentStatus: isCashOnDelivery ? "Cash on Delivery" : (isRazorpayPayment ? "Payment Pending" : "Verification Pending"),
+        paymentStatus: isCashOnDelivery ? "Cash on Delivery" : "Payment Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for homemade / quickbites flow
         specialInstruction: resolvedSpecialInstruction,
@@ -1276,7 +1295,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         // ✅ Persist delivery type for homemade / quickbites flow
         deliveryType: safeDeliveryType,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: isCashOnDelivery ? `QuickBites order placed with Cash on Delivery. ₹${numericTotal} is payable on delivery.` : (isRazorpayPayment ? `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending`) },
+          { status: "Placed", timestamp: orderPlacedAt, note: isCashOnDelivery ? `Order placed with Cash on Delivery. ₹${numericTotal} is payable on delivery.` : `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` },
         ],
       });
 
@@ -1296,6 +1315,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
       const newCateringOrder = new CateringOrderModel({
         orderId: generatedOrderId,
+        idempotencyKey,
         userId: finalUserId,
         userName: coerceToString(userName),
         userPhone: finalUserPhone,
@@ -1336,12 +1356,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         totalAmount: numericTotal,
         advancePaidAmount: finalAdvance,
         balanceAmountToCollect: finalBalance,
-        utrNumber: safeUtrNumber,
-        advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: isCashOnDelivery,
-        paymentMethod: safePaymentMethod || "cod",
+        paymentMethod: safePaymentMethod,
         paymentOption: isCashOnDelivery ? "full" : (isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full"),
-        paymentStatus: isCashOnDelivery ? "Cash on Delivery" : (isRazorpayPayment ? "Payment Pending" : "Verification Pending"),
+        paymentStatus: isCashOnDelivery ? "Cash on Delivery" : "Payment Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for catering flow
         specialInstruction: resolvedSpecialInstruction,
@@ -1356,7 +1374,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           ? { specialInstructions: resolvedQuickSpecialInstructions }
           : {}),
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` },
         ],
       });
 
@@ -1411,6 +1429,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 
       const newMealBoxOrder = new MealBoxOrderModel({
         orderId: generatedOrderId,
+        idempotencyKey,
         userId: finalUserId,
         userName: coerceToString(userName),
         userPhone: finalUserPhone,
@@ -1450,12 +1469,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         totalAmount: numericTotal,
         advancePaidAmount: finalAdvance,
         balanceAmountToCollect: finalBalance,
-        utrNumber: safeUtrNumber,
-        advancePaymentScreenshot: screenshotData,
         isAdvanceVerified: isCashOnDelivery,
-        paymentMethod: safePaymentMethod || "cod",
+        paymentMethod: safePaymentMethod,
         paymentOption: isCashOnDelivery ? "full" : (isAdvanceEligibleService && requestedPaymentOption === "advance" ? "advance" : "full"),
-        paymentStatus: isCashOnDelivery ? "Cash on Delivery" : (isRazorpayPayment ? "Payment Pending" : "Verification Pending"),
+        paymentStatus: isCashOnDelivery ? "Cash on Delivery" : "Payment Pending",
         orderStatus: "Placed",
         // ✅ Persist special instructions for mealbox flow
         specialInstruction: resolvedSpecialInstruction,
@@ -1472,7 +1489,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
         // ✅ Persist delivery type for mealbox flow
         deliveryType: safeDeliveryType,
         statusTimeline: [
-          { status: "Placed", timestamp: orderPlacedAt, note: isRazorpayPayment ? `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` : `Advance submitted (UTR: ${safeUtrNumber || 'Screenshot Provided'}) - Verification Pending` },
+          { status: "Placed", timestamp: orderPlacedAt, note: `Awaiting Razorpay ${finalAdvance < numericTotal ? "40% advance" : "full payment"}` },
         ],
       });
 
@@ -1506,31 +1523,33 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       await Cart.updateMany({ user: finalUserId, status: "in-cart" }, { $set: { status: "ordered" } });
     }
 
-    // Order and database relationships are saved. Dispatch socket and push
-    // notification fan-out asynchronously so notification-provider latency
-    // does not hold up Razorpay initialization on the customer app.
-    setImmediate(() => {
-      void (async () => {
+    // Order and database relationships are saved. Persist notification jobs
+    // in the outbox before responding; actual Expo delivery runs separately.
+    await (async () => {
     try {
       if (finalUserId) {
         io.to(finalUserId).emit("new_order_placed", savedOrder);
-        const customerDoc = await User.findById(finalUserId);
-        if (customerDoc?.customerPushToken || customerDoc?.pushToken) {
-          await sendExpoPushNotification(
-            String(customerDoc.customerPushToken || customerDoc.pushToken),
-            isCashOnDelivery ? "QuickBites Order Placed 🎉" : "Order Placed - Verification Pending 🕒",
-            isCashOnDelivery
-              ? `Your QuickBites order #${savedOrder.orderId} is confirmed. ₹${savedOrder.totalAmount} is payable on delivery.`
-              : `Your order #${savedOrder.orderId} advance payment is being verified by admin.`,
-            { orderId: savedOrder.orderId, screen: "orders" }
-          );
-        }
+        await queueOrderNotification({
+          orderId: String(savedOrder.orderId),
+          eventType: isCashOnDelivery ? "cod_order_customer_confirmation" : "razorpay_pending_customer_notice",
+          recipientUserId: String(finalUserId),
+          recipientRole: "customer",
+          payload: {
+            title: isCashOnDelivery ? "Order placed 🎉" : "Continue to secure payment",
+            body: isCashOnDelivery
+              ? `Your order #${savedOrder.orderId} is confirmed. ₹${savedOrder.totalAmount} is payable on delivery.`
+              : `Your order #${savedOrder.orderId} is saved. Complete Razorpay payment to confirm it.`,
+            data: { orderId: savedOrder.orderId, screen: "orders", role: "customer" },
+            sound: "default",
+            priority: "high",
+          },
+        });
       }
 
       io.emit("new_order_placed", savedOrder);
 
-      // QuickBites COD orders are accepted without payment verification because
-      // the full amount is collected on delivery. Notify the assigned chef now.
+      // COD orders are accepted without payment verification because the full
+      // amount is collected on delivery. Notify the assigned chef now.
       if (isCashOnDelivery) {
         const chefDocForCod = resolvedChefDoc || (effectiveChefId && mongoose.Types.ObjectId.isValid(effectiveChefId)
           ? await Chef.findById(effectiveChefId)
@@ -1539,19 +1558,20 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           const chefUserId = String(chefDocForCod.user);
           io.to(chefUserId).emit("new_chef_order", savedOrder);
           io.to(chefUserId).emit("order_updated", savedOrder);
-          const chefUser = await User.findById(chefUserId);
-          if ((chefUser?.chefPushToken || chefUser?.pushToken) && isValidExpoToken(chefUser.chefPushToken || chefUser.pushToken)) {
-            await sendExpoPush({
-              token: String(chefUser.chefPushToken || chefUser.pushToken),
-              title: `🔔 New QuickBites COD Order ${savedOrder.orderId}`,
+          await queueOrderNotification({
+            orderId: String(savedOrder.orderId),
+            eventType: "cod_order_chef_alarm",
+            recipientUserId: chefUserId,
+            recipientRole: "chef",
+            payload: {
+              title: `🔔 New COD Order ${savedOrder.orderId}`,
               body: `${savedOrder.userName || "Customer"} placed a ₹${savedOrder.totalAmount} Cash on Delivery order.`,
               data: { orderId: savedOrder.orderId, screen: "chef-orders", role: "chef", chefId: chefUserId },
               sound: ORDER_ALARM_SOUND,
               channelId: CHEF_ORDER_CHANNEL_ID,
-              priority: "max" as const,
-              vibrate: [0, 600, 300, 600, 300],
-            });
-          }
+              priority: "high",
+            },
+          });
         }
         if (effectiveChefId) {
           io.to(String(effectiveChefId)).emit("new_chef_order", savedOrder);
@@ -1568,57 +1588,52 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
            priority = "max", data.role = "admin".
          • Never throws — wrapped in its own try/catch.
          ────────────────────────────────────────────────────────── */
-      try {
-        const admins = await User.find({
-          isAdmin: true,
-          $or: [
-            { adminPushToken: { $exists: true, $ne: "" } },
-            { pushToken: { $exists: true, $ne: "" } },
-          ],
-        }).select("adminPushToken pushToken name");
-
-        const validAdmins = admins.filter((a: any) =>
-          isValidExpoToken(a.adminPushToken || a.pushToken)
-        );
-
-        if (validAdmins.length > 0) {
-          const adminPayloads = validAdmins.map((admin: any) => ({
-            token: String(admin.adminPushToken || admin.pushToken),
-            title: `🚨 New Order ${savedOrder.orderId}`,
-            body: `${savedOrder.userName || "A customer"} placed an order of ₹${savedOrder.totalAmount}. Tap to review.`,
-            data: {
-              orderId: savedOrder.orderId,
-              screen: "admin-orders",
-              role: "admin",
-            },
-            sound: ORDER_ALARM_SOUND,
-            channelId: ADMIN_ORDER_CHANNEL_ID,
-            priority: "max" as const,
-            vibrate: [0, 600, 300, 600, 300],
-          }));
-
-          await sendExpoPushBatch(adminPayloads);
-          console.log(
-            `[createOrder] Sent admin alarm push to ${validAdmins.length} admin(s)`
-          );
+      if (isCashOnDelivery) {
+        try {
+          const admins = await User.find({ isAdmin: true }).select("_id");
+          for (const admin of admins) {
+            await queueOrderNotification({
+              orderId: String(savedOrder.orderId),
+              eventType: "cod_order_admin_alarm",
+              recipientUserId: String(admin._id),
+              recipientRole: "admin",
+              payload: {
+                title: `🚨 New Order ${savedOrder.orderId}`,
+                body: `${savedOrder.userName || "A customer"} placed an order of ₹${savedOrder.totalAmount}. Tap to review.`,
+                data: { orderId: savedOrder.orderId, screen: "admin-orders", role: "admin" },
+                sound: ORDER_ALARM_SOUND,
+                channelId: ADMIN_ORDER_CHANNEL_ID,
+                priority: "high",
+              },
+            });
+          }
+        } catch (adminPushErr) {
+          console.log("Admin push notification outbox error:", adminPushErr);
         }
-      } catch (adminPushErr) {
-        console.log("Admin push notification error:", adminPushErr);
       }
     } catch (e) {
-      console.log("Order creation notification emit warning:", e);
+      console.log("Order creation notification enqueue warning:", e);
     }
-      })();
-    });
+    })();
 
     return res.status(201).json({
       success: true,
       message: isCashOnDelivery
-        ? "QuickBites order placed successfully. Full amount is payable on delivery."
+        ? "Order placed successfully. Full amount is payable on delivery."
         : (isRazorpayPayment ? `Order saved. Awaiting Razorpay payment of ₹${finalAdvance}.` : "Order placed successfully. Advance verification pending."),
       order: savedOrder,
     });
   } catch (error: any) {
+    if (error?.code === 11000 && idempotencyKey) {
+      try {
+        const existingOrder: any = await Order.findOne({ idempotencyKey });
+        if (existingOrder) {
+          return res.status(200).json({ success: true, duplicate: true, message: "This checkout order was already created.", order: existingOrder });
+        }
+      } catch (lookupError) {
+        console.error("Duplicate order recovery lookup failed:", lookupError);
+      }
+    }
     console.error("Error placing order:", error);
     console.error("Error name:", error?.name);
     console.error("Error message:", error?.message);
@@ -1639,138 +1654,10 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
 };
 
 /**
- * PATCH /api/orders/:orderId/verify-advance
- *
- * ✅ UPDATED: The push to the assigned chef now uses the bundled
- *    alarm.mp3 sound + chef_orders_alarm channel + priority "max",
- *    and includes data.role = "chef" and data.chefId so the client
- *    can route + alarm correctly even when the app is closed.
- *
- * ✅ NEW: Idempotent — if the order is already advance-verified
- *    (e.g. because it was created via the Razorpay flow in
- *    payments.controller.ts which sets isAdvanceVerified: true
- *    and paymentCaptured: true), this endpoint returns 200 with
- *    the current order state instead of re-emitting notifications
- *    and re-pushing the chef.
+ * Legacy manual advance-verification endpoint removed. Historical
+ * `utrNumber` and `advancePaymentScreenshot` schema fields remain solely
+ * for reading old order records; new orders cannot submit manual proof.
  */
-export const verifyAdvancePayment = async (req: AuthRequest, res: Response) => {
-  try {
-    const { orderId } = req.params;
-    const order = await Order.findOne({ orderId });
-
-    if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
-    }
-
-    // Razorpay-backed orders must never be manually marked as paid by admin.
-    // Their only verification path is the signed Razorpay callback below.
-    const gatewayMethods = ["razorpay", "upi", "card", "netbanking", "wallet"];
-    if (gatewayMethods.includes(String(order.paymentMethod || "").toLowerCase()) && order.paymentCaptured !== true) {
-      return res.status(409).json({
-        success: false,
-        message: "Manual payment verification is disabled for Razorpay orders. Payment is verified automatically by the gateway.",
-      });
-    }
-
-    // Idempotency: if already verified, return current state.
-    if (order.isAdvanceVerified || order.paymentCaptured) {
-      return res.status(200).json({
-        success: true,
-        message: "Order already verified.",
-        order,
-      });
-    }
-
-    order.isAdvanceVerified = true;
-    order.paymentStatus = "Advance Paid (Verified)";
-    order.statusTimeline = order.statusTimeline || [];
-    order.statusTimeline.push({
-      status: "Advance Verified",
-      timestamp: new Date(),
-      note: `Admin verified advance payment of ₹${order.advancePaidAmount}`,
-    });
-
-    const updatedOrder = await order.save();
-
-    try {
-      io.emit("advance_payment_verified", updatedOrder);
-      io.emit("order_updated", updatedOrder);
-
-      if (order.userId) {
-        io.to(order.userId).emit("advance_payment_verified", updatedOrder);
-        io.to(order.userId).emit("order_updated", updatedOrder);
-        const userDoc = await User.findById(order.userId);
-        if (userDoc?.customerPushToken || userDoc?.pushToken) {
-          await sendExpoPushNotification(
-            String(userDoc.customerPushToken || userDoc.pushToken),
-            "Advance Payment Verified! 🎉",
-            `Your advance payment for order #${order.orderId} has been verified by the team.`,
-            { orderId: order.orderId, screen: "orders" }
-          );
-        }
-      }
-
-      const chefIdentifier = order.chefId;
-      let chefUserDoc: any = null;
-      let resolvedChefUserId: string | null = null;
-
-      if (chefIdentifier && mongoose.Types.ObjectId.isValid(chefIdentifier)) {
-        const chefDoc = await Chef.findById(chefIdentifier);
-        if (chefDoc?.user) {
-          chefUserDoc = await User.findById(chefDoc.user);
-          resolvedChefUserId = String(chefDoc.user);
-          io.to(String(chefDoc.user)).emit("new_chef_order", updatedOrder);
-        }
-      }
-      if (!chefUserDoc && order.chefName) {
-        const chefDoc = await Chef.findOne({ name: order.chefName });
-        if (chefDoc?.user) {
-          chefUserDoc = await User.findById(chefDoc.user);
-          resolvedChefUserId = String(chefDoc.user);
-          io.to(String(chefDoc.user)).emit("new_chef_order", updatedOrder);
-        }
-      }
-      if (chefIdentifier) {
-        io.to(String(chefIdentifier)).emit("new_chef_order", updatedOrder);
-        io.to(String(chefIdentifier)).emit("order_updated", updatedOrder);
-      }
-
-      /* ──────────────────────────────────────────────────────────
-         ✅ Chef push now uses the bundled alarm sound,
-         the chef alarm channel, priority "max", and carries
-         data.role = "chef" + data.chefId for client-side routing
-         and chef-scoped alarms.
-         ────────────────────────────────────────────────────────── */
-      if ((chefUserDoc?.chefPushToken || chefUserDoc?.pushToken) && isValidExpoToken(chefUserDoc.chefPushToken || chefUserDoc.pushToken)) {
-        await sendExpoPush({
-          token: String(chefUserDoc.chefPushToken || chefUserDoc.pushToken),
-          title: `🔔 New Verified Order ${order.orderId}`,
-          body: `${order.userName || "Customer"} → ₹${order.totalAmount}. Tap to accept now!`,
-          data: {
-            orderId: order.orderId,
-            screen: "chef-orders",
-            role: "chef",
-            chefId: resolvedChefUserId || String(chefUserDoc._id || ""),
-          },
-          sound: ORDER_ALARM_SOUND,
-          channelId: CHEF_ORDER_CHANNEL_ID,
-          priority: "max",
-          vibrate: [0, 600, 300, 600, 300],
-        });
-      }
-    } catch (e) {
-      console.log("Socket emit warning:", e);
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "Advance payment verified successfully",
-      order: updatedOrder,
-    });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
 
 /**
  * GET /api/orders/chef-orders
@@ -2114,6 +2001,14 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    if (String(updatedOrder.orderStatus || "").trim().toLowerCase() !== "placed") {
+      try {
+        await stopOrderAlarmSchedules(String(orderId), `order_status_${String(updatedOrder.orderStatus || "changed").toLowerCase()}`);
+      } catch (alarmStopError) {
+        console.error("Could not stop order alarm schedule:", alarmStopError instanceof Error ? alarmStopError.message : "unknown error");
+      }
+    }
+
     try {
       io.emit("order_status_updated", updatedOrder);
       io.emit("order_updated", updatedOrder);
@@ -2133,21 +2028,14 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
     try {
       if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
         const customerDoc = await User.findById(updatedOrder.userId);
-        if ((customerDoc?.customerPushToken || customerDoc?.pushToken) && isValidExpoToken(customerDoc.customerPushToken || customerDoc.pushToken)) {
+        const customerTokens = tokensFor(customerDoc, "customer");
+        if (customerTokens.length > 0) {
           const msg = getCustomerStatusMessage(normalized, updatedOrder.orderId);
-          await sendExpoPush({
-            token: String(customerDoc.customerPushToken || customerDoc.pushToken),
-            title: msg.title,
-            body: msg.body,
-            data: {
-              orderId: updatedOrder.orderId,
-              screen: "orders",
-              role: "customer",
-              status: normalized,
-            },
-            sound: "default",
-            priority: "high",
-          });
+          await sendExpoPushBatch(customerTokens.map((token) => ({
+            token, title: msg.title, body: msg.body,
+            data: { orderId: updatedOrder.orderId, screen: "orders", role: "customer", status: normalized },
+            sound: "default", priority: "high" as const,
+          })));
         }
       }
     } catch (customerPushErr) {
@@ -2336,6 +2224,13 @@ export const cancelOrderByCustomer = async (req: AuthRequest, res: Response) => 
     }
 
     // ✅ Broadcast to every screen that already listens for these events.
+
+    try {
+      await stopOrderAlarmSchedules(String(orderId), "order_cancelled_by_customer");
+    } catch (alarmStopError) {
+      console.error("Could not stop cancelled order alarm schedule:", alarmStopError instanceof Error ? alarmStopError.message : "unknown error");
+    }
+
     try {
       io.emit("order_updated", updatedOrder);
       io.emit("order_status_updated", updatedOrder);
@@ -2355,22 +2250,14 @@ export const cancelOrderByCustomer = async (req: AuthRequest, res: Response) => 
     try {
       if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
         const customerDoc = await User.findById(updatedOrder.userId);
-        if ((customerDoc?.customerPushToken || customerDoc?.pushToken) && isValidExpoToken(customerDoc.customerPushToken || customerDoc.pushToken)) {
+        const customerTokens = tokensFor(customerDoc, "customer");
+        if (customerTokens.length > 0) {
           const msg = getCustomerStatusMessage("Cancelled", updatedOrder.orderId);
-          await sendExpoPush({
-            token: String(customerDoc.customerPushToken || customerDoc.pushToken),
-            title: msg.title,
-            body: msg.body,
-            data: {
-              orderId: updatedOrder.orderId,
-              screen: "orders",
-              role: "customer",
-              status: "Cancelled",
-              cancellationSource: CANCELLATION_SOURCE_CUSTOMER,
-            },
-            sound: "default",
-            priority: "high",
-          });
+          await sendExpoPushBatch(customerTokens.map((token) => ({
+            token, title: msg.title, body: msg.body,
+            data: { orderId: updatedOrder.orderId, screen: "orders", role: "customer", status: "Cancelled", cancellationSource: CANCELLATION_SOURCE_CUSTOMER },
+            sound: "default", priority: "high" as const,
+          })));
         }
       }
     } catch (customerPushErr) {
@@ -2510,20 +2397,14 @@ export const processRefund = async (req: AuthRequest, res: Response) => {
     try {
       if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
         const customerDoc = await User.findById(updatedOrder.userId);
-        if ((customerDoc?.customerPushToken || customerDoc?.pushToken) && isValidExpoToken(customerDoc.customerPushToken || customerDoc.pushToken)) {
-          await sendExpoPush({
-            token: String(customerDoc.customerPushToken || customerDoc.pushToken),
-            title: "💸 Refund Processed",
+        const customerTokens = tokensFor(customerDoc, "customer");
+        if (customerTokens.length > 0) {
+          await sendExpoPushBatch(customerTokens.map((token) => ({
+            token, title: "💸 Refund Processed",
             body: `Your refund of ₹${refundAmountNum} for order #${updatedOrder.orderId} has been processed.`,
-            data: {
-              orderId: updatedOrder.orderId,
-              screen: "orders",
-              role: "customer",
-              status: "Refunded",
-            },
-            sound: "default",
-            priority: "high",
-          });
+            data: { orderId: updatedOrder.orderId, screen: "orders", role: "customer", status: "Refunded" },
+            sound: "default", priority: "high" as const,
+          })));
         }
       }
     } catch (customerPushErr) {
@@ -2652,22 +2533,14 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
     try {
       if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
         const customerDoc = await User.findById(order.userId);
-        if ((customerDoc?.customerPushToken || customerDoc?.pushToken) && isValidExpoToken(customerDoc.customerPushToken || customerDoc.pushToken)) {
+        const customerTokens = tokensFor(customerDoc, "customer");
+        if (customerTokens.length > 0) {
           const baseMsg = getCustomerStatusMessage(normalizedStatus, order.orderId);
-          await sendExpoPush({
-            token: String(customerDoc.customerPushToken || customerDoc.pushToken),
-            title: `${baseMsg.title} • ${dateStr}`,
-            body: baseMsg.body,
-            data: {
-              orderId: order.orderId,
-              screen: "orders",
-              role: "customer",
-              status: normalizedStatus,
-              scheduleDate: dateStr,
-            },
-            sound: "default",
-            priority: "high",
-          });
+          await sendExpoPushBatch(customerTokens.map((token) => ({
+            token, title: `${baseMsg.title} • ${dateStr}`, body: baseMsg.body,
+            data: { orderId: order.orderId, screen: "orders", role: "customer", status: normalizedStatus, scheduleDate: dateStr },
+            sound: "default", priority: "high" as const,
+          })));
         }
       }
     } catch (customerPushErr) {

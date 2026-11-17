@@ -693,18 +693,19 @@ export default function AdminAllOrdersScreen() {
   //    Sound + vibration + 10s auto-stop are now fully owned by the
   //    shared singleton `client/src/lib/orderAlarm.ts`.
   const alarmIntervalRef = useRef<any>(null);
+  const activeAlarmOrderIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     async function setupNotifications() {
       if (!Notifications) return;
       try {
         if (Platform.OS === 'android' && Notifications.setNotificationChannelAsync) {
-          await Notifications.setNotificationChannelAsync('admin_orders_alarm', {
+          await Notifications.setNotificationChannelAsync('admin_orders', {
             name: 'Platform Admin Alerts',
             importance: Notifications.AndroidImportance?.MAX ?? 5,
             vibrationPattern: [0, 500, 250, 500],
             lightColor: '#2563EB',
-            sound: 'alarm',
+            sound: 'default',
             enableVibrate: true,
           });
         }
@@ -770,18 +771,28 @@ export default function AdminAllOrdersScreen() {
       clearInterval(alarmIntervalRef.current);
       alarmIntervalRef.current = null;
     }
+    activeAlarmOrderIdRef.current = null;
     await stopOrderAlarm();
   };
 
-  const initAlarmCycleForPendingOrder = (orderItem: any) => {
-    clearAlarmAndSnoozeCycle();
-    startOrderAlarmSound();
+  const isOrderAlarmEligible = (orderItem: any) => {
+    const method = String(orderItem?.paymentMethod || '').toLowerCase();
+    const paymentStatus = String(orderItem?.paymentStatus || '').toLowerCase();
+    return ['cod', 'cash', 'cash_on_delivery'].includes(method) ||
+      paymentStatus === 'cash on delivery' ||
+      orderItem?.paymentCaptured === true ||
+      paymentStatus === 'paid' ||
+      orderItem?.isAdvanceVerified === true;
+  };
 
-    // Do not schedule a second local notification here. The backend sends
-    // the OS push; this screen owns only the foreground repeating alarm.
-    alarmIntervalRef.current = setInterval(() => {
-      startOrderAlarmSound();
-    }, 180000);
+  const initAlarmCycleForPendingOrder = (orderItem: any) => {
+    const orderId = String(orderItem?.orderId || '');
+    if (!orderId || activeAlarmOrderIdRef.current === orderId) return;
+    activeAlarmOrderIdRef.current = orderId;
+    // The backend sends a new push every three minutes. The app only needs
+    // to play the immediate foreground alarm here; no JS interval is used
+    // for background/terminated scheduling.
+    void startOrderAlarmSound();
   };
 
   const togglePriceDetails = () => {
@@ -804,7 +815,7 @@ export default function AdminAllOrdersScreen() {
         setOrders(fetched);
 
         const hasPending = fetched.find(
-          (o: any) => (o.orderStatus || 'Placed').toLowerCase() === 'placed'
+          (o: any) => (o.orderStatus || 'Placed').toLowerCase() === 'placed' && isOrderAlarmEligible(o)
         );
         if (hasPending) {
           initAlarmCycleForPendingOrder(hasPending);
@@ -827,7 +838,9 @@ export default function AdminAllOrdersScreen() {
     const handleNewOrder = (newOrder: any) => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setOrders((prev) => [newOrder, ...prev]);
-      initAlarmCycleForPendingOrder(newOrder);
+      if ((newOrder?.orderStatus || 'Placed').toLowerCase() === 'placed' && isOrderAlarmEligible(newOrder)) {
+        initAlarmCycleForPendingOrder(newOrder);
+      }
     };
 
     const handleOrderUpdated = (updatedOrder: any) => {
@@ -835,6 +848,10 @@ export default function AdminAllOrdersScreen() {
       setOrders((prev) =>
         prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
       );
+      const updatedStatus = String(updatedOrder?.orderStatus || '').toLowerCase();
+      if (updatedStatus && updatedStatus !== 'placed') {
+        void clearAlarmAndSnoozeCycle();
+      }
     };
 
     const handleScheduleStatusUpdated = (data: any) => {

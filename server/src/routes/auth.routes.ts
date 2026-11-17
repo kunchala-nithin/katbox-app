@@ -2399,4 +2399,57 @@ router.patch(
   }
 );
 
+
+/**
+ * Register or refresh an Expo push token for one application role.
+ * The authenticated MongoDB user's role is checked server-side; the client
+ * cannot register an admin/chef token merely by changing the request body.
+ */
+router.post("/notification-token", protect, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.userId || req.user?._id || req.user?.id;
+    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    const role = String(req.body?.role || "").trim().toLowerCase();
+    if (!userId || !token || !/^(Exponent|Expo)PushToken\[[^\]]+\]$/.test(token)) {
+      return res.status(400).json({ success: false, message: "A valid Expo push token is required." });
+    }
+    if (!["customer", "chef", "admin"].includes(role)) {
+      return res.status(400).json({ success: false, message: "Invalid notification role." });
+    }
+
+    const user = await User.findById(userId).select("isChef isAdmin");
+    if (!user) return res.status(404).json({ success: false, message: "User not found." });
+    if (role === "chef" && user.isChef !== true) {
+      return res.status(403).json({ success: false, message: "Chef notification access is not enabled for this account." });
+    }
+    if (role === "admin" && user.isAdmin !== true) {
+      return res.status(403).json({ success: false, message: "Admin notification access is not enabled for this account." });
+    }
+
+    const field = role === "admin" ? "adminPushTokens" : role === "chef" ? "chefPushTokens" : "customerPushTokens";
+    await User.updateOne({ _id: userId }, { $addToSet: { [field]: token } });
+    return res.status(200).json({ success: true, message: "Notification token registered." });
+  } catch (error) {
+    console.error("Notification token registration error:", error);
+    return res.status(500).json({ success: false, message: "Unable to register notification token." });
+  }
+});
+
+router.delete("/notification-token", protect, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.userId || req.user?._id || req.user?.id;
+    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    const role = String(req.body?.role || "").trim().toLowerCase();
+    if (!userId || !token || !["customer", "chef", "admin"].includes(role)) {
+      return res.status(400).json({ success: false, message: "Token and valid role are required." });
+    }
+    const field = role === "admin" ? "adminPushTokens" : role === "chef" ? "chefPushTokens" : "customerPushTokens";
+    await User.updateOne({ _id: userId }, { $pull: { [field]: token } });
+    return res.status(200).json({ success: true, message: "Notification token unregistered." });
+  } catch (error) {
+    console.error("Notification token removal error:", error);
+    return res.status(500).json({ success: false, message: "Unable to unregister notification token." });
+  }
+});
+
 export default router;

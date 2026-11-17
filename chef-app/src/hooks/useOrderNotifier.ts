@@ -23,14 +23,13 @@
 //      trigger the singleton alarm with the same rules.
 //   5. For chef: filter strictly by chef ownership so other chefs
 //      never ring for someone else's order.
-//   6. Dedupe per orderId (30 s TTL) so the same order cannot
+//   6. Dedupe per orderId (24 h process-lifetime TTL) so the same order cannot
 //      ring twice from two different events.
 //
 // All side effects are contained here. This hook renders nothing.
 // ─────────────────────────────────────────────────────────────
 
 import { useEffect, useRef } from "react";
-import { useRouter } from "expo-router";
 import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
@@ -39,24 +38,24 @@ import Constants, { AppOwnership } from "expo-constants";
 import api from "../lib/api";
 import { socket } from "../lib/socket";
 import { getUser } from "../lib/authStorage";
-import { startOrderAlarm } from "../lib/orderAlarm";
+import { startOrderAlarm, stopOrderAlarm } from "../lib/orderAlarm";
 
 // ─────────────────────────────────────────────────────────────
 // CONSTANTS — must match server/src/utils/expoPush.ts
 // ─────────────────────────────────────────────────────────────
 
 /** Bundled sound file name (without extension is Android's requirement). */
-const ALARM_CHANNEL_SOUND = "alarm";
+const ALARM_CHANNEL_SOUND = "alarm_10s";
 
 /** Android channel ids — identical to the server's constants. */
-const ADMIN_ORDER_CHANNEL_ID = "admin_orders_alarm";
-const CHEF_ORDER_CHANNEL_ID = "chef_orders_alarm";
+const ADMIN_ORDER_CHANNEL_ID = "admin_orders_alarm_v2";
+const CHEF_ORDER_CHANNEL_ID = "chef_orders_alarm_v2";
 
 /** Vibration pattern for the Android channel (milliseconds). */
 const VIBRATION_PATTERN = [0, 600, 300, 600, 300];
 
 /** Dedupe window — the same orderId will not ring twice within this window. */
-const DEDUPE_TTL_MS = 30_000;
+const DEDUPE_TTL_MS = 150 * 1000; // shorter than the 3-minute repeat interval
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -96,7 +95,6 @@ export function useOrderNotifier(
   options: UseOrderNotifierOptions = {}
 ): void {
   const { enabled = true, chefUserId = null, chefName = null } = options;
-  const router = useRouter();
 
   // Refs so the effect can stay mounted without re-subscribing on
   // every render when these props change. We read fresh values
@@ -279,7 +277,7 @@ export function useOrderNotifier(
         if (!token) return;
 
         // Idempotent — the backend just overwrites `pushToken`.
-        await api.patch("/api/auth/update-profile", { pushToken: token, pushRole: roleRef.current });
+        await api.post("/api/auth/notification-token", { token, role: roleRef.current });
 
         console.log(
           `[useOrderNotifier:${roleRef.current}] 📲 push token refreshed`
@@ -321,6 +319,12 @@ export function useOrderNotifier(
     // Fires when a push arrives while the app is foregrounded.
     // (When backgrounded/killed, the OS renders the notification
     // directly using the Android channel we created above.)
+
+    // Expo may rotate the underlying device push token. Re-fetch the
+    // ExpoPushToken and register it again under the authenticated role.
+    const pushTokenRefreshSub = Notifications.addPushTokenListener(() => {
+      if (!cancelled) void registerTokenIfPossible();
+    });
 
     const notificationSub =
       Notifications.addNotificationReceivedListener((notification) => {
@@ -375,12 +379,29 @@ export function useOrderNotifier(
 
     // ADMIN: global `new_order_placed` fires the moment the
     // customer submits an order.
+    const isAlarmEligibleOrder = (order: any): boolean => {
+      const method = String(order?.paymentMethod || "").toLowerCase();
+      const status = String(order?.paymentStatus || "").toLowerCase();
+      const isCod = ["cod", "cash", "cash_on_delivery"].includes(method) || status === "cash on delivery";
+      const isCaptured = order?.paymentCaptured === true || status === "paid";
+      return isCod || isCaptured;
+    };
+
     const onAdminNewOrder = (order: any) => {
       try {
-        if (roleRef.current !== "admin") return;
+        if (roleRef.current !== "admin" || !isAlarmEligibleOrder(order)) return;
         ringForOrder(order, "socket:new_order_placed");
       } catch (err) {
         console.log("[useOrderNotifier:admin] socket handler error:", err);
+      }
+    };
+
+    const onAdminPaymentVerified = (order: any) => {
+      try {
+        if (roleRef.current !== "admin" || !isAlarmEligibleOrder(order)) return;
+        ringForOrder(order, "socket:payment_verified");
+      } catch (err) {
+        console.log("[useOrderNotifier:admin] payment socket handler error:", err);
       }
     };
 
@@ -391,7 +412,7 @@ export function useOrderNotifier(
       try {
         if (roleRef.current !== "chef") return;
         if (!order) return;
-        if (order.isAdvanceVerified !== true) return;
+        if (!isAlarmEligibleOrder(order)) return;
         if (!isOrderOwnedByThisChef(order)) return;
         ringForOrder(order, "socket:advance_payment_verified");
       } catch (err) {
@@ -406,7 +427,7 @@ export function useOrderNotifier(
       try {
         if (roleRef.current !== "chef") return;
         if (!order) return;
-        if (order.isAdvanceVerified !== true) return;
+        if (!isAlarmEligibleOrder(order)) return;
         if (!isOrderOwnedByThisChef(order)) return;
         ringForOrder(order, "socket:new_chef_order");
       } catch (err) {
@@ -414,21 +435,16 @@ export function useOrderNotifier(
       }
     };
 
-    // Notification taps are handled here for the standalone Chef app and
-    // the Admin tab group. The handler is role-gated and supports cold start.
-    const handleNotificationResponse = (response: Notifications.NotificationResponse | null) => {
-      if (!response) return;
-      const data: any = response.notification?.request?.content?.data || {};
-      const dataRole = String(data.role || "").toLowerCase();
-      if (dataRole && dataRole !== roleRef.current) return;
-      const expectedScreen = roleRef.current === "admin" ? "admin-orders" : "chef-orders";
-      if (String(data.screen || "").toLowerCase() !== expectedScreen) return;
-      router.push((roleRef.current === "admin" ? "/admin/all-orders" : "/chefmanagement/all-orders") as any);
+    // Stop the currently ringing order as soon as the backend broadcasts
+    // that it has moved out of Placed (Accepted, Preparing, Cancelled, etc.).
+    const onOrderStatusUpdated = (order: any) => {
+      const orderId = order?.orderId ? String(order.orderId) : "";
+      const status = String(order?.orderStatus || "").trim().toLowerCase();
+      if (!orderId || status === "placed") return;
+      if (!rungOrderIdsRef.current.has(orderId)) return;
+      rungOrderIdsRef.current.delete(orderId);
+      void stopOrderAlarm();
     };
-    const responseSub = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
-    void Promise.resolve(Notifications.getLastNotificationResponseAsync?.()).then((response) => {
-      if (!cancelled) handleNotificationResponse(response);
-    }).catch((error) => console.log("[useOrderNotifier] cold-start response lookup failed:", error));
 
     // ─────────────────────────────────────────────────────────
     // 6. BOOTSTRAP
@@ -468,8 +484,9 @@ export function useOrderNotifier(
       // Wire socket listeners.
       if (roleRef.current === "admin") {
         socket.on("new_order_placed", onAdminNewOrder);
+        socket.on("payment_verified", onAdminPaymentVerified);
         console.log(
-          "[useOrderNotifier:admin] socket listener attached (new_order_placed)"
+          "[useOrderNotifier:admin] socket listeners attached (new_order_placed, payment_verified)"
         );
       } else {
         socket.on("advance_payment_verified", onChefVerifiedOrder);
@@ -478,6 +495,7 @@ export function useOrderNotifier(
           "[useOrderNotifier:chef] socket listeners attached (advance_payment_verified, new_chef_order)"
         );
       }
+      socket.on("order_status_updated", onOrderStatusUpdated);
     };
 
     void bootstrap();
@@ -489,10 +507,14 @@ export function useOrderNotifier(
     return () => {
       cancelled = true;
 
-      // Notification listener
+      // Notification listeners
       try {
-        notificationSub?.remove?.();
-        responseSub?.remove?.();
+        pushTokenRefreshSub.remove();
+      } catch {
+        // ignore
+      }
+      try {
+        notificationSub.remove();
       } catch (err) {
         console.log("[useOrderNotifier] notification cleanup error:", err);
       }
@@ -502,6 +524,7 @@ export function useOrderNotifier(
       // stale listeners behind.
       try {
         socket.off("new_order_placed", onAdminNewOrder);
+        socket.off("payment_verified", onAdminPaymentVerified);
       } catch {
         // ignore
       }
@@ -515,9 +538,14 @@ export function useOrderNotifier(
       } catch {
         // ignore
       }
+      try {
+        socket.off("order_status_updated", onOrderStatusUpdated);
+      } catch {
+        // ignore
+      }
 
       // Clear the dedupe map for this mount.
       rungOrderIdsRef.current.clear();
     };
-  }, [enabled, role, router]);
+  }, [enabled, role]);
 }

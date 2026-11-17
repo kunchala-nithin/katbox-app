@@ -969,6 +969,7 @@ export default function AllOrdersScreen() {
   //    Sound + vibration + 10s auto-stop are now fully owned by the
   //    shared singleton `client/src/lib/orderAlarm.ts`.
   const alarmIntervalRef = useRef<any>(null);
+  const activeAlarmOrderIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     async function setupNotifications() {
@@ -980,7 +981,7 @@ export default function AllOrdersScreen() {
             importance: Notifications.AndroidImportance?.MAX ?? 5,
             vibrationPattern: [0, 500, 250, 500],
             lightColor: '#22C55E',
-            sound: 'alarm',
+            sound: 'default',
             enableVibrate: true,
           });
         }
@@ -1046,19 +1047,28 @@ export default function AllOrdersScreen() {
       clearInterval(alarmIntervalRef.current);
       alarmIntervalRef.current = null;
     }
+    activeAlarmOrderIdRef.current = null;
     await stopOrderAlarm();
   };
 
+  const isOrderAlarmEligible = (orderItem: any) => {
+    const method = String(orderItem?.paymentMethod || '').toLowerCase();
+    const paymentStatus = String(orderItem?.paymentStatus || '').toLowerCase();
+    return ['cod', 'cash', 'cash_on_delivery'].includes(method) ||
+      paymentStatus === 'cash on delivery' ||
+      orderItem?.paymentCaptured === true ||
+      paymentStatus === 'paid' ||
+      orderItem?.isAdvanceVerified === true;
+  };
+
   const initAlarmCycleForPendingOrder = (orderItem: any) => {
-    clearAlarmAndSnoozeCycle();
-
-    startOrderAlarmSound();
-
-    // Remote push is delivered by the OS; keep this interval limited to
-    // the foreground in-app alarm to avoid duplicate tray notifications.
-    alarmIntervalRef.current = setInterval(() => {
-      startOrderAlarmSound();
-    }, 180000);
+    const orderId = String(orderItem?.orderId || '');
+    if (!orderId || activeAlarmOrderIdRef.current === orderId) return;
+    activeAlarmOrderIdRef.current = orderId;
+    // The backend sends a new push every three minutes. The app only needs
+    // to play the immediate foreground alarm here; no JS interval is used
+    // for background/terminated scheduling.
+    void startOrderAlarmSound();
   };
 
   const togglePriceDetails = () => {
@@ -1083,11 +1093,11 @@ export default function AllOrdersScreen() {
       if (res.data && res.data.success) {
         // Only show orders where advance payment has been verified by Admin ("Payment Received" / isAdvanceVerified: true)
         const allFetched = res.data.orders || [];
-        const fetched = allFetched.filter((o: any) => o.isAdvanceVerified === true);
+        const fetched = allFetched.filter((o: any) => isOrderAlarmEligible(o));
         setOrders(fetched);
 
         const hasPendingOrder = fetched.find(
-          (o: any) => (o.orderStatus || 'Placed').toLowerCase() === 'placed'
+          (o: any) => (o.orderStatus || 'Placed').toLowerCase() === 'placed' && isOrderAlarmEligible(o)
         );
 
         if (hasPendingOrder) {
@@ -1138,7 +1148,7 @@ export default function AllOrdersScreen() {
 
     const handleOrderUpdated = (updatedOrder: any) => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      if (updatedOrder.isAdvanceVerified === true) {
+      if (isOrderAlarmEligible(updatedOrder)) {
         setOrders((prev) => {
           const exists = prev.some((o) => o.orderId === updatedOrder.orderId);
           if (exists) {
@@ -1149,6 +1159,10 @@ export default function AllOrdersScreen() {
         });
       } else {
         setOrders((prev) => prev.filter((o) => o.orderId !== updatedOrder.orderId));
+      }
+      const updatedStatus = String(updatedOrder?.orderStatus || '').toLowerCase();
+      if (updatedStatus && updatedStatus !== 'placed') {
+        void clearAlarmAndSnoozeCycle();
       }
     };
 

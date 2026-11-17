@@ -22,13 +22,29 @@ void SplashScreen.preventAutoHideAsync().catch((error) => {
 })
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    const content: any = notification?.request?.content || {}
+    const data: any = content.data || {}
+    const channelId = String(content.channelId || data.channelId || "")
+    const isOrderAlarm =
+      channelId === "admin_orders_alarm_v2" ||
+      channelId === "chef_orders_alarm_v2" ||
+      content.sound === "alarm_10s.mp3" ||
+      content.sound === "alarm_10s" ||
+      content.sound === "alarm.mp3" ||
+      content.sound === "alarm"
+
+    return {
+      shouldShowAlert: true,
+      // In the foreground use the role hook's singleton audio alarm. This
+      // avoids Android playing both notification-channel sound and JS audio.
+      // In background/terminated states Android still plays channel sound.
+      shouldPlaySound: !isOrderAlarm,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }
+  },
 })
 
 /* ─────────────────────────────────────────────────────────────
@@ -38,8 +54,8 @@ if (Platform.OS === 'android') {
   ;(async () => {
     try {
       const alarmChannels = [
-        { id: 'admin_orders_alarm', name: 'Admin Order Alarms' },
-        { id: 'chef_orders_alarm', name: 'Chef Order Alarms' },
+        { id: 'admin_orders_alarm_v2', name: 'Admin Order Alarms' },
+        { id: 'chef_orders_alarm_v2', name: 'Chef Order Alarms' },
       ]
 
       for (const ch of alarmChannels) {
@@ -47,7 +63,7 @@ if (Platform.OS === 'android') {
           name: ch.name,
           importance: Notifications.AndroidImportance?.MAX ?? 5,
           vibrationPattern: [0, 600, 300, 600, 300],
-          sound: 'alarm',
+          sound: 'alarm_10s',
           enableVibrate: true,
           bypassDnd: true,
           lockscreenVisibility:
@@ -467,97 +483,60 @@ function InitialLayout() {
    */
 
   useEffect(() => {
+    if (isAuthenticated !== true || hasSeenOnboarding !== true) return;
     let isMounted = true
 
     const registerPushNotifications = async () => {
       try {
         const isExpoGo = Constants.appOwnership === 'expo'
-
-        if (isExpoGo) {
-          console.log(
-            '📱 Running in Expo Go - skipping remote push token registration'
-          )
-
-          return
-        }
-
+        if (isExpoGo) return
         const token = await registerForPushNotificationsAsync()
-
         if (token && isMounted) {
-          api
-            .patch('/api/auth/update-profile', {
-              pushToken: token,
-              pushRole: 'chef',
-            })
-            .catch((err) => {
-              console.log(
-                '❌ Push token save error:',
-                err
-              )
-            })
+          await api.post('/api/auth/notification-token', { token, role: 'chef' })
         }
       } catch (err) {
-        console.log(
-          '❌ Push notification registration error:',
-          err
-        )
+        console.log('❌ Chef push registration error:', err)
       }
     }
 
-    registerPushNotifications()
-
-    const subscription =
-      Notifications.addNotificationResponseReceivedListener(
-        async (response) => {
-          try {
-            const data =
-              response.notification.request.content.data
-
-            const user = await refreshUser()
-
-            if (data?.screen === 'chef-orders') {
-              router.push(
-                '/chefManagement/all-orders' as any
-              )
-
-              return
-            }
-
-            if (data?.screen === 'admin-orders') {
-              router.replace('/unauthorized' as any)
-
-              return
-            }
-
-            if (user?.isAdmin) {
-              router.replace('/unauthorized' as any)
-
-              return
-            }
-
-            if (user?.isChef) {
-              router.push(
-                '/chefManagement/all-orders' as any
-              )
-
-              return
-            }
-
-            router.replace('/unauthorized' as any)
-          } catch (err) {
-            console.log(
-              '❌ Notification navigation error:',
-              err
-            )
-          }
+    const handleNotificationResponse = async (response: Notifications.NotificationResponse) => {
+      try {
+        const data: any = response.notification.request.content.data || {}
+        const role = String(data.role || '').toLowerCase()
+        if (role && role !== 'chef') return
+        const user = await refreshUser()
+        if (!isMounted || !user || user.isChef !== true) {
+          router.replace('/unauthorized' as any)
+          return
         }
-      )
+        if (data?.screen === 'chef-orders' || role === 'chef') {
+          router.push('/chefManagement/all-orders' as any)
+        } else if (data?.screen === 'admin-orders' || user.isAdmin) {
+          router.replace('/unauthorized' as any)
+        }
+        void Notifications.clearLastNotificationResponseAsync().catch(() => undefined)
+      } catch (err) {
+        console.log('❌ Chef notification navigation error:', err)
+      }
+    }
+
+    void registerPushNotifications()
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      void handleNotificationResponse(response)
+    })
+    const pushTokenRefreshSubscription = Notifications.addPushTokenListener(() => {
+      if (isMounted) void registerPushNotifications()
+    })
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => { if (response) return handleNotificationResponse(response) })
+      .catch((err) => console.log('Chef notification cold-start error:', err))
 
     return () => {
       isMounted = false
       subscription.remove()
+      pushTokenRefreshSubscription.remove()
     }
-  }, [router])
+  }, [router, isAuthenticated, hasSeenOnboarding])
 
   /*
    * ------------------------------------------------------------

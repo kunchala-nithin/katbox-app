@@ -718,12 +718,11 @@ export default function CheckOutScreen() {
     const effectivePaymentMethod = paymentMethodOverride || selectedPaymentMethod;
     const isCashOnDelivery = effectivePaymentMethod === "cod";
 
-    // Cash on Delivery is intentionally unavailable for QuickBites.
-    // Keep this guard in the payment handler as well as the disabled UI so
-    // COD cannot be triggered by stale state or an indirect function call.
-    if (isQuickBites && isCashOnDelivery) {
+    // COD is displayed as a disabled option for every service. Keep this
+    // defensive guard so stale state or an indirect call cannot start COD.
+    if (isCashOnDelivery) {
       setSelectedPaymentMethod("");
-      Alert.alert("Payment method unavailable", "Cash on Delivery is currently unavailable for QuickBites. Please choose an online payment method.");
+      Alert.alert("Payment method unavailable", "Cash on Delivery is currently unavailable. Please choose Razorpay to pay securely online.");
       return;
     }
 
@@ -957,11 +956,15 @@ export default function CheckOutScreen() {
   };
 
   // QuickBites skips the amount-choice popup and immediately proceeds with
-  // the selected online method for the full order total. Cash on Delivery is disabled.
+  // the selected online method for the full order total. COD is disabled for all services.
   const handlePaymentMethodSelection = (
     method: "upi" | "card" | "netbanking" | "wallet" | "cod"
   ) => {
     if (loading || paymentInProgressRef.current) return;
+    if (method === "cod") {
+      Alert.alert("Payment method unavailable", "Cash on Delivery is currently unavailable. Please choose Razorpay.");
+      return;
+    }
     setSelectedPaymentMethod(method);
     setSelectedPaymentOption("full");
     if (isQuickBites) {
@@ -1745,7 +1748,7 @@ export default function CheckOutScreen() {
                   <Text style={styles.recommendedPillText}>Recommended</Text>
                 </View>
               </View>
-              <Text style={styles.paymentOptionSubtitle}>Pay using any UPI App</Text>
+              <Text style={styles.paymentOptionSubtitle}>Pay using any UPI app through Razorpay</Text>
             </View>
           </View>
           <Ionicons name="chevron-forward" size={18} color="#5B756C" />
@@ -1823,9 +1826,8 @@ export default function CheckOutScreen() {
           <Ionicons name="chevron-forward" size={18} color="#5B756C" />
         </TouchableOpacity>
 
-        {/* Cash on Delivery is shown as unavailable for QuickBites. */}
-        {isQuickBites && (
-          <View
+        {/* Cash on Delivery is visible but disabled for every service. */}
+        <View
             accessibilityRole="text"
             accessibilityLabel="Cash on Delivery unavailable"
             style={[
@@ -1869,7 +1871,6 @@ export default function CheckOutScreen() {
               UNAVAILABLE
             </Text>
           </View>
-        )}
 
         {/* Bottom Trust Badge Footer Banner */}
         <View style={styles.trustBadgeFooterContainer}>

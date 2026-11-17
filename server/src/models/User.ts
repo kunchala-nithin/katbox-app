@@ -33,65 +33,261 @@ export interface IUser extends Document {
   savedAddresses: ISavedAddress[];
   isChef: boolean;
   isAdmin: boolean;
-  /** Legacy single token retained for backwards compatibility. */
-  pushToken?: string;
-  /** Per-app tokens prevent the customer and standalone Chef apps overwriting each other. */
-  customerPushToken?: string;
-  adminPushToken?: string;
-  chefPushToken?: string;
+  pushToken?: string; // legacy token retained for backward compatibility
+  customerPushTokens: string[];
+  chefPushTokens: string[];
+  adminPushTokens: string[];
   orderHistory: mongoose.Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
 
-const savedAddressSchema = new Schema<ISavedAddress>({
-  id: { type: String },
-  title: { type: String, required: true },
-  houseDetails: { type: String, default: "" },
-  fullAddress: { type: String, required: true },
-  latitude: { type: Number, default: 0 },
-  longitude: { type: Number, default: 0 },
-  tag: { type: String, enum: ["Home", "Work", "Other"], default: "Home" },
-  createdAt: { type: Date, default: Date.now },
-}, { _id: true });
+const savedAddressSchema = new Schema<ISavedAddress>(
+  {
+    id: {
+      type: String,
+    },
 
-const activeAddressSchema = new Schema<IActiveAddress>({
-  id: { type: String },
-  title: { type: String, default: "Current Location" },
-  houseDetails: { type: String, default: "" },
-  fullAddress: { type: String, default: "" },
-  latitude: { type: Number, default: 0 },
-  longitude: { type: Number, default: 0 },
-  tag: { type: String, enum: ["Home", "Work", "Other"], default: "Home" },
-  updatedAt: { type: Date, default: Date.now },
-}, { _id: false });
+    title: {
+      type: String,
+      required: true,
+    },
 
-const userSchema = new Schema<IUser>({
-  clerkId: { type: String, unique: true, sparse: true, trim: true },
-  name: { type: String, required: true, trim: true },
-  phone: { type: String, required: true, default: "", trim: true, index: true },
-  email: { type: String, default: "", trim: true, lowercase: true },
-  address: { type: String, default: "" },
-  activeAddress: { type: activeAddressSchema, default: null },
-  savedAddresses: { type: [savedAddressSchema], default: [] },
-  isChef: { type: Boolean, default: false },
-  isAdmin: { type: Boolean, default: false },
-  pushToken: { type: String, default: "" },
-  customerPushToken: { type: String, default: "" },
-  adminPushToken: { type: String, default: "" },
-  chefPushToken: { type: String, default: "" },
-  orderHistory: [{ type: Schema.Types.ObjectId, ref: "Order" }],
-}, { timestamps: true });
+    houseDetails: {
+      type: String,
+      default: "",
+    },
 
-userSchema.index({ phone: 1 }, {
-  unique: true,
-  partialFilterExpression: { phone: { $type: "string", $gt: "" } },
-  name: "uniq_nonempty_user_phone",
-});
-userSchema.index({ email: 1 }, {
-  unique: true,
-  partialFilterExpression: { email: { $type: "string", $gt: "" } },
-  name: "uniq_nonempty_user_email",
-});
+    fullAddress: {
+      type: String,
+      required: true,
+    },
 
-export default mongoose.models.User || mongoose.model<IUser>("User", userSchema);
+    latitude: {
+      type: Number,
+      default: 0,
+    },
+
+    longitude: {
+      type: Number,
+      default: 0,
+    },
+
+    tag: {
+      type: String,
+      enum: ["Home", "Work", "Other"],
+      default: "Home",
+    },
+
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
+    _id: true,
+  }
+);
+
+const activeAddressSchema = new Schema<IActiveAddress>(
+  {
+    id: {
+      type: String,
+    },
+
+    title: {
+      type: String,
+      default: "Current Location",
+    },
+
+    houseDetails: {
+      type: String,
+      default: "",
+    },
+
+    fullAddress: {
+      type: String,
+      default: "",
+    },
+
+    latitude: {
+      type: Number,
+      default: 0,
+    },
+
+    longitude: {
+      type: Number,
+      default: 0,
+    },
+
+    tag: {
+      type: String,
+      enum: ["Home", "Work", "Other"],
+      default: "Home",
+    },
+
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const userSchema = new Schema<IUser>(
+  {
+    /*
+     * Clerk user ID
+     *
+     * sparse + unique means:
+     * - two users cannot have the same Clerk ID
+     * - documents without a Clerk ID are allowed
+     */
+    clerkId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
+
+    /*
+     * User's display name
+     */
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    /*
+     * Indian mobile number
+     *
+     * A partial unique index below enforces one non-empty
+     * phone number per MongoDB user. Empty legacy values are
+     * excluded so multiple unlinked records can be migrated.
+     */
+    phone: {
+      type: String,
+      required: true,
+      default: "",
+      trim: true,
+      index: true,
+    },
+
+    /*
+     * Google email
+     *
+     * Always stored in normalized lowercase form.
+     */
+    email: {
+      type: String,
+      default: "",
+      trim: true,
+      lowercase: true,
+    },
+
+    /*
+     * Legacy/general address field
+     */
+    address: {
+      type: String,
+      default: "",
+    },
+
+    /*
+     * Currently active delivery address
+     */
+    activeAddress: {
+      type: activeAddressSchema,
+      default: null,
+    },
+
+    /*
+     * User's saved delivery addresses
+     */
+    savedAddresses: {
+      type: [savedAddressSchema],
+      default: [],
+    },
+
+    /*
+     * Chef role
+     */
+    isChef: {
+      type: Boolean,
+      default: false,
+    },
+
+    /*
+     * Admin role
+     */
+    isAdmin: {
+      type: Boolean,
+      default: false,
+    },
+
+    /*
+     * Expo push notification token
+     */
+    pushToken: {
+      type: String,
+      default: "",
+    },
+
+    // Role-scoped Expo tokens. Arrays support multiple devices and prevent
+    // the customer app from overwriting the chef/admin app's registration.
+    customerPushTokens: { type: [String], default: [] },
+    chefPushTokens: { type: [String], default: [] },
+    adminPushTokens: { type: [String], default: [] },
+
+    /*
+     * Orders belonging to this user
+     */
+    orderHistory: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "Order",
+      },
+    ],
+  },
+  {
+    timestamps: true,
+  }
+);
+
+/*
+ * Authentication identity constraints.
+ *
+ * Empty phone/email values are excluded so OTP-only users can keep an
+ * empty email until they link Google. Before deploying these indexes,
+ * check and resolve any existing duplicate non-empty phone/email values.
+ */
+userSchema.index(
+  { phone: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      phone: { $type: "string", $gt: "" },
+    },
+    name: "uniq_nonempty_user_phone",
+  }
+);
+
+userSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      email: { $type: "string", $gt: "" },
+    },
+    name: "uniq_nonempty_user_email",
+  }
+);
+
+/*
+ * Reuse the existing model during hot reloads/server restarts.
+ */
+export default mongoose.models.User ||
+  mongoose.model<IUser>("User", userSchema);
