@@ -1,6 +1,12 @@
 import React from 'react';
 import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
 
+/**
+ * Clerk returns to this registered Expo Router route after Google OAuth.
+ * Keep this screen passive: startOAuthFlow() in login.tsx receives the
+ * OAuth result, activates the Clerk session, and the root layout performs
+ * the existing MongoDB-role-based navigation after KatBox authentication.
+ */
 export default function OAuthCallback() {
   return (
     <View style={styles.container}>

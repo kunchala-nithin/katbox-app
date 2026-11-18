@@ -92,6 +92,9 @@ if (Platform.OS === 'android') {
   })()
 }
 
+const LAST_HANDLED_NOTIFICATION_RESPONSE_KEY =
+  'katbox_last_handled_notification_response'
+
 const CLERK_PUBLISHABLE_KEY =
   process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY
 
@@ -174,6 +177,16 @@ function InitialLayout() {
 
   const [isAuthenticated, setIsAuthenticated] =
     useState<boolean | null>(null)
+
+  /**
+   * Resolve the first authenticated destination only once per app
+   * launch. This prevents a restored Orders/Profile tab from becoming
+   * the normal cold-start screen, while preserving notification taps.
+   */
+  const initialNavigationHandledRef = useRef(false)
+  const startupNotificationRouteRef = useRef(false)
+  const [initialNavigationResolved, setInitialNavigationResolved] =
+    useState(false)
 
   const [fontsLoaded, fontError] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
@@ -541,58 +554,238 @@ function InitialLayout() {
    */
 
   useEffect(() => {
-    if (isAuthenticated !== true) return;
+    if (
+      isAuthenticated !== true ||
+      !rootNavigationState?.key
+    ) {
+      return
+    }
+
     let isMounted = true
+    let startupCheckCompleted = false
+    let subscription: Notifications.Subscription | null = null
+
+    const shouldResolveInitialNavigation =
+      !initialNavigationHandledRef.current
+
+    // Claim this one-time startup check before awaiting any asynchronous work.
+    if (shouldResolveInitialNavigation) {
+      initialNavigationHandledRef.current = true
+    }
 
     const registerPushNotifications = async () => {
       try {
         const isExpoGo = Constants.appOwnership === 'expo'
         if (isExpoGo) return
+
         const token = await registerForPushNotificationsAsync()
+
         if (token && isMounted) {
-          await api.post('/api/auth/notification-token', { token, role: 'customer' })
+          await api.post('/api/auth/notification-token', {
+            token,
+            role: 'customer',
+          })
         }
       } catch (err) {
         console.log('❌ Customer push registration error:', err)
       }
     }
 
-    const handleNotificationResponse = async (response: Notifications.NotificationResponse) => {
+    /**
+     * Returns true only when this response was successfully handled.
+     *
+     * The response is cleared immediately so an old response cannot be
+     * replayed on the next launch if user lookup or navigation fails.
+     * The notification identifier is also persisted to protect against
+     * Expo returning the same already-consumed response again.
+     */
+    const handleNotificationResponse = async (
+      response: Notifications.NotificationResponse,
+      isColdStart = false
+    ): Promise<boolean> => {
       try {
-        const data: any = response.notification.request.content.data || {}
+        const responseId = response.notification.request.identifier
+
+        await Notifications.clearLastNotificationResponseAsync().catch(
+          () => undefined
+        )
+
+        if (responseId) {
+          const previouslyHandledId = await SecureStore.getItemAsync(
+            LAST_HANDLED_NOTIFICATION_RESPONSE_KEY
+          )
+
+          if (previouslyHandledId === responseId) {
+            console.log(
+              'ℹ️ Ignoring an already handled customer notification response.'
+            )
+            return false
+          }
+        }
+
+        const data: any =
+          response.notification.request.content.data || {}
         const user = await getUser()
-        if (!isMounted || !user) return
+
+        if (!isMounted || !user) return false
+
         const role = String(data.role || '').toLowerCase()
-        if ((data?.screen === 'admin-orders' || role === 'admin') && user.isAdmin === true) {
-          router.push('/admin/all-orders' as any)
+
+        if (
+          (data?.screen === 'admin-orders' || role === 'admin') &&
+          user.isAdmin === true
+        ) {
+          if (isColdStart) {
+            router.replace('/admin/all-orders' as any)
+          } else {
+            router.push('/admin/all-orders' as any)
+          }
         } else {
           // Chef notifications opened in the Customer app fall back to the
           // user's customer order history; Chef operations stay in Chef app.
-          router.push('/(tabs)/Orders' as any)
+          if (isColdStart) {
+            router.replace('/(tabs)/Orders' as any)
+          } else {
+            router.push('/(tabs)/Orders' as any)
+          }
         }
-        void Notifications.clearLastNotificationResponseAsync().catch(() => undefined)
+
+        if (responseId) {
+          await SecureStore.setItemAsync(
+            LAST_HANDLED_NOTIFICATION_RESPONSE_KEY,
+            responseId
+          ).catch((storageError) => {
+            console.log(
+              'Customer notification response persistence error:',
+              storageError
+            )
+          })
+        }
+
+        return true
       } catch (err) {
         console.log('❌ Notification navigation error:', err)
+        return false
+      }
+    }
+
+    const initializeStartupNavigation = async () => {
+      // After the first startup decision, auth changes only need to
+      // re-register the live notification listener.
+      if (!shouldResolveInitialNavigation) {
+        subscription =
+          Notifications.addNotificationResponseReceivedListener(
+            (response) => {
+              void handleNotificationResponse(response, false)
+            }
+          )
+
+        startupCheckCompleted = true
+
+        if (isMounted) {
+          setInitialNavigationResolved(true)
+        }
+
+        return
+      }
+
+      try {
+        const lastResponse =
+          await Notifications.getLastNotificationResponseAsync()
+
+        if (!isMounted) return
+
+        let openedFromNotification = false
+
+        if (lastResponse) {
+          openedFromNotification = await handleNotificationResponse(
+            lastResponse,
+            true
+          )
+
+          if (openedFromNotification) {
+            startupNotificationRouteRef.current = true
+          }
+        }
+
+        if (!isMounted) return
+
+        /*
+         * A notification tap has priority over the restored navigation
+         * state. Otherwise, a cold launch restored inside the customer
+         * tabs always starts at Home instead of Orders or Profile.
+         *
+         * Public routes are left to the existing authentication guard,
+         * and admin/screens deep links are not overwritten here.
+         */
+        if (
+          !openedFromNotification &&
+          segments[0] === '(tabs)'
+        ) {
+          router.replace('/(tabs)/Home' as any)
+        }
+
+        // Listen for new notification taps only after the cold-start
+        // response has been consumed, avoiding duplicate handling.
+        subscription =
+          Notifications.addNotificationResponseReceivedListener(
+            (response) => {
+              void handleNotificationResponse(response, false)
+            }
+          )
+
+        startupCheckCompleted = true
+
+        if (isMounted) {
+          setInitialNavigationResolved(true)
+        }
+      } catch (err) {
+        console.log(
+          'Customer notification cold-start error:',
+          err
+        )
+
+        if (isMounted) {
+          // Fail safely to Home for a restored customer tab route.
+          if (segments[0] === '(tabs)') {
+            router.replace('/(tabs)/Home' as any)
+          }
+
+          setInitialNavigationResolved(true)
+        }
+
+        startupCheckCompleted = true
       }
     }
 
     void registerPushNotifications()
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      void handleNotificationResponse(response)
-    })
-    const pushTokenRefreshSubscription = Notifications.addPushTokenListener(() => {
-      if (isMounted) void registerPushNotifications()
-    })
-    void Notifications.getLastNotificationResponseAsync()
-      .then((response) => { if (response) return handleNotificationResponse(response) })
-      .catch((err) => console.log('Customer notification cold-start error:', err))
+
+    const pushTokenRefreshSubscription =
+      Notifications.addPushTokenListener(() => {
+        if (isMounted) {
+          void registerPushNotifications()
+        }
+      })
+
+    void initializeStartupNavigation()
 
     return () => {
       isMounted = false
-      subscription.remove()
+
+      subscription?.remove()
       pushTokenRefreshSubscription.remove()
+
+      // If the effect was interrupted before completing, allow a later
+      // authenticated render to retry the startup decision.
+      if (!startupCheckCompleted) {
+        initialNavigationHandledRef.current = false
+      }
     }
-  }, [router, isAuthenticated])
+  }, [
+    router,
+    isAuthenticated,
+    rootNavigationState?.key,
+  ])
 
   /*
    * ------------------------------------------------------------
@@ -629,6 +822,12 @@ function InitialLayout() {
       return
     }
 
+    // Wait until cold-start notification handling has decided whether to
+    // open Orders/Admin or use the normal Home destination.
+    if (isAuthenticated && !initialNavigationResolved) {
+      return
+    }
+
     const currentSegment = segments[0] as string | undefined
 
     /*
@@ -648,6 +847,14 @@ function InitialLayout() {
       currentSegment === 'login' ||
       currentSegment === 'verify' ||
       currentSegment === 'oauth-callback'
+
+    if (isAuthenticated && startupNotificationRouteRef.current) {
+      if (isPublicRoute) {
+        return
+      }
+
+      startupNotificationRouteRef.current = false
+    }
 
     /*
      * ----------------------------------------------------------
@@ -732,6 +939,7 @@ function InitialLayout() {
     router,
     getRoleRoute,
     rootNavigationState?.key,
+    initialNavigationResolved,
   ])
 
   /*

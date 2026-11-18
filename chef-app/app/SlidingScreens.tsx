@@ -20,10 +20,10 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window')
 const ONBOARDING_COMPLETED_KEY = 'katbox_chef_onboarding_completed'
 
 const SLIDES = [
-  { id: 1, source: require('../assets/images/slide1.png') },
-  { id: 2, source: require('../assets/images/slide2.png') },
-  { id: 3, source: require('../assets/images/slide3.png') },
-  { id: 4, source: require('../assets/images/slide4.png') },
+  { id: 1, source: require('../assets/images/slide1.webp') },
+  { id: 2, source: require('../assets/images/slide2.webp') },
+  { id: 3, source: require('../assets/images/slide3.webp') },
+  { id: 4, source: require('../assets/images/slide4.webp') },
 ]
 
 const SlidingScreens = () => {

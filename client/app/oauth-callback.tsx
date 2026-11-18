@@ -1,31 +1,32 @@
-import { useEffect } from 'react'
-import { View, ActivityIndicator } from 'react-native'
+import React from 'react'
+import { ActivityIndicator, View, StyleSheet, Text } from 'react-native'
 
 /**
- * Deep-link landing page for Clerk OAuth.
- *
- * The WebBrowser flow in login.tsx intercepts the redirect
- * before this screen is normally shown, but Expo Router
- * requires the route to exist so it can register the scheme.
- *
- * This screen is intentionally minimal — no UI, no logic,
- * just a spinner in case the user momentarily lands here.
+ * Clerk OAuth deep-link landing route.
+ * Clerk's startOAuthFlow() completes the browser callback and returns
+ * control to login.tsx, which activates the session and synchronizes it
+ * with the KatBox backend. This route intentionally does not navigate.
  */
 export default function OAuthCallback() {
-  useEffect(() => {
-    // no-op — Clerk's WebBrowser handles the session.
-  }, [])
-
   return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#FAF8F5',
-      }}
-    >
-      <ActivityIndicator size="large" color="#166538" />
+    <View style={styles.container}>
+      <ActivityIndicator size="large" color="#166348" />
+      <Text style={styles.text}>Completing secure sign-in…</Text>
     </View>
   )
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  text: {
+    marginTop: 14,
+    color: '#166348',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+})

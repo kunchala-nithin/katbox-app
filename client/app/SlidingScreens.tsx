@@ -6,13 +6,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const SLIDES = [
-  { id: 0, source: require('../assets/images/slide0.png') },
-  { id: 1, source: require('../assets/images/slide1.png') },
-  { id: 2, source: require('../assets/images/slide2.png') }, 
-  { id: 3, source: require('../assets/images/slide3.png') }, 
-  { id: 4, source: require('../assets/images/slide4.png') }, 
+  { id: 0, source: require('../assets/images/slide0.webp') },
+  { id: 1, source: require('../assets/images/slide1.webp') },
+  { id: 2, source: require('../assets/images/slide2.webp') },
+  { id: 3, source: require('../assets/images/slide3.webp') },
+  { id: 4, source: require('../assets/images/slide4.webp') },
 ];
-
 const SlidingScreens = () => {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const router = useRouter();
@@ -34,7 +33,7 @@ const SlidingScreens = () => {
     if (currentSlideIndex < SLIDES.length - 1) {
       scrollToSlide(currentSlideIndex + 1);
     } else {
-      scrollToSlide(0); 
+      scrollToSlide(0);
     }
   };
 
@@ -49,7 +48,7 @@ const SlidingScreens = () => {
   };
 
   const handleGetStarted = () => {
-    router.replace('/login'); 
+    router.replace('/login');
   };
 
   const handleScrollEnd = (event: any) => {
@@ -63,11 +62,11 @@ const SlidingScreens = () => {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
-      
+
       {/* Top-Right Small Skip Pill Button */}
       {!isLastSlide && (
-        <TouchableOpacity 
-          style={[styles.topSkipPill, { top: Math.max(insets.top, 16) + 6 }]} 
+        <TouchableOpacity
+          style={[styles.topSkipPill, { top: Math.max(insets.top, 16) + 6 }]}
           onPress={handleSkip}
           activeOpacity={0.8}
         >
@@ -89,10 +88,10 @@ const SlidingScreens = () => {
         >
           {SLIDES.map((slide) => (
             <View key={slide.id} style={styles.slideWrapper}>
-              <Image 
-                source={slide.source} 
+              <Image
+                source={slide.source}
                 style={styles.image}
-                resizeMode="contain" 
+                resizeMode="contain"
               />
             </View>
           ))}
@@ -104,8 +103,8 @@ const SlidingScreens = () => {
         {isLastSlide ? (
           /* UI Layout specifically for Slide 4 */
           <View style={styles.fullWidthLayout}>
-            <TouchableOpacity 
-              style={styles.getStartedButton} 
+            <TouchableOpacity
+              style={styles.getStartedButton}
               onPress={handleGetStarted}
               activeOpacity={0.88}
             >
@@ -113,7 +112,7 @@ const SlidingScreens = () => {
               <Text style={styles.arrowIcon}>→</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.bottomBackLink}
               onPress={handlePrev}
               activeOpacity={0.7}
@@ -124,9 +123,9 @@ const SlidingScreens = () => {
             {/* Centered Pagination Dots */}
             <View style={[styles.dotContainer, styles.centeredDots]}>
               {SLIDES.map((_, index) => (
-                <View 
+                <View
                   key={index}
-                  style={index === currentSlideIndex ? styles.activeDot : styles.inactiveDot} 
+                  style={index === currentSlideIndex ? styles.activeDot : styles.inactiveDot}
                 />
               ))}
             </View>
@@ -137,9 +136,9 @@ const SlidingScreens = () => {
             {/* Left Side: Dynamic Pagination Dots */}
             <View style={styles.dotContainer}>
               {SLIDES.map((_, index) => (
-                <View 
+                <View
                   key={index}
-                  style={index === currentSlideIndex ? styles.activeDot : styles.inactiveDot} 
+                  style={index === currentSlideIndex ? styles.activeDot : styles.inactiveDot}
                 />
               ))}
             </View>
@@ -147,16 +146,16 @@ const SlidingScreens = () => {
             {/* Right Side: Action Buttons */}
             <View style={styles.buttonContainer}>
               {!isFirstSlide && (
-                <TouchableOpacity 
-                  style={styles.prevButton} 
+                <TouchableOpacity
+                  style={styles.prevButton}
                   onPress={handlePrev}
                   activeOpacity={0.88}
                 >
                   <Text style={styles.prevButtonText}>Back</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity 
-                style={styles.nextButton} 
+              <TouchableOpacity
+                style={styles.nextButton}
                 onPress={handleNext}
                 activeOpacity={0.88}
               >
@@ -173,7 +172,7 @@ const SlidingScreens = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAF8F5', 
+    backgroundColor: '#FAF8F5',
   },
   topBackPill: {
     position: 'absolute',
@@ -221,7 +220,7 @@ const styles = StyleSheet.create({
   },
   imageContainer: {
     width: '100%',
-    height: '80%', 
+    height: '80%',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -237,12 +236,12 @@ const styles = StyleSheet.create({
   },
   image: {
     width: '95%',
-    height: '93%', 
-    marginTop: 20, 
+    height: '93%',
+    marginTop: 20,
   },
   unifiedControlsContainer: {
     position: 'absolute',
-    bottom: 26, 
+    bottom: 26,
     left: 20,
     right: 20,
     height: 120,
@@ -284,7 +283,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
     flex: 1,
-    paddingLeft: 24, 
+    paddingLeft: 24,
     letterSpacing: 0.2,
   },
   arrowIcon: {
@@ -315,14 +314,14 @@ const styles = StyleSheet.create({
     width: 22,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#072C0D', 
+    backgroundColor: '#072C0D',
     marginHorizontal: 4,
   },
   inactiveDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: 'rgba(7, 44, 13, 0.18)', 
+    backgroundColor: 'rgba(7, 44, 13, 0.18)',
     marginHorizontal: 4,
   },
   buttonContainer: {

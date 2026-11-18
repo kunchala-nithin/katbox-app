@@ -437,7 +437,9 @@ const Login = () => {
 
 
 
-      const redirectUrl = 'clerk://com.katbox.chef.callback'
+      const redirectUrl = Linking.createURL('/oauth-callback', {
+        scheme: 'katboxchef',
+      })
 
 
 
@@ -1538,7 +1540,7 @@ const Login = () => {
 
       <ImageBackground
 
-        source={require('@/assets/images/login.png')}
+        source={require('@/assets/images/login.webp')}
 
         style={styles.backgroundImage}
 
