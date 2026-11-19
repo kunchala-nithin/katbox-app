@@ -644,9 +644,9 @@ function InitialLayout() {
           // Chef notifications opened in the Customer app fall back to the
           // user's customer order history; Chef operations stay in Chef app.
           if (isColdStart) {
-            router.replace('/(tabs)/Orders' as any)
+            router.replace('/(tabs)/orders' as any)
           } else {
-            router.push('/(tabs)/Orders' as any)
+            router.push('/(tabs)/orders' as any)
           }
         }
 
@@ -690,8 +690,29 @@ function InitialLayout() {
       }
 
       try {
-        const lastResponse =
-          await Notifications.getLastNotificationResponseAsync()
+        let lastResponse: Notifications.NotificationResponse | null = null
+
+        const currentRootSegment = String(segments[0] ?? '')
+        const isAuthenticationFlow =
+          currentRootSegment === 'login' ||
+          currentRootSegment === 'oauth-callback' ||
+          currentRootSegment === 'verify'
+
+        if (isAuthenticationFlow) {
+          // A response left over from an earlier session must not override
+          // the normal post-login destination. Real notification taps that
+          // arrive after authentication are still handled by the live
+          // notification-response listener below.
+          await Notifications.clearLastNotificationResponseAsync().catch(
+            () => undefined
+          )
+          console.log(
+            'ℹ️ Ignoring a pending notification response during authentication.'
+          )
+        } else {
+          lastResponse =
+            await Notifications.getLastNotificationResponseAsync()
+        }
 
         if (!isMounted) return
 
@@ -784,6 +805,7 @@ function InitialLayout() {
   }, [
     router,
     isAuthenticated,
+    segments,
     rootNavigationState?.key,
   ])
 

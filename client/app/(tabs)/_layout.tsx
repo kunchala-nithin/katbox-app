@@ -33,7 +33,7 @@ const TAB_CONFIG: Record<
     activeIcon: 'home',
   },
 
-  Orders: {
+  orders: {
     label: 'Orders',
     icon: 'receipt-outline',
     activeIcon: 'receipt',
@@ -293,7 +293,7 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen name="Home" />
-      <Tabs.Screen name="Orders" />
+      <Tabs.Screen name="orders" />
       <Tabs.Screen name="Profile" />
   
     </Tabs>
