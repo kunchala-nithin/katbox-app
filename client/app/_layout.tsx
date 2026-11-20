@@ -25,8 +25,8 @@ Notifications.setNotificationHandler({
     const data: any = content.data || {}
     const channelId = String(content.channelId || data.channelId || "")
     const isOrderAlarm =
-      channelId === "admin_orders_alarm_v2" ||
-      channelId === "chef_orders_alarm_v2" ||
+      (channelId === "admin_orders_alarm_v2" || channelId === "admin_orders_alarm_v3") ||
+      (channelId === "chef_orders_alarm_v2" || channelId === "chef_orders_alarm_v3") ||
       content.sound === "alarm_10s.mp3" ||
       content.sound === "alarm_10s" ||
       content.sound === "alarm.mp3" ||
@@ -63,8 +63,8 @@ if (Platform.OS === 'android') {
   ;(async () => {
     try {
       const alarmChannels = [
-        { id: 'admin_orders_alarm_v2', name: 'Admin Order Alarms' },
-        { id: 'chef_orders_alarm_v2', name: 'Chef Order Alarms' },
+        { id: 'admin_orders_alarm_v3', name: 'Admin Order Alarms' },
+        { id: 'chef_orders_alarm_v3', name: 'Chef Order Alarms' },
       ]
 
       for (const ch of alarmChannels) {
@@ -72,7 +72,7 @@ if (Platform.OS === 'android') {
           name: ch.name,
           importance: Notifications.AndroidImportance?.MAX ?? 5,
           vibrationPattern: [0, 600, 300, 600, 300],
-          sound: 'alarm_10s',
+          sound: 'alarm.mp3',
           enableVibrate: true,
           bypassDnd: true,
           lockscreenVisibility:
@@ -219,7 +219,7 @@ function InitialLayout() {
    * Chef management is available only in the standalone Chef app.
    *
    * Customer:
-   *     /(tabs)/
+   *     /(tabs)/Home
    */
 
   const getRoleRoute = useCallback(async () => {
@@ -231,7 +231,7 @@ function InitialLayout() {
           '⚠️ No stored Katbox user found. Using customer Home route.'
         )
 
-        return '/(tabs)/'
+        return '/(tabs)/Home'
       }
 
       console.log('👤 Stored Katbox user:', {
@@ -248,11 +248,11 @@ function InitialLayout() {
         return '/admin/all-users'
       }
 
-      return '/(tabs)/'
+      return '/(tabs)/Home'
     } catch (error) {
       console.log('❌ Role route resolution error:', error)
 
-      return '/(tabs)/'
+      return '/(tabs)/Home'
     }
   }, [])
 
@@ -581,9 +581,15 @@ function InitialLayout() {
         const token = await registerForPushNotificationsAsync()
 
         if (token && isMounted) {
+          const storedUser = await getUser()
+          if (!storedUser) {
+            console.log('⚠️ Push token registration skipped: KatBox user profile is not available yet.')
+            return
+          }
+          const notificationRole = storedUser.isAdmin === true ? 'admin' : 'customer'
           await api.post('/api/auth/notification-token', {
             token,
-            role: 'customer',
+            role: notificationRole,
           })
         }
       } catch (err) {
@@ -644,9 +650,9 @@ function InitialLayout() {
           // Chef notifications opened in the Customer app fall back to the
           // user's customer order history; Chef operations stay in Chef app.
           if (isColdStart) {
-            router.replace('/(tabs)/orders' as any)
+            router.replace('/(tabs)/Orders' as any)
           } else {
-            router.push('/(tabs)/orders' as any)
+            router.push('/(tabs)/Orders' as any)
           }
         }
 
@@ -690,29 +696,8 @@ function InitialLayout() {
       }
 
       try {
-        let lastResponse: Notifications.NotificationResponse | null = null
-
-        const currentRootSegment = String(segments[0] ?? '')
-        const isAuthenticationFlow =
-          currentRootSegment === 'login' ||
-          currentRootSegment === 'oauth-callback' ||
-          currentRootSegment === 'verify'
-
-        if (isAuthenticationFlow) {
-          // A response left over from an earlier session must not override
-          // the normal post-login destination. Real notification taps that
-          // arrive after authentication are still handled by the live
-          // notification-response listener below.
-          await Notifications.clearLastNotificationResponseAsync().catch(
-            () => undefined
-          )
-          console.log(
-            'ℹ️ Ignoring a pending notification response during authentication.'
-          )
-        } else {
-          lastResponse =
-            await Notifications.getLastNotificationResponseAsync()
-        }
+        const lastResponse =
+          await Notifications.getLastNotificationResponseAsync()
 
         if (!isMounted) return
 
@@ -743,7 +728,7 @@ function InitialLayout() {
           !openedFromNotification &&
           segments[0] === '(tabs)'
         ) {
-          router.replace('/(tabs)/' as any)
+          router.replace('/(tabs)/Home' as any)
         }
 
         // Listen for new notification taps only after the cold-start
@@ -769,7 +754,7 @@ function InitialLayout() {
         if (isMounted) {
           // Fail safely to Home for a restored customer tab route.
           if (segments[0] === '(tabs)') {
-            router.replace('/(tabs)/' as any)
+            router.replace('/(tabs)/Home' as any)
           }
 
           setInitialNavigationResolved(true)
@@ -805,7 +790,6 @@ function InitialLayout() {
   }, [
     router,
     isAuthenticated,
-    segments,
     rootNavigationState?.key,
   ])
 
@@ -952,7 +936,7 @@ function InitialLayout() {
             error
           )
 
-          router.replace('/(tabs)/' as any)
+          router.replace('/(tabs)/Home' as any)
         })
     }
   }, [

@@ -3,9 +3,9 @@ import User from "../models/User";
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const EXPO_RECEIPTS_URL = "https://exp.host/--/api/v2/push/getReceipts";
 
-export const ORDER_ALARM_SOUND = "alarm_10s.mp3";
-export const ADMIN_ORDER_CHANNEL_ID = "admin_orders_alarm_v2";
-export const CHEF_ORDER_CHANNEL_ID = "chef_orders_alarm_v2";
+export const ORDER_ALARM_SOUND = "alarm.mp3";
+export const ADMIN_ORDER_CHANNEL_ID = "admin_orders_alarm_v3";
+export const CHEF_ORDER_CHANNEL_ID = "chef_orders_alarm_v3";
 
 export interface ExpoPushPayload {
   token: string;

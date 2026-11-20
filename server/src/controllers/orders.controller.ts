@@ -21,7 +21,7 @@ import {
   ADMIN_ORDER_CHANNEL_ID,
   CHEF_ORDER_CHANNEL_ID,
 } from "../utils/expoPush";
-import { queueOrderNotification, stopOrderAlarmSchedules } from "../utils/orderNotifications";
+import { sendOrderNotification, stopOrderAlarmSchedules } from "../utils/orderNotifications";
 
 
 interface AuthRequest extends Request {
@@ -1523,27 +1523,27 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       await Cart.updateMany({ user: finalUserId, status: "in-cart" }, { $set: { status: "ordered" } });
     }
 
-    // Order and database relationships are saved. Persist notification jobs
-    // in the outbox before responding; actual Expo delivery runs separately.
+    // Order and database relationships are saved. COD notifications are sent
+    // directly to registered Expo tokens; pending Razorpay orders are not pushed.
     await (async () => {
     try {
       if (finalUserId) {
         io.to(finalUserId).emit("new_order_placed", savedOrder);
-        await queueOrderNotification({
-          orderId: String(savedOrder.orderId),
-          eventType: isCashOnDelivery ? "cod_order_customer_confirmation" : "razorpay_pending_customer_notice",
-          recipientUserId: String(finalUserId),
-          recipientRole: "customer",
-          payload: {
-            title: isCashOnDelivery ? "Order placed 🎉" : "Continue to secure payment",
-            body: isCashOnDelivery
-              ? `Your order #${savedOrder.orderId} is confirmed. ₹${savedOrder.totalAmount} is payable on delivery.`
-              : `Your order #${savedOrder.orderId} is saved. Complete Razorpay payment to confirm it.`,
-            data: { orderId: savedOrder.orderId, screen: "orders", role: "customer" },
-            sound: "default",
-            priority: "high",
-          },
-        });
+        if (isCashOnDelivery) {
+          await sendOrderNotification({
+            orderId: String(savedOrder.orderId),
+            eventType: "cod_order_customer_confirmation",
+            recipientUserId: String(finalUserId),
+            recipientRole: "customer",
+            payload: {
+              title: "Order placed 🎉",
+              body: `Your order #${savedOrder.orderId} is confirmed. ₹${savedOrder.totalAmount} is payable on delivery.`,
+              data: { orderId: savedOrder.orderId, screen: "orders", role: "customer" },
+              sound: "default",
+              priority: "high",
+            },
+          });
+        }
       }
 
       io.emit("new_order_placed", savedOrder);
@@ -1558,7 +1558,7 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
           const chefUserId = String(chefDocForCod.user);
           io.to(chefUserId).emit("new_chef_order", savedOrder);
           io.to(chefUserId).emit("order_updated", savedOrder);
-          await queueOrderNotification({
+          await sendOrderNotification({
             orderId: String(savedOrder.orderId),
             eventType: "cod_order_chef_alarm",
             recipientUserId: chefUserId,
@@ -1582,17 +1582,16 @@ export const createOrder = async (req: AuthRequest, res: Response) => {
       /* ──────────────────────────────────────────────────────────
          ✅ Notify EVERY admin with the alarm sound.
          • Runs AFTER the order is safely saved.
-         • Uses the batch endpoint so all admins are notified
-           in a single HTTP call.
-         • Sound = alarm.mp3, channel = admin_orders_alarm,
-           priority = "max", data.role = "admin".
-         • Never throws — wrapped in its own try/catch.
+         • Sends directly to each admin's registered Expo device tokens.
+         • Sound = alarm.mp3, channel = admin_orders_alarm_v3,
+           priority = high, data.role = admin.
+         • Delivery errors never affect the saved order.
          ────────────────────────────────────────────────────────── */
       if (isCashOnDelivery) {
         try {
           const admins = await User.find({ isAdmin: true }).select("_id");
           for (const admin of admins) {
-            await queueOrderNotification({
+            await sendOrderNotification({
               orderId: String(savedOrder.orderId),
               eventType: "cod_order_admin_alarm",
               recipientUserId: String(admin._id),

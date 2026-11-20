@@ -1261,6 +1261,7 @@ router.patch(
       } = req.body;
 
       const updateFields: any = {};
+      const pushTokenUpdates: Record<string, string> = {};
 
       /*
        * Email is deliberately ignored.
@@ -1301,8 +1302,12 @@ router.patch(
             });
           }
 
-          const tokenField = `${requestedRole}PushToken`;
-          updateFields[tokenField] = normalizedPushToken;
+          const tokenField = requestedRole === "admin"
+            ? "adminPushTokens"
+            : requestedRole === "chef"
+              ? "chefPushTokens"
+              : "customerPushTokens";
+          pushTokenUpdates[tokenField] = normalizedPushToken;
           // Keep the legacy token populated for old app builds while new
           // server senders prefer the role-specific fields.
           updateFields.pushToken = normalizedPushToken;
@@ -1463,12 +1468,15 @@ router.patch(
        * --------------------------------------------------------
        */
 
+      const profileUpdate: any = { $set: updateFields };
+      if (Object.keys(pushTokenUpdates).length > 0) {
+        profileUpdate.$addToSet = pushTokenUpdates;
+      }
+
       const updatedUser =
         await User.findByIdAndUpdate(
           userId,
-          {
-            $set: updateFields,
-          },
+          profileUpdate,
           {
             new: true,
             runValidators: true,
@@ -1829,6 +1837,7 @@ router.put(
       } = req.body;
 
       const updateFields: any = {};
+      const pushTokenUpdates: Record<string, string> = {};
 
       /*
        * IMPORTANT:
@@ -1867,8 +1876,12 @@ router.put(
             });
           }
 
-          const tokenField = `${requestedRole}PushToken`;
-          updateFields[tokenField] = normalizedPushToken;
+          const tokenField = requestedRole === "admin"
+            ? "adminPushTokens"
+            : requestedRole === "chef"
+              ? "chefPushTokens"
+              : "customerPushTokens";
+          pushTokenUpdates[tokenField] = normalizedPushToken;
           // Keep the legacy token populated for old app builds while new
           // server senders prefer the role-specific fields.
           updateFields.pushToken = normalizedPushToken;
@@ -2029,12 +2042,15 @@ router.put(
        * --------------------------------------------------------
        */
 
+      const profileUpdate: any = { $set: updateFields };
+      if (Object.keys(pushTokenUpdates).length > 0) {
+        profileUpdate.$addToSet = pushTokenUpdates;
+      }
+
       const updatedUser =
         await User.findByIdAndUpdate(
           userId,
-          {
-            $set: updateFields,
-          },
+          profileUpdate,
           {
             new: true,
             runValidators: true,

@@ -17,7 +17,6 @@ import bannerRoutes from "./routes/banner.routes";
 import websiteMessageRoutes from "./routes/websiteMessage.routes";
 import assistantRoutes from "./routes/assistant.routes";
 import { setSocketServer } from "./utils/socket";
-import { processNotificationOutbox, processOrderAlarmRepeats } from "./utils/orderNotifications";
 
 
 dotenv.config();
@@ -64,28 +63,7 @@ app.use("/api/banners", bannerRoutes);
 app.use("/api/messages", websiteMessageRoutes);
 app.use("/api/assistant", assistantRoutes);
 
-let notificationWorkerRunning = false;
-let orderAlarmRepeatWorkerRunning = false;
-void connectDB().then(() => {
-  // Durable notification outbox worker. It continues independently of
-  // request lifetimes and recovers stale processing jobs after a crash.
-  setInterval(() => {
-    if (notificationWorkerRunning) return;
-    notificationWorkerRunning = true;
-    void processNotificationOutbox(30)
-      .catch((error) => console.error("Notification outbox worker error:", error))
-      .finally(() => { notificationWorkerRunning = false; });
-  }, 5_000);
-  // Repeating chef/admin alarm scheduler. The durable schedule lives in
-  // MongoDB, so it survives API restarts and resumes after reconnecting.
-  setInterval(() => {
-    if (orderAlarmRepeatWorkerRunning) return;
-    orderAlarmRepeatWorkerRunning = true;
-    void processOrderAlarmRepeats(30)
-      .catch((error) => console.error("Order alarm repeat worker error:", error))
-      .finally(() => { orderAlarmRepeatWorkerRunning = false; });
-  }, 5_000);
-});
+void connectDB();
 app.route("/health")
   .get((_req, res) => res.status(200).json({ status: "OK" }))
   .head((_req, res) => res.status(200).end());

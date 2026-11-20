@@ -27,8 +27,8 @@ Notifications.setNotificationHandler({
     const data: any = content.data || {}
     const channelId = String(content.channelId || data.channelId || "")
     const isOrderAlarm =
-      channelId === "admin_orders_alarm_v2" ||
-      channelId === "chef_orders_alarm_v2" ||
+      (channelId === "admin_orders_alarm_v2" || channelId === "admin_orders_alarm_v3") ||
+      (channelId === "chef_orders_alarm_v2" || channelId === "chef_orders_alarm_v3") ||
       content.sound === "alarm_10s.mp3" ||
       content.sound === "alarm_10s" ||
       content.sound === "alarm.mp3" ||
@@ -54,8 +54,8 @@ if (Platform.OS === 'android') {
   ;(async () => {
     try {
       const alarmChannels = [
-        { id: 'admin_orders_alarm_v2', name: 'Admin Order Alarms' },
-        { id: 'chef_orders_alarm_v2', name: 'Chef Order Alarms' },
+        { id: 'admin_orders_alarm_v3', name: 'Admin Order Alarms' },
+        { id: 'chef_orders_alarm_v3', name: 'Chef Order Alarms' },
       ]
 
       for (const ch of alarmChannels) {
@@ -63,7 +63,7 @@ if (Platform.OS === 'android') {
           name: ch.name,
           importance: Notifications.AndroidImportance?.MAX ?? 5,
           vibrationPattern: [0, 600, 300, 600, 300],
-          sound: 'alarm_10s',
+          sound: 'alarm.mp3',
           enableVibrate: true,
           bypassDnd: true,
           lockscreenVisibility:

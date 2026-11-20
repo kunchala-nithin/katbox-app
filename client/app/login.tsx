@@ -914,7 +914,9 @@ const Login = () => {
 
 
       try {
+
         const clerkSessionToken = await getToken()
+
         if (!clerkSessionToken) {
           throw new Error('Your Google sign-in session expired. Please try again.')
         }
@@ -1186,8 +1188,6 @@ const Login = () => {
 
          *     JWT
 
-         *
-
          *     MongoDB user
 
          *
@@ -1291,8 +1291,8 @@ const Login = () => {
          * layout owns authenticated navigation and chooses the
          * correct destination from the saved MongoDB user role:
          *   Admin    -> /admin/all-users
-         *   Chef     -> /(tabs)/ (chef management is in the standalone Chef app)
-         *   Customer -> /(tabs)/
+         *   Chef     -> /(tabs)/Home (chef management is in the standalone Chef app)
+         *   Customer -> /(tabs)/Home
          *
          * This avoids competing navigation calls between login.tsx
          * and app/_layout.tsx.
@@ -1609,6 +1609,8 @@ const Login = () => {
     phoneNumber.length === 10 &&
 
     name.trim().length > 0
+
+
 
   /*
 

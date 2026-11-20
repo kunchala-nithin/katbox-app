@@ -45,11 +45,11 @@ import { startOrderAlarm, stopOrderAlarm } from "../lib/orderAlarm";
 // ─────────────────────────────────────────────────────────────
 
 /** Bundled sound file name (without extension is Android's requirement). */
-const ALARM_CHANNEL_SOUND = "alarm_10s";
+const ALARM_CHANNEL_SOUND = "alarm";
 
 /** Android channel ids — identical to the server's constants. */
-const ADMIN_ORDER_CHANNEL_ID = "admin_orders_alarm_v2";
-const CHEF_ORDER_CHANNEL_ID = "chef_orders_alarm_v2";
+const ADMIN_ORDER_CHANNEL_ID = "admin_orders_alarm_v3";
+const CHEF_ORDER_CHANNEL_ID = "chef_orders_alarm_v3";
 
 /** Vibration pattern for the Android channel (milliseconds). */
 const VIBRATION_PATTERN = [0, 600, 300, 600, 300];
