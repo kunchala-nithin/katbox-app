@@ -113,9 +113,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "d1f215a2-bf2e-4c7e-ba7c-244d2f5a6a28"
+        "projectId": "a1e7c85c-8566-467f-b04a-12c946a0692a"
       }
     },
-    "owner": "katbox-android"
+    "owner": "testkatbox"
   }
 }

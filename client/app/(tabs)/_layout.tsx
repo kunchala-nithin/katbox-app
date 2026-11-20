@@ -27,7 +27,7 @@ const TAB_CONFIG: Record<
     badgeCount?: number
   }
 > = {
-  Home: {
+  index: {
     label: 'Home',
     icon: 'home-outline',
     activeIcon: 'home',
@@ -188,7 +188,7 @@ export default function TabsLayout() {
 
   return (
     <Tabs
-      initialRouteName="Home"
+      initialRouteName="index"
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
@@ -238,7 +238,7 @@ export default function TabsLayout() {
                       canPreventDefault: true,
                     })
 
-                  if (route.name === 'Home') {
+                  if (route.name === 'index') {
                     const now = Date.now()
 
                     if (
@@ -249,7 +249,7 @@ export default function TabsLayout() {
                     ) {
                       // Home is inside the (tabs) route group.
                       router.replace(
-                        '/(tabs)/Home' as any
+                        '/(tabs)/' as any
                       )
                     } else if (
                       !isFocused &&
@@ -292,7 +292,7 @@ export default function TabsLayout() {
         )
       }}
     >
-      <Tabs.Screen name="Home" />
+      <Tabs.Screen name="index" />
       <Tabs.Screen name="orders" />
       <Tabs.Screen name="Profile" />
   

@@ -219,7 +219,7 @@ function InitialLayout() {
    * Chef management is available only in the standalone Chef app.
    *
    * Customer:
-   *     /(tabs)/Home
+   *     /(tabs)/
    */
 
   const getRoleRoute = useCallback(async () => {
@@ -231,7 +231,7 @@ function InitialLayout() {
           '⚠️ No stored Katbox user found. Using customer Home route.'
         )
 
-        return '/(tabs)/Home'
+        return '/(tabs)/'
       }
 
       console.log('👤 Stored Katbox user:', {
@@ -248,11 +248,11 @@ function InitialLayout() {
         return '/admin/all-users'
       }
 
-      return '/(tabs)/Home'
+      return '/(tabs)/'
     } catch (error) {
       console.log('❌ Role route resolution error:', error)
 
-      return '/(tabs)/Home'
+      return '/(tabs)/'
     }
   }, [])
 
@@ -743,7 +743,7 @@ function InitialLayout() {
           !openedFromNotification &&
           segments[0] === '(tabs)'
         ) {
-          router.replace('/(tabs)/Home' as any)
+          router.replace('/(tabs)/' as any)
         }
 
         // Listen for new notification taps only after the cold-start
@@ -769,7 +769,7 @@ function InitialLayout() {
         if (isMounted) {
           // Fail safely to Home for a restored customer tab route.
           if (segments[0] === '(tabs)') {
-            router.replace('/(tabs)/Home' as any)
+            router.replace('/(tabs)/' as any)
           }
 
           setInitialNavigationResolved(true)
@@ -952,7 +952,7 @@ function InitialLayout() {
             error
           )
 
-          router.replace('/(tabs)/Home' as any)
+          router.replace('/(tabs)/' as any)
         })
     }
   }, [
