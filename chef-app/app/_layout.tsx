@@ -3,85 +3,19 @@ import { useFonts } from 'expo-font'
 import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Platform, AppState, AppStateStatus } from 'react-native'
-import * as Notifications from 'expo-notifications'
-import * as Device from 'expo-device'
+import { AppState, AppStateStatus } from 'react-native'
 import * as SecureStore from 'expo-secure-store'
-import Constants from 'expo-constants'
 import { ClerkProvider } from '@clerk/clerk-expo'
 
 import { getToken, removeToken, getUser, refreshUser } from '@/src/lib/authStorage'
 import { subscribeAuth } from '@/src/lib/authEvents'
 import { isTokenExpired, getTokenExpiry } from '@/src/lib/jwtUtils'
-import api from '@/src/lib/api'
 
 export { ErrorBoundary } from 'expo-router'
 
 void SplashScreen.preventAutoHideAsync().catch((error) => {
   console.log('Could not prevent splash screen auto-hide:', error)
 })
-
-Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const content: any = notification?.request?.content || {}
-    const data: any = content.data || {}
-    const channelId = String(content.channelId || data.channelId || "")
-    const isOrderAlarm =
-      (channelId === "admin_orders_alarm_v2" || channelId === "admin_orders_alarm_v3") ||
-      (channelId === "chef_orders_alarm_v2" || channelId === "chef_orders_alarm_v3") ||
-      content.sound === "alarm_10s.mp3" ||
-      content.sound === "alarm_10s" ||
-      content.sound === "alarm.mp3" ||
-      content.sound === "alarm"
-
-    return {
-      shouldShowAlert: true,
-      // In the foreground use the role hook's singleton audio alarm. This
-      // avoids Android playing both notification-channel sound and JS audio.
-      // In background/terminated states Android still plays channel sound.
-      shouldPlaySound: !isOrderAlarm,
-      shouldSetBadge: false,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }
-  },
-})
-
-/* ─────────────────────────────────────────────────────────────
-   ✅ COLD-START ANDROID CHANNEL BOOTSTRAP
-   ───────────────────────────────────────────────────────────── */
-if (Platform.OS === 'android') {
-  ;(async () => {
-    try {
-      const alarmChannels = [
-        { id: 'admin_orders_alarm_v3', name: 'Admin Order Alarms' },
-        { id: 'chef_orders_alarm_v3', name: 'Chef Order Alarms' },
-      ]
-
-      for (const ch of alarmChannels) {
-        await Notifications.setNotificationChannelAsync(ch.id, {
-          name: ch.name,
-          importance: Notifications.AndroidImportance?.MAX ?? 5,
-          vibrationPattern: [0, 600, 300, 600, 300],
-          sound: 'alarm.mp3',
-          enableVibrate: true,
-          bypassDnd: true,
-          lockscreenVisibility:
-            Notifications.AndroidNotificationVisibility?.PUBLIC,
-          audioAttributes: {
-            usage: Notifications.AndroidAudioUsage?.NOTIFICATION,
-            contentType:
-              Notifications.AndroidAudioContentType?.SONIFICATION,
-          },
-        })
-      }
-
-      console.log('✅ Cold-start Android alarm channels ready')
-    } catch (err) {
-      console.log('Cold-start Android channel error:', err)
-    }
-  })()
-}
 
 const CLERK_PUBLISHABLE_KEY =
   process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY
@@ -479,68 +413,6 @@ function InitialLayout() {
 
   /*
    * ------------------------------------------------------------
-   * ROLE-AWARE EXPO PUSH NOTIFICATIONS
-   * ------------------------------------------------------------
-   */
-
-  useEffect(() => {
-    if (isAuthenticated !== true || hasSeenOnboarding !== true) return;
-    let isMounted = true
-
-    const registerPushNotifications = async () => {
-      try {
-        const isExpoGo = Constants.appOwnership === 'expo'
-        if (isExpoGo) return
-        const token = await registerForPushNotificationsAsync()
-        if (token && isMounted) {
-          await api.post('/api/auth/notification-token', { token, role: 'chef' })
-        }
-      } catch (err) {
-        console.log('❌ Chef push registration error:', err)
-      }
-    }
-
-    const handleNotificationResponse = async (response: Notifications.NotificationResponse) => {
-      try {
-        const data: any = response.notification.request.content.data || {}
-        const role = String(data.role || '').toLowerCase()
-        if (role && role !== 'chef') return
-        const user = await refreshUser()
-        if (!isMounted || !user || user.isChef !== true) {
-          router.replace('/unauthorized' as any)
-          return
-        }
-        if (data?.screen === 'chef-orders' || role === 'chef') {
-          router.push('/chefManagement/all-orders' as any)
-        } else if (data?.screen === 'admin-orders' || user.isAdmin) {
-          router.replace('/unauthorized' as any)
-        }
-        void Notifications.clearLastNotificationResponseAsync().catch(() => undefined)
-      } catch (err) {
-        console.log('❌ Chef notification navigation error:', err)
-      }
-    }
-
-    void registerPushNotifications()
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      void handleNotificationResponse(response)
-    })
-    const pushTokenRefreshSubscription = Notifications.addPushTokenListener(() => {
-      if (isMounted) void registerPushNotifications()
-    })
-    void Notifications.getLastNotificationResponseAsync()
-      .then((response) => { if (response) return handleNotificationResponse(response) })
-      .catch((err) => console.log('Chef notification cold-start error:', err))
-
-    return () => {
-      isMounted = false
-      subscription.remove()
-      pushTokenRefreshSubscription.remove()
-    }
-  }, [router, isAuthenticated, hasSeenOnboarding])
-
-  /*
-   * ------------------------------------------------------------
    * NAVIGATION GUARD
    * ------------------------------------------------------------
    *
@@ -811,62 +683,4 @@ function InitialLayout() {
       <Stack.Screen name="chefManagement" />
     </Stack>
   )
-}
-
-/*
- * ============================================================
- * EXPO PUSH NOTIFICATION REGISTRATION
- * ============================================================
- */
-
-async function registerForPushNotificationsAsync() {
-  let token
-
-  if (Device.isDevice) {
-    const {
-      status: existingStatus,
-    } = await Notifications.getPermissionsAsync()
-
-    let finalStatus = existingStatus
-
-    if (existingStatus !== 'granted') {
-      const { status } =
-        await Notifications.requestPermissionsAsync()
-
-      finalStatus = status
-    }
-
-    if (finalStatus !== 'granted') {
-      console.log(
-        '📵 Push notification permission was not granted'
-      )
-
-      return
-    }
-
-    const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId ??
-      Constants.easConfig?.projectId
-
-    if (!projectId) {
-      console.log(
-        '⚠️ No EAS projectId found. Push token registration skipped.'
-      )
-
-      return
-    }
-
-    token = (
-      await Notifications.getExpoPushTokenAsync({
-        projectId,
-      })
-    ).data
-
-    console.log(
-      '📲 Expo push token:',
-      token
-    )
-  }
-
-  return token
 }

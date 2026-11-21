@@ -11,10 +11,9 @@ import {
   AppState,
   AppStateStatus,
 } from 'react-native'
-import { getUser, refreshUser, getToken } from '@/src/lib/authStorage'
+import { refreshUser, getToken } from '@/src/lib/authStorage'
 import { isTokenExpired } from '@/src/lib/jwtUtils'
 import { subscribeAuth, notifyAuthChanged } from '@/src/lib/authEvents'
-import { useOrderNotifier } from '@/src/hooks/useOrderNotifier'
 
 // Interval (ms) between role checks while user is on chef screens.
 // This ensures that if an admin revokes chef access, the user is
@@ -57,26 +56,12 @@ export default function ChefTabsLayout() {
   const hasLoadedRef = useRef(false)
 
   /* ─────────────────────────────────────────────────────────
-     ✅ Chef identity atoms consumed by useOrderNotifier
-     ───────────────────────────────────────────────────────── */
-  const [chefUserId, setChefUserId] = useState<string | null>(null)
-  const [chefName, setChefName] = useState<string | null>(null)
-
-  /* ─────────────────────────────────────────────────────────
      ✅ Guards to prevent overlapping role checks
      ───────────────────────────────────────────────────────── */
   const rolePollInFlightRef = useRef<boolean>(false)
   const rolePollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isMountedRef = useRef<boolean>(true)
 
-  /* ─────────────────────────────────────────────────────────
-     ✅ Role-scoped order alarm + push notification listener
-     ───────────────────────────────────────────────────────── */
-  useOrderNotifier('chef', {
-    enabled: allowed === true && isChef === true,
-    chefUserId,
-    chefName,
-  })
 
   /* ─────────────────────────────────────────────────────────
      ✅ PRIMARY AUTH + ROLE LOAD
@@ -98,24 +83,10 @@ export default function ChefTabsLayout() {
         if (!token || isTokenExpired(token)) {
           setAllowed(false)
           setIsChef(false)
-          setChefUserId(null)
-          setChefName(null)
           return
         }
 
         setAllowed(true)
-
-        // Do not authorize from cached isChef. The cached user is useful
-        // only as a temporary identity fallback for the order notifier.
-        const cached = await getUser()
-        if (!mounted || currentRequestId !== requestId) return
-
-        if (cached?.id || cached?._id) {
-          setChefUserId(String(cached.id || cached._id))
-        }
-        if (cached?.name) {
-          setChefName(String(cached.name))
-        }
 
         // /auth/me verifies the role against the current MongoDB record.
         const fresh = await refreshUser()
@@ -130,12 +101,6 @@ export default function ChefTabsLayout() {
         }
 
         setIsChef(fresh.isChef === true)
-        setChefUserId(
-          fresh.id || fresh._id
-            ? String(fresh.id || fresh._id)
-            : null
-        )
-        setChefName(fresh.name ? String(fresh.name) : null)
       } catch (e) {
         console.log('ChefTabsLayout auth error:', e)
         if (mounted && currentRequestId === requestId) {
@@ -153,8 +118,6 @@ export default function ChefTabsLayout() {
       hasLoadedRef.current = false
       setAllowed(null)
       setIsChef(null)
-      setChefUserId(null)
-      setChefName(null)
       loadOnce()
     })
 

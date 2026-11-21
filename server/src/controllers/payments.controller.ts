@@ -2,15 +2,8 @@ import { Request, Response } from "express";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import Order from "../models/Orders";
-import User from "../models/User";
 import Chef from "../models/Chef";
 import { io } from "..";
-import {
-  ORDER_ALARM_SOUND,
-  ADMIN_ORDER_CHANNEL_ID,
-  CHEF_ORDER_CHANNEL_ID,
-} from "../utils/expoPush";
-import { sendOrderNotification } from "../utils/orderNotifications";
 
 interface AuthRequest extends Request {
   user?: {
@@ -43,82 +36,42 @@ const verifySignature = (orderId: string, paymentId: string, signature: string):
   return safeStringEqual(expected, signature);
 };
 
-const dispatchVerifiedPaymentNotifications = async (order: any, paidAmount: number): Promise<void> => {
+const dispatchVerifiedPaymentRealtimeUpdates = async (order: any): Promise<void> => {
   io.emit("order_updated", order);
   io.emit("payment_verified", order);
+
   if (order.userId) {
     io.to(String(order.userId)).emit("order_updated", order);
     io.to(String(order.userId)).emit("payment_verified", order);
   }
 
-  let chefUserId = "";
   const chefIdentifier = String(order.chefId || "");
   let chefDoc: any = null;
+
   if (chefIdentifier && /^[a-fA-F0-9]{24}$/.test(chefIdentifier)) {
     chefDoc = await Chef.findById(chefIdentifier);
   }
-  if (!chefDoc && chefIdentifier) chefDoc = await Chef.findOne({ user: chefIdentifier });
-  if (!chefDoc && order.chefName) chefDoc = await Chef.findOne({ name: order.chefName });
-  if (chefDoc?.user) chefUserId = String(chefDoc.user);
+
+  if (!chefDoc && chefIdentifier) {
+    chefDoc = await Chef.findOne({ user: chefIdentifier });
+  }
+
+  if (!chefDoc && order.chefName) {
+    chefDoc = await Chef.findOne({ name: order.chefName });
+  }
+
+  const chefUserId = chefDoc?.user ? String(chefDoc.user) : "";
 
   if (chefUserId) {
     io.to(chefUserId).emit("new_chef_order", order);
     io.to(chefUserId).emit("order_updated", order);
-    await sendOrderNotification({
-      orderId: String(order.orderId),
-      eventType: "razorpay_captured_chef_alarm",
-      recipientUserId: chefUserId,
-      recipientRole: "chef",
-      payload: {
-        title: `🔔 New Paid Order ${order.orderId}`,
-        body: `${order.userName || "Customer"} paid ₹${paidAmount} ${Number(order.balanceAmountToCollect || 0) > 0 ? "advance" : "in full"} for an order of ₹${order.totalAmount}. Tap to accept now!`,
-        data: { orderId: order.orderId, screen: "chef-orders", role: "chef", chefId: chefUserId },
-        sound: ORDER_ALARM_SOUND,
-        channelId: CHEF_ORDER_CHANNEL_ID,
-        priority: "high",
-      },
-    });
   }
+
   if (chefIdentifier) {
     io.to(chefIdentifier).emit("new_chef_order", order);
     io.to(chefIdentifier).emit("order_updated", order);
   }
-
-  const admins = await User.find({ isAdmin: true }).select("_id");
-  for (const admin of admins) {
-    await sendOrderNotification({
-      orderId: String(order.orderId),
-      eventType: "razorpay_captured_admin_alarm",
-      recipientUserId: String(admin._id),
-      recipientRole: "admin",
-      payload: {
-        title: `🚨 New Paid Order ${order.orderId}`,
-        body: `${order.userName || "A customer"} paid ₹${paidAmount} for an order of ₹${order.totalAmount}. Tap to review.`,
-        data: { orderId: order.orderId, screen: "admin-orders", role: "admin" },
-        sound: ORDER_ALARM_SOUND,
-        channelId: ADMIN_ORDER_CHANNEL_ID,
-        priority: "high",
-      },
-    });
-  }
-
-  if (order.userId) {
-    await sendOrderNotification({
-      orderId: String(order.orderId),
-      eventType: "razorpay_captured_customer_confirmation",
-      recipientUserId: String(order.userId),
-      recipientRole: "customer",
-      payload: {
-        title: "Payment successful 🎉",
-        body: `Your KatBox order #${order.orderId} has been confirmed.`,
-        data: { orderId: order.orderId, screen: "orders", role: "customer" },
-        sound: "default",
-        priority: "high",
-      },
-    });
-  }
 };
-
 
 
 /**
@@ -247,8 +200,7 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
 
     // Idempotency: safe retry after a client/network timeout.
     if (String(order.razorpayPaymentId || "") === razorpayPaymentId && order.paymentCaptured === true) {
-      // Idempotent retry: the first successful payment transition already
-      // dispatched its notifications. Do not send duplicate pushes.
+      // Idempotent retry: the payment was already persisted successfully.
       return res.status(200).json({ success: true, message: "Payment was already verified.", order });
     }
 
@@ -310,20 +262,19 @@ export const verifyPaymentAndCreateOrder = async (req: AuthRequest, res: Respons
     if (!updatedOrder) {
       const currentOrder: any = await Order.findById(order._id);
       if (currentOrder?.paymentCaptured === true && String(currentOrder.razorpayPaymentId || "") === razorpayPaymentId) {
-        // Another concurrent verifier/webhook won the atomic payment update
-        // and owns the single notification dispatch.
+        // Another concurrent verifier/webhook won the atomic payment update.
         return res.status(200).json({ success: true, message: "Payment was already verified.", order: currentOrder });
       }
       return res.status(409).json({ success: false, message: "Payment state changed concurrently. Please refresh the order status." });
     }
 
-    // The payment state is persisted before any notification is sent. Push
-    // delivery is direct and creates no MongoDB notification documents.
+    // Keep Socket.IO order/payment updates; notification and alarm delivery
+    // are intentionally handled outside this payment controller.
     try {
-      await dispatchVerifiedPaymentNotifications(updatedOrder, expectedPaymentAmount);
-    } catch (notifyError) {
-      // Notification failure must never roll back or misreport a captured payment.
-      console.error("Razorpay payment verified; direct notification dispatch failed:", notifyError);
+      await dispatchVerifiedPaymentRealtimeUpdates(updatedOrder);
+    } catch (realtimeError) {
+      // A real-time update failure must never roll back a captured payment.
+      console.error("Razorpay payment verified; Socket.IO update dispatch failed:", realtimeError);
     }
 
     return res.status(200).json({ success: true, message: "Razorpay payment verified.", order: updatedOrder });
@@ -390,8 +341,7 @@ export const handleRazorpayWebhook = async (req: Request, res: Response) => {
       if (String(order.razorpayPaymentId || "") !== razorpayPaymentId) {
         return res.status(409).json({ success: false, message: "A different payment is already associated with this order." });
       }
-      // The verification endpoint or the first webhook already dispatched
-      // notifications for the atomic captured-payment transition.
+      // The payment was already persisted by the verification endpoint or an earlier webhook.
       return res.status(200).json({ success: true, alreadyProcessed: true });
     }
 
@@ -422,22 +372,20 @@ export const handleRazorpayWebhook = async (req: Request, res: Response) => {
     if (!update) {
       const currentOrder: any = await Order.findById(order._id);
       if (currentOrder?.paymentCaptured === true && String(currentOrder.razorpayPaymentId || "") === razorpayPaymentId) {
-        // The verification endpoint or a concurrent webhook won the atomic
-        // transition and owns the single notification dispatch.
+        // The verification endpoint or a concurrent webhook won the atomic transition.
         return res.status(200).json({ success: true, alreadyProcessed: true });
       }
       return res.status(409).json({ success: false, message: "Payment state changed concurrently; retry webhook." });
     }
 
+    // Preserve Socket.IO updates for connected customer/chef clients.
+    // Notification and alarm delivery are intentionally handled elsewhere.
     try {
-      await dispatchVerifiedPaymentNotifications(
-        update,
-        Number(update.advancePaidAmount || update.totalAmount)
-      );
-    } catch (notifyError) {
-      // Razorpay has captured the money; a push failure must not cause a
-      // webhook retry to duplicate the already-created order notifications.
-      console.error("Razorpay webhook payment captured; direct notification dispatch failed:", notifyError);
+      await dispatchVerifiedPaymentRealtimeUpdates(update);
+    } catch (realtimeError) {
+      // Razorpay has captured the money; a real-time update failure must not
+      // cause a webhook retry or change the persisted payment state.
+      console.error("Razorpay webhook payment captured; Socket.IO update dispatch failed:", realtimeError);
     }
 
     return res.status(200).json({ success: true, processed: true });

@@ -127,7 +127,6 @@ const buildUserResponse = (user: any) => ({
   savedAddresses: user.savedAddresses || [],
   isChef: user.isChef,
   isAdmin: user.isAdmin || false,
-  pushToken: user.pushToken || "",
 });
 
 /*
@@ -1256,12 +1255,9 @@ router.patch(
         address,
         savedAddresses,
         activeAddress,
-        pushToken,
-        pushRole,
       } = req.body;
 
       const updateFields: any = {};
-      const pushTokenUpdates: Record<string, string> = {};
 
       /*
        * Email is deliberately ignored.
@@ -1278,40 +1274,6 @@ router.patch(
           typeof name === "string"
             ? name.trim()
             : name;
-      }
-
-      if (pushToken !== undefined) {
-        const normalizedPushToken =
-          typeof pushToken === "string" ? pushToken.trim() : "";
-
-        if (normalizedPushToken) {
-          // Role is derived from the persisted MongoDB account, not trusted
-          // from the client. A standalone Chef app can therefore never
-          // overwrite the customer/admin app's token.
-          const tokenOwner: any = await User.findById(userId).select("isAdmin isChef");
-          const requestedRole = String(pushRole || "").toLowerCase();
-          const allowedRole =
-            requestedRole === "admin" ? tokenOwner?.isAdmin === true :
-            requestedRole === "chef" ? tokenOwner?.isChef === true :
-            requestedRole === "customer" ? tokenOwner?.isAdmin !== true && tokenOwner?.isChef !== true : false;
-
-          if (!tokenOwner || !allowedRole) {
-            return res.status(403).json({
-              success: false,
-              message: "The requested notification app role is not enabled for this account.",
-            });
-          }
-
-          const tokenField = requestedRole === "admin"
-            ? "adminPushTokens"
-            : requestedRole === "chef"
-              ? "chefPushTokens"
-              : "customerPushTokens";
-          pushTokenUpdates[tokenField] = normalizedPushToken;
-          // Keep the legacy token populated for old app builds while new
-          // server senders prefer the role-specific fields.
-          updateFields.pushToken = normalizedPushToken;
-        }
       }
 
       /*
@@ -1468,15 +1430,10 @@ router.patch(
        * --------------------------------------------------------
        */
 
-      const profileUpdate: any = { $set: updateFields };
-      if (Object.keys(pushTokenUpdates).length > 0) {
-        profileUpdate.$addToSet = pushTokenUpdates;
-      }
-
       const updatedUser =
         await User.findByIdAndUpdate(
           userId,
-          profileUpdate,
+          { $set: updateFields },
           {
             new: true,
             runValidators: true,
@@ -1832,12 +1789,9 @@ router.put(
         address,
         savedAddresses,
         activeAddress,
-        pushToken,
-        pushRole,
       } = req.body;
 
       const updateFields: any = {};
-      const pushTokenUpdates: Record<string, string> = {};
 
       /*
        * IMPORTANT:
@@ -1852,40 +1806,6 @@ router.put(
           typeof name === "string"
             ? name.trim()
             : name;
-      }
-
-      if (pushToken !== undefined) {
-        const normalizedPushToken =
-          typeof pushToken === "string" ? pushToken.trim() : "";
-
-        if (normalizedPushToken) {
-          // Role is derived from the persisted MongoDB account, not trusted
-          // from the client. A standalone Chef app can therefore never
-          // overwrite the customer/admin app's token.
-          const tokenOwner: any = await User.findById(userId).select("isAdmin isChef");
-          const requestedRole = String(pushRole || "").toLowerCase();
-          const allowedRole =
-            requestedRole === "admin" ? tokenOwner?.isAdmin === true :
-            requestedRole === "chef" ? tokenOwner?.isChef === true :
-            requestedRole === "customer" ? tokenOwner?.isAdmin !== true && tokenOwner?.isChef !== true : false;
-
-          if (!tokenOwner || !allowedRole) {
-            return res.status(403).json({
-              success: false,
-              message: "The requested notification app role is not enabled for this account.",
-            });
-          }
-
-          const tokenField = requestedRole === "admin"
-            ? "adminPushTokens"
-            : requestedRole === "chef"
-              ? "chefPushTokens"
-              : "customerPushTokens";
-          pushTokenUpdates[tokenField] = normalizedPushToken;
-          // Keep the legacy token populated for old app builds while new
-          // server senders prefer the role-specific fields.
-          updateFields.pushToken = normalizedPushToken;
-        }
       }
 
       /*
@@ -2042,15 +1962,10 @@ router.put(
        * --------------------------------------------------------
        */
 
-      const profileUpdate: any = { $set: updateFields };
-      if (Object.keys(pushTokenUpdates).length > 0) {
-        profileUpdate.$addToSet = pushTokenUpdates;
-      }
-
       const updatedUser =
         await User.findByIdAndUpdate(
           userId,
-          profileUpdate,
+          { $set: updateFields },
           {
             new: true,
             runValidators: true,
@@ -2415,57 +2330,5 @@ router.patch(
   }
 );
 
-
-/**
- * Register or refresh an Expo push token for one application role.
- * The authenticated MongoDB user's role is checked server-side; the client
- * cannot register an admin/chef token merely by changing the request body.
- */
-router.post("/notification-token", protect, async (req: AuthRequest, res) => {
-  try {
-    const userId = req.user?.userId || req.user?._id || req.user?.id;
-    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
-    const role = String(req.body?.role || "").trim().toLowerCase();
-    if (!userId || !token || !/^(Exponent|Expo)PushToken\[[^\]]+\]$/.test(token)) {
-      return res.status(400).json({ success: false, message: "A valid Expo push token is required." });
-    }
-    if (!["customer", "chef", "admin"].includes(role)) {
-      return res.status(400).json({ success: false, message: "Invalid notification role." });
-    }
-
-    const user = await User.findById(userId).select("isChef isAdmin");
-    if (!user) return res.status(404).json({ success: false, message: "User not found." });
-    if (role === "chef" && user.isChef !== true) {
-      return res.status(403).json({ success: false, message: "Chef notification access is not enabled for this account." });
-    }
-    if (role === "admin" && user.isAdmin !== true) {
-      return res.status(403).json({ success: false, message: "Admin notification access is not enabled for this account." });
-    }
-
-    const field = role === "admin" ? "adminPushTokens" : role === "chef" ? "chefPushTokens" : "customerPushTokens";
-    await User.updateOne({ _id: userId }, { $addToSet: { [field]: token } });
-    return res.status(200).json({ success: true, message: "Notification token registered." });
-  } catch (error) {
-    console.error("Notification token registration error:", error);
-    return res.status(500).json({ success: false, message: "Unable to register notification token." });
-  }
-});
-
-router.delete("/notification-token", protect, async (req: AuthRequest, res) => {
-  try {
-    const userId = req.user?.userId || req.user?._id || req.user?.id;
-    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
-    const role = String(req.body?.role || "").trim().toLowerCase();
-    if (!userId || !token || !["customer", "chef", "admin"].includes(role)) {
-      return res.status(400).json({ success: false, message: "Token and valid role are required." });
-    }
-    const field = role === "admin" ? "adminPushTokens" : role === "chef" ? "chefPushTokens" : "customerPushTokens";
-    await User.updateOne({ _id: userId }, { $pull: { [field]: token } });
-    return res.status(200).json({ success: true, message: "Notification token unregistered." });
-  } catch (error) {
-    console.error("Notification token removal error:", error);
-    return res.status(500).json({ success: false, message: "Unable to unregister notification token." });
-  }
-});
 
 export default router;

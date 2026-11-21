@@ -558,7 +558,7 @@ export const setSavedAddressesForUser =
  *   - savedAddresses[]   (dedupes by houseDetails + fullAddress)
  *   - activeAddress      (writes activeAddress + address)
  *   - address            (legacy string fallback)
- *   - name / pushToken   (optional, untouched when omitted)
+ *   - name               (optional, untouched when omitted)
  *
  * When we only send `activeAddress`, the backend leaves the
  * existing `savedAddresses` array on the user document intact.

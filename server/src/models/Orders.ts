@@ -261,10 +261,6 @@ export interface IBaseOrder extends Document {
 
   feedback?: IOrderFeedback;
 
-  lastFeedbackNotificationAt?: Date;
-
-  feedbackNotificationCount?: number;
-
   prepStartedAt?: Date;
 
   targetDeliveryTime?: Date;
@@ -755,9 +751,6 @@ const BaseOrderSchema: Schema = new Schema(
 
     feedback: { type: FeedbackSchema, default: { isSubmitted: false, rating: 0, comment: "", images: [] } },
 
-    lastFeedbackNotificationAt: { type: Date },
-
-    feedbackNotificationCount: { type: Number, default: 0 },
 
     prepStartedAt: { type: Date },
 

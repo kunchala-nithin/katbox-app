@@ -28,28 +28,15 @@ import {
 } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import Constants, { AppOwnership } from 'expo-constants';
 import api from '@/src/lib/api';
 import { LinearGradient } from 'expo-linear-gradient';
 import { socket } from '@/src/lib/socket';
-import { startOrderAlarm, stopOrderAlarm } from '@/src/lib/orderAlarm';
 
 const { width, height } = Dimensions.get('window');
 
 // ✅ Static Customer Support number used for call/message actions
 const CUSTOMER_SUPPORT_PHONE = '8886444041';
 
-// Check if running in Expo Go client
-const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
-
-let Notifications: any = null;
-if (!isExpoGo) {
-  try {
-    Notifications = require('expo-notifications');
-  } catch (err) {
-    console.log('expo-notifications module not loaded:', err);
-  }
-}
 
 let Location: any = null;
 try {
@@ -163,22 +150,6 @@ export async function getSafeReverseGeocode(coords: { latitude: number; longitud
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
-}
-
-if (Notifications && typeof Notifications.setNotificationHandler === 'function') {
-  try {
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-      }),
-    });
-  } catch (err) {
-    console.log('Error initializing notification handler:', err);
-  }
 }
 
 const CONFETTI_COLORS = ['#166348', '#22C55E', '#3B82F6', '#F59E0B', '#EF4444', '#EC4899', '#8B5CF6', '#10B981', '#F97316'];
@@ -965,93 +936,8 @@ export default function AllOrdersScreen() {
   // ✅ NEW: Search query state for the search bar
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // ✅ Alarm snooze-cycle interval ref.
-  //    Sound + vibration + 10s auto-stop are now fully owned by the
-  //    shared singleton `client/src/lib/orderAlarm.ts`.
-  const alarmIntervalRef = useRef<any>(null);
-  const activeAlarmOrderIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    async function setupNotifications() {
-      if (!Notifications) return;
-      try {
-        if (Platform.OS === 'android' && Notifications.setNotificationChannelAsync) {
-          await Notifications.setNotificationChannelAsync('chef_orders', {
-            name: 'New Orders Alarm',
-            importance: Notifications.AndroidImportance?.MAX ?? 5,
-            vibrationPattern: [0, 500, 250, 500],
-            lightColor: '#22C55E',
-            sound: 'default',
-            enableVibrate: true,
-          });
-        }
-        if (Notifications.getPermissionsAsync && Notifications.requestPermissionsAsync) {
-          const { status } = await Notifications.getPermissionsAsync();
-          if (status !== 'granted') {
-            await Notifications.requestPermissionsAsync();
-          }
-        }
-      } catch (err) {
-        console.log('Notification channel setup error:', err);
-      }
-    }
-    setupNotifications();
-  }, []);
-
-  const triggerChefPushNotification = async (orderItem: any) => {
-    if (!Notifications || !Notifications.scheduleNotificationAsync) return;
-    try {
-      const orderIdStr = orderItem?.orderId ? `#${orderItem.orderId}` : 'New Order';
-      const custName = orderItem?.userName || 'Customer';
-      const menuName = orderItem?.menuName || (orderItem?.serviceType === 'homemade' ? 'Homemade Dishes' : 'Special Platter');
-      const total = orderItem?.totalAmount ? `₹${orderItem.totalAmount}` : '';
-
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: `🔔 New Verified Order: ${orderIdStr}`,
-          body: `${custName} ordered ${menuName} (${total}). Tap to accept now!`,
-          data: { orderId: orderItem?.orderId },
-          sound: true,
-          priority: Notifications.AndroidNotificationPriority?.MAX,
-        },
-        trigger: null,
-      });
-    } catch (err) {
-      console.log('Error triggering push notification:', err);
-    }
-  };
-
-  /* ─────────────────────────────────────────────────────────
-     ✅ UPDATED: These now delegate to the shared singleton
-     alarm controller (`client/src/lib/orderAlarm.ts`).
-
-     Why: the layout-mounted `useOrderNotifier('chef')` hook can
-     ALSO trigger the alarm (on socket event OR foreground push).
-     Without a singleton, the same order would ring twice — one
-     from the hook, one from this screen.
-
-     The singleton is idempotent, manages its own 10s auto-stop
-     timer, plays the bundled `assets/sounds/alarm.mp3`, applies
-     the correct audio mode, and drives the repeating vibration.
-     ───────────────────────────────────────────────────────── */
-  const startOrderAlarmSound = async () => {
-    await startOrderAlarm();
-  };
-
-  const stopOrderAlarmSoundOnly = async () => {
-    await stopOrderAlarm();
-  };
-
-  const clearAlarmAndSnoozeCycle = async () => {
-    if (alarmIntervalRef.current) {
-      clearInterval(alarmIntervalRef.current);
-      alarmIntervalRef.current = null;
-    }
-    activeAlarmOrderIdRef.current = null;
-    await stopOrderAlarm();
-  };
-
-  const isOrderAlarmEligible = (orderItem: any) => {
+  // Preserve the existing order-visibility rule based on payment verification.
+  const isOrderPaymentEligible = (orderItem: any) => {
     const method = String(orderItem?.paymentMethod || '').toLowerCase();
     const paymentStatus = String(orderItem?.paymentStatus || '').toLowerCase();
     return ['cod', 'cash', 'cash_on_delivery'].includes(method) ||
@@ -1059,16 +945,6 @@ export default function AllOrdersScreen() {
       orderItem?.paymentCaptured === true ||
       paymentStatus === 'paid' ||
       orderItem?.isAdvanceVerified === true;
-  };
-
-  const initAlarmCycleForPendingOrder = (orderItem: any) => {
-    const orderId = String(orderItem?.orderId || '');
-    if (!orderId || activeAlarmOrderIdRef.current === orderId) return;
-    activeAlarmOrderIdRef.current = orderId;
-    // The backend sends a new push every three minutes. The app only needs
-    // to play the immediate foreground alarm here; no JS interval is used
-    // for background/terminated scheduling.
-    void startOrderAlarmSound();
   };
 
   const togglePriceDetails = () => {
@@ -1093,18 +969,9 @@ export default function AllOrdersScreen() {
       if (res.data && res.data.success) {
         // Only show orders where advance payment has been verified by Admin ("Payment Received" / isAdvanceVerified: true)
         const allFetched = res.data.orders || [];
-        const fetched = allFetched.filter((o: any) => isOrderAlarmEligible(o));
+        const fetched = allFetched.filter((o: any) => isOrderPaymentEligible(o));
         setOrders(fetched);
 
-        const hasPendingOrder = fetched.find(
-          (o: any) => (o.orderStatus || 'Placed').toLowerCase() === 'placed' && isOrderAlarmEligible(o)
-        );
-
-        if (hasPendingOrder) {
-          initAlarmCycleForPendingOrder(hasPendingOrder);
-        } else {
-          clearAlarmAndSnoozeCycle();
-        }
       }
     } catch (err: any) {
       console.log('Error fetching chef orders:', err);
@@ -1148,7 +1015,7 @@ export default function AllOrdersScreen() {
 
     const handleOrderUpdated = (updatedOrder: any) => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      if (isOrderAlarmEligible(updatedOrder)) {
+      if (isOrderPaymentEligible(updatedOrder)) {
         setOrders((prev) => {
           const exists = prev.some((o) => o.orderId === updatedOrder.orderId);
           if (exists) {
@@ -1159,10 +1026,6 @@ export default function AllOrdersScreen() {
         });
       } else {
         setOrders((prev) => prev.filter((o) => o.orderId !== updatedOrder.orderId));
-      }
-      const updatedStatus = String(updatedOrder?.orderStatus || '').toLowerCase();
-      if (updatedStatus && updatedStatus !== 'placed') {
-        void clearAlarmAndSnoozeCycle();
       }
     };
 
@@ -1187,13 +1050,11 @@ export default function AllOrdersScreen() {
             }
             return [newOrder, ...prev];
           });
-          initAlarmCycleForPendingOrder(newOrder);
         }
       });
     }
 
     return () => {
-      clearAlarmAndSnoozeCycle();
       if (socket) {
         socket.off('order_delivery_paused', handleOrderDeliveryPaused);
         socket.off('order_delivery_unpaused', handleOrderDeliveryUnpaused);
@@ -1930,7 +1791,6 @@ export default function AllOrdersScreen() {
         onPress: async () => {
           try {
             setActionLoading(true);
-            await clearAlarmAndSnoozeCycle();
             await api.patch(`/api/orders/${activeOrder.orderId}/status`, { status: 'Cancelled' });
 
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -1973,7 +1833,6 @@ export default function AllOrdersScreen() {
 
     try {
       setActionLoading(true);
-      await clearAlarmAndSnoozeCycle();
 
       // Wait for the backend confirmation, then update the exact order by ID.
       // This keeps the selected order mounted and makes the Accepted header +

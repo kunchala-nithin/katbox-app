@@ -29,43 +29,14 @@ import {
 } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import Constants, { AppOwnership } from 'expo-constants';
 import api from '@/src/lib/api';
 import { LinearGradient } from 'expo-linear-gradient';
 import { socket } from '@/src/lib/socket';
-import { startOrderAlarm, stopOrderAlarm } from '@/src/lib/orderAlarm';
 
 const { width, height } = Dimensions.get('window');
 
-const isExpoGo = Constants.appOwnership === AppOwnership.Expo;
-
-let Notifications: any = null;
-if (!isExpoGo) {
-  try {
-    Notifications = require('expo-notifications');
-  } catch (err) {
-    console.log('expo-notifications module not loaded:', err);
-  }
-}
-
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
-}
-
-if (Notifications && typeof Notifications.setNotificationHandler === 'function') {
-  try {
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-      }),
-    });
-  } catch (err) {
-    console.log('Error initializing notification handler:', err);
-  }
 }
 
 const MONTHS_MAP: { [key: string]: number } = {
@@ -689,112 +660,6 @@ export default function AdminAllOrdersScreen() {
   //    Drives the loading state and prevents double taps.
   const [processingRefundByOrder, setProcessingRefundByOrder] = useState<{ [orderId: string]: boolean }>({});
 
-  // ✅ Alarm snooze-cycle interval ref.
-  //    Sound + vibration + 10s auto-stop are now fully owned by the
-  //    shared singleton `client/src/lib/orderAlarm.ts`.
-  const alarmIntervalRef = useRef<any>(null);
-  const activeAlarmOrderIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    async function setupNotifications() {
-      if (!Notifications) return;
-      try {
-        if (Platform.OS === 'android' && Notifications.setNotificationChannelAsync) {
-          await Notifications.setNotificationChannelAsync('admin_orders', {
-            name: 'Platform Admin Alerts',
-            importance: Notifications.AndroidImportance?.MAX ?? 5,
-            vibrationPattern: [0, 500, 250, 500],
-            lightColor: '#2563EB',
-            sound: 'default',
-            enableVibrate: true,
-          });
-        }
-        if (Notifications.getPermissionsAsync && Notifications.requestPermissionsAsync) {
-          const { status } = await Notifications.getPermissionsAsync();
-          if (status !== 'granted') {
-            await Notifications.requestPermissionsAsync();
-          }
-        }
-      } catch (err) {
-        console.log('Notification channel setup error:', err);
-      }
-    }
-    setupNotifications();
-  }, []);
-
-  const triggerAdminPushNotification = async (orderItem: any) => {
-    if (!Notifications || !Notifications.scheduleNotificationAsync) return;
-    try {
-      const orderIdStr = orderItem?.orderId ? `#${orderItem.orderId}` : 'New Order';
-      const custName = orderItem?.userName || 'Customer';
-      const chefName = orderItem?.chefName || orderItem?.restaurantName || 'Kitchen Partner';
-      const total = orderItem?.totalAmount ? `₹${orderItem.totalAmount}` : '';
-
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: `🚨 New Platform Order ${orderIdStr}`,
-          body: `${custName} → ${chefName} (${total}). Review now!`,
-          data: { orderId: orderItem?.orderId },
-          sound: true,
-          priority: Notifications.AndroidNotificationPriority?.MAX,
-        },
-        trigger: null,
-      });
-    } catch (err) {
-      console.log('Error triggering admin push notification:', err);
-    }
-  };
-
-  /* ─────────────────────────────────────────────────────────
-     ✅ UPDATED: These now delegate to the shared singleton
-     alarm controller (`client/src/lib/orderAlarm.ts`).
-
-     Why: the layout-mounted `useOrderNotifier('admin')` hook can
-     ALSO trigger the alarm (on socket event OR foreground push).
-     Without a singleton, the same order would ring twice — one
-     from the hook, one from this screen.
-
-     The singleton is idempotent, manages its own 10s auto-stop
-     timer, plays the bundled `assets/sounds/alarm.mp3`, applies
-     the correct audio mode, and drives the repeating vibration.
-     ───────────────────────────────────────────────────────── */
-  const startOrderAlarmSound = async () => {
-    await startOrderAlarm();
-  };
-
-  const stopOrderAlarmSoundOnly = async () => {
-    await stopOrderAlarm();
-  };
-
-  const clearAlarmAndSnoozeCycle = async () => {
-    if (alarmIntervalRef.current) {
-      clearInterval(alarmIntervalRef.current);
-      alarmIntervalRef.current = null;
-    }
-    activeAlarmOrderIdRef.current = null;
-    await stopOrderAlarm();
-  };
-
-  const isOrderAlarmEligible = (orderItem: any) => {
-    const method = String(orderItem?.paymentMethod || '').toLowerCase();
-    const paymentStatus = String(orderItem?.paymentStatus || '').toLowerCase();
-    return ['cod', 'cash', 'cash_on_delivery'].includes(method) ||
-      paymentStatus === 'cash on delivery' ||
-      orderItem?.paymentCaptured === true ||
-      paymentStatus === 'paid' ||
-      orderItem?.isAdvanceVerified === true;
-  };
-
-  const initAlarmCycleForPendingOrder = (orderItem: any) => {
-    const orderId = String(orderItem?.orderId || '');
-    if (!orderId || activeAlarmOrderIdRef.current === orderId) return;
-    activeAlarmOrderIdRef.current = orderId;
-    // The backend sends a new push every three minutes. The app only needs
-    // to play the immediate foreground alarm here; no JS interval is used
-    // for background/terminated scheduling.
-    void startOrderAlarmSound();
-  };
-
   const togglePriceDetails = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     const toValue = isPriceExpanded ? 0 : 1;
@@ -813,15 +678,6 @@ export default function AdminAllOrdersScreen() {
       if (res.data && res.data.success) {
         const fetched = res.data.orders || [];
         setOrders(fetched);
-
-        const hasPending = fetched.find(
-          (o: any) => (o.orderStatus || 'Placed').toLowerCase() === 'placed' && isOrderAlarmEligible(o)
-        );
-        if (hasPending) {
-          initAlarmCycleForPendingOrder(hasPending);
-        } else {
-          clearAlarmAndSnoozeCycle();
-        }
       }
     } catch (err: any) {
       console.log('Error fetching admin orders:', err);
@@ -838,9 +694,6 @@ export default function AdminAllOrdersScreen() {
     const handleNewOrder = (newOrder: any) => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setOrders((prev) => [newOrder, ...prev]);
-      if ((newOrder?.orderStatus || 'Placed').toLowerCase() === 'placed' && isOrderAlarmEligible(newOrder)) {
-        initAlarmCycleForPendingOrder(newOrder);
-      }
     };
 
     const handleOrderUpdated = (updatedOrder: any) => {
@@ -848,10 +701,6 @@ export default function AdminAllOrdersScreen() {
       setOrders((prev) =>
         prev.map((o) => (o.orderId === updatedOrder.orderId ? { ...o, ...updatedOrder } : o))
       );
-      const updatedStatus = String(updatedOrder?.orderStatus || '').toLowerCase();
-      if (updatedStatus && updatedStatus !== 'placed') {
-        void clearAlarmAndSnoozeCycle();
-      }
     };
 
     const handleScheduleStatusUpdated = (data: any) => {
@@ -894,7 +743,6 @@ export default function AdminAllOrdersScreen() {
     }
 
     return () => {
-      clearAlarmAndSnoozeCycle();
       if (socket) {
         socket.off('new_order_placed', handleNewOrder);
         socket.off('new_chef_order', handleNewOrder);

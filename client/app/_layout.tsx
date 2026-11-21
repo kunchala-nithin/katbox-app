@@ -3,97 +3,17 @@ import { useFonts } from 'expo-font'
 import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Platform } from 'react-native'
-import * as Notifications from 'expo-notifications'
-import * as Device from 'expo-device'
 import * as SecureStore from 'expo-secure-store'
-import Constants from 'expo-constants'
 import { ClerkProvider } from '@clerk/clerk-expo'
 
 import { getToken, removeToken, getUser } from '@/src/lib/authStorage'
 import { subscribeAuth } from '@/src/lib/authEvents'
 import { isTokenExpired, getTokenExpiry } from '@/src/lib/jwtUtils'
-import api from '@/src/lib/api'
 
 export { ErrorBoundary } from 'expo-router'
 
 SplashScreen.preventAutoHideAsync()
 
-Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const content: any = notification?.request?.content || {}
-    const data: any = content.data || {}
-    const channelId = String(content.channelId || data.channelId || "")
-    const isOrderAlarm =
-      (channelId === "admin_orders_alarm_v2" || channelId === "admin_orders_alarm_v3") ||
-      (channelId === "chef_orders_alarm_v2" || channelId === "chef_orders_alarm_v3") ||
-      content.sound === "alarm_10s.mp3" ||
-      content.sound === "alarm_10s" ||
-      content.sound === "alarm.mp3" ||
-      content.sound === "alarm"
-
-    return {
-      shouldShowAlert: true,
-      // In the foreground use the role hook's singleton audio alarm. This
-      // avoids Android playing both notification-channel sound and JS audio.
-      // In background/terminated states Android still plays channel sound.
-      shouldPlaySound: !isOrderAlarm,
-      shouldSetBadge: false,
-      shouldShowBanner: true,
-      shouldShowList: true,
-    }
-  },
-})
-
-/* ─────────────────────────────────────────────────────────────
-   ✅ NEW: COLD-START ANDROID CHANNEL BOOTSTRAP
-   ─────────────────────────────────────────────────────────────
-   The role-scoped channels are normally created by
-   `useOrderNotifier` when the admin/chef tab group is first
-   mounted. However, if a brand-new admin device receives its
-   very first order BEFORE opening the admin tab group, the
-   channel would not exist yet — and Android would fall back
-   to a silent default channel.
-
-   We proactively create BOTH alarm channels here at module load
-   so the very first order is guaranteed to ring with the bundled
-   alarm.mp3 sound, even if the user has never opened the tab.
-   ───────────────────────────────────────────────────────────── */
-if (Platform.OS === 'android') {
-  ;(async () => {
-    try {
-      const alarmChannels = [
-        { id: 'admin_orders_alarm_v3', name: 'Admin Order Alarms' },
-        { id: 'chef_orders_alarm_v3', name: 'Chef Order Alarms' },
-      ]
-
-      for (const ch of alarmChannels) {
-        await Notifications.setNotificationChannelAsync(ch.id, {
-          name: ch.name,
-          importance: Notifications.AndroidImportance?.MAX ?? 5,
-          vibrationPattern: [0, 600, 300, 600, 300],
-          sound: 'alarm.mp3',
-          enableVibrate: true,
-          bypassDnd: true,
-          lockscreenVisibility:
-            Notifications.AndroidNotificationVisibility?.PUBLIC,
-          audioAttributes: {
-            usage: Notifications.AndroidAudioUsage?.NOTIFICATION,
-            contentType:
-              Notifications.AndroidAudioContentType?.SONIFICATION,
-          },
-        })
-      }
-
-      console.log('✅ Cold-start Android alarm channels ready')
-    } catch (err) {
-      console.log('Cold-start Android channel error:', err)
-    }
-  })()
-}
-
-const LAST_HANDLED_NOTIFICATION_RESPONSE_KEY =
-  'katbox_last_handled_notification_response'
 
 const CLERK_PUBLISHABLE_KEY =
   process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY
@@ -181,10 +101,9 @@ function InitialLayout() {
   /**
    * Resolve the first authenticated destination only once per app
    * launch. This prevents a restored Orders/Profile tab from becoming
-   * the normal cold-start screen, while preserving notification taps.
+   * the normal cold-start screen.
    */
   const initialNavigationHandledRef = useRef(false)
-  const startupNotificationRouteRef = useRef(false)
   const [initialNavigationResolved, setInitialNavigationResolved] =
     useState(false)
 
@@ -549,248 +468,62 @@ function InitialLayout() {
 
   /*
    * ------------------------------------------------------------
-   * ROLE-AWARE EXPO PUSH NOTIFICATIONS
+   * NORMAL COLD-START NAVIGATION
    * ------------------------------------------------------------
+   *
+   * Resolve the user's role-based starting destination once after
+   * authentication and the root navigator are ready. Notification
+   * tap routing has been removed with the old notification system.
    */
 
   useEffect(() => {
     if (
       isAuthenticated !== true ||
-      !rootNavigationState?.key
+      !rootNavigationState?.key ||
+      !segments.length ||
+      initialNavigationHandledRef.current
     ) {
       return
     }
 
     let isMounted = true
-    let startupCheckCompleted = false
-    let subscription: Notifications.Subscription | null = null
+    initialNavigationHandledRef.current = true
 
-    const shouldResolveInitialNavigation =
-      !initialNavigationHandledRef.current
-
-    // Claim this one-time startup check before awaiting any asynchronous work.
-    if (shouldResolveInitialNavigation) {
-      initialNavigationHandledRef.current = true
-    }
-
-    const registerPushNotifications = async () => {
+    const resolveInitialNavigation = async () => {
       try {
-        const isExpoGo = Constants.appOwnership === 'expo'
-        if (isExpoGo) return
-
-        const token = await registerForPushNotificationsAsync()
-
-        if (token && isMounted) {
-          const storedUser = await getUser()
-          if (!storedUser) {
-            console.log('⚠️ Push token registration skipped: KatBox user profile is not available yet.')
-            return
-          }
-          const notificationRole = storedUser.isAdmin === true ? 'admin' : 'customer'
-          await api.post('/api/auth/notification-token', {
-            token,
-            role: notificationRole,
-          })
-        }
-      } catch (err) {
-        console.log('❌ Customer push registration error:', err)
-      }
-    }
-
-    /**
-     * Returns true only when this response was successfully handled.
-     *
-     * The response is cleared immediately so an old response cannot be
-     * replayed on the next launch if user lookup or navigation fails.
-     * The notification identifier is also persisted to protect against
-     * Expo returning the same already-consumed response again.
-     */
-    const handleNotificationResponse = async (
-      response: Notifications.NotificationResponse,
-      isColdStart = false
-    ): Promise<boolean> => {
-      try {
-        const responseId = response.notification.request.identifier
-
-        await Notifications.clearLastNotificationResponseAsync().catch(
-          () => undefined
-        )
-
-        if (responseId) {
-          const previouslyHandledId = await SecureStore.getItemAsync(
-            LAST_HANDLED_NOTIFICATION_RESPONSE_KEY
-          )
-
-          if (previouslyHandledId === responseId) {
-            console.log(
-              'ℹ️ Ignoring an already handled customer notification response.'
-            )
-            return false
-          }
-        }
-
-        const data: any =
-          response.notification.request.content.data || {}
-        const user = await getUser()
-
-        if (!isMounted || !user) return false
-
-        const role = String(data.role || '').toLowerCase()
-
-        if (
-          (data?.screen === 'admin-orders' || role === 'admin') &&
-          user.isAdmin === true
-        ) {
-          if (isColdStart) {
-            router.replace('/admin/all-orders' as any)
-          } else {
-            router.push('/admin/all-orders' as any)
-          }
-        } else {
-          // Chef notifications opened in the Customer app fall back to the
-          // user's customer order history; Chef operations stay in Chef app.
-          if (isColdStart) {
-            router.replace('/(tabs)/Orders' as any)
-          } else {
-            router.push('/(tabs)/Orders' as any)
-          }
-        }
-
-        if (responseId) {
-          await SecureStore.setItemAsync(
-            LAST_HANDLED_NOTIFICATION_RESPONSE_KEY,
-            responseId
-          ).catch((storageError) => {
-            console.log(
-              'Customer notification response persistence error:',
-              storageError
-            )
-          })
-        }
-
-        return true
-      } catch (err) {
-        console.log('❌ Notification navigation error:', err)
-        return false
-      }
-    }
-
-    const initializeStartupNavigation = async () => {
-      // After the first startup decision, auth changes only need to
-      // re-register the live notification listener.
-      if (!shouldResolveInitialNavigation) {
-        subscription =
-          Notifications.addNotificationResponseReceivedListener(
-            (response) => {
-              void handleNotificationResponse(response, false)
-            }
-          )
-
-        startupCheckCompleted = true
-
-        if (isMounted) {
-          setInitialNavigationResolved(true)
-        }
-
-        return
-      }
-
-      try {
-        const lastResponse =
-          await Notifications.getLastNotificationResponseAsync()
+        const initialRoute = await getRoleRoute()
 
         if (!isMounted) return
 
-        let openedFromNotification = false
-
-        if (lastResponse) {
-          openedFromNotification = await handleNotificationResponse(
-            lastResponse,
-            true
-          )
-
-          if (openedFromNotification) {
-            startupNotificationRouteRef.current = true
-          }
-        }
-
-        if (!isMounted) return
-
-        /*
-         * A notification tap has priority over the restored navigation
-         * state. Otherwise, a cold launch restored inside the customer
-         * tabs always starts at Home instead of Orders or Profile.
-         *
-         * Public routes are left to the existing authentication guard,
-         * and admin/screens deep links are not overwritten here.
-         */
-        if (
-          !openedFromNotification &&
-          segments[0] === '(tabs)'
-        ) {
-          router.replace('/(tabs)/Home' as any)
-        }
-
-        // Listen for new notification taps only after the cold-start
-        // response has been consumed, avoiding duplicate handling.
-        subscription =
-          Notifications.addNotificationResponseReceivedListener(
-            (response) => {
-              void handleNotificationResponse(response, false)
-            }
-          )
-
-        startupCheckCompleted = true
-
-        if (isMounted) {
-          setInitialNavigationResolved(true)
-        }
-      } catch (err) {
         console.log(
-          'Customer notification cold-start error:',
-          err
+          '🚀 Normal cold launch. Opening role-based start route:',
+          initialRoute
         )
 
-        if (isMounted) {
-          // Fail safely to Home for a restored customer tab route.
-          if (segments[0] === '(tabs)') {
-            router.replace('/(tabs)/Home' as any)
-          }
+        router.replace(initialRoute as any)
+      } catch (error) {
+        if (!isMounted) return
 
+        console.log('❌ Initial navigation resolution error:', error)
+        router.replace('/(tabs)/Home' as any)
+      } finally {
+        if (isMounted) {
           setInitialNavigationResolved(true)
         }
-
-        startupCheckCompleted = true
       }
     }
 
-    void registerPushNotifications()
-
-    const pushTokenRefreshSubscription =
-      Notifications.addPushTokenListener(() => {
-        if (isMounted) {
-          void registerPushNotifications()
-        }
-      })
-
-    void initializeStartupNavigation()
+    void resolveInitialNavigation()
 
     return () => {
       isMounted = false
-
-      subscription?.remove()
-      pushTokenRefreshSubscription.remove()
-
-      // If the effect was interrupted before completing, allow a later
-      // authenticated render to retry the startup decision.
-      if (!startupCheckCompleted) {
-        initialNavigationHandledRef.current = false
-      }
     }
   }, [
     router,
     isAuthenticated,
     rootNavigationState?.key,
+    segments[0],
+    getRoleRoute,
   ])
 
   /*
@@ -828,8 +561,7 @@ function InitialLayout() {
       return
     }
 
-    // Wait until cold-start notification handling has decided whether to
-    // open Orders/Admin or use the normal Home destination.
+    // Wait until normal cold-start role navigation has been resolved.
     if (isAuthenticated && !initialNavigationResolved) {
       return
     }
@@ -853,14 +585,6 @@ function InitialLayout() {
       currentSegment === 'login' ||
       currentSegment === 'verify' ||
       currentSegment === 'oauth-callback'
-
-    if (isAuthenticated && startupNotificationRouteRef.current) {
-      if (isPublicRoute) {
-        return
-      }
-
-      startupNotificationRouteRef.current = false
-    }
 
     /*
      * ----------------------------------------------------------
@@ -997,7 +721,6 @@ function InitialLayout() {
           headerShown: false,
         }}
       />
-
       <Stack.Screen
         name="verify/[phone]"
         options={{
@@ -1027,68 +750,4 @@ function InitialLayout() {
       />
     </Stack>
   )
-}
-
-/*
- * ============================================================
- * EXPO PUSH NOTIFICATION REGISTRATION
- * ============================================================
- */
-
-async function registerForPushNotificationsAsync() {
-  let token
-
-  if (Device.isDevice) {
-    const {
-      status: existingStatus,
-    } = await Notifications.getPermissionsAsync()
-
-    let finalStatus = existingStatus
-
-    if (existingStatus !== 'granted') {
-      const { status } =
-        await Notifications.requestPermissionsAsync()
-
-      finalStatus = status
-    }
-
-    if (finalStatus !== 'granted') {
-      console.log(
-        '📵 Push notification permission was not granted'
-      )
-
-      return
-    }
-
-    /*
-     * getExpoPushTokenAsync() requires a valid EAS
-     * projectId in a development/production build.
-     *
-     * Expo Go is handled before this function is called.
-     */
-    const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId ??
-      Constants.easConfig?.projectId
-
-    if (!projectId) {
-      console.log(
-        '⚠️ No EAS projectId found. Push token registration skipped.'
-      )
-
-      return
-    }
-
-    token = (
-      await Notifications.getExpoPushTokenAsync({
-        projectId,
-      })
-    ).data
-
-    console.log(
-      '📲 Expo push token:',
-      token
-    )
-  }
-
-  return token
 }
