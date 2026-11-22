@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "284665565685",
+    "project_id": "katbox-8737f",
+    "storage_bucket": "katbox-8737f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:284665565685:android:bb68b70688596c7b2d50bc",
+        "android_client_info": {
+          "package_name": "com.katbox.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDB8KObxVvScW6uoLCZWPv2LTmjgXE_w4c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

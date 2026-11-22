@@ -1,7 +1,9 @@
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import connectDB from "./config/db";
+import initializeFirebaseAdmin from "./config/firebaseAdmin";
 import authRoutes from "./routes/auth.routes";
 import protectedRoutes from "./routes/protected.routes";
 import http from "http";
@@ -20,6 +22,10 @@ import { setSocketServer } from "./utils/socket";
 
 
 dotenv.config();
+
+// Initialize Firebase Admin before starting the server.
+initializeFirebaseAdmin();
+
 const app = express();
 const server = http.createServer(app);
 
