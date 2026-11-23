@@ -33,6 +33,10 @@ export interface IUser extends Document {
   savedAddresses: ISavedAddress[];
   isChef: boolean;
   isAdmin: boolean;
+  pushToken?: string; // legacy token retained for backward compatibility
+  customerPushTokens: string[];
+  chefPushTokens: string[];
+  adminPushTokens: string[];
   orderHistory: mongoose.Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
@@ -223,6 +227,20 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: false,
     },
+
+    /*
+     * Expo push notification token
+     */
+    pushToken: {
+      type: String,
+      default: "",
+    },
+
+    // Role-scoped Expo tokens. Arrays support multiple devices and prevent
+    // the customer app from overwriting the chef/admin app's registration.
+    customerPushTokens: { type: [String], default: [] },
+    chefPushTokens: { type: [String], default: [] },
+    adminPushTokens: { type: [String], default: [] },
 
     /*
      * Orders belonging to this user

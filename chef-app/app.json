@@ -21,7 +21,7 @@
       "bundleIdentifier": "com.katbox.chef",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Allow KatBox Chef to access photos for chef and menu images.",
-        "NSCameraUsageDescription": "Allow KatBox Chef to use the camera for chef and menu images.",
+        "NSCameraUsageDescription": "Allow KatBox Chef to use the camera to access photos for chef and menu images.",
         "NSLocationWhenInUseUsageDescription": "KatBox Chef uses location to manage your kitchen location."
       }
     },
@@ -34,6 +34,7 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.katbox.chef",
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -63,7 +64,17 @@
           "isAndroidBackgroundLocationEnabled": false,
           "isAndroidForegroundServiceEnabled": false
         }
-      ]
+      ],
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/sounds/alarm_10s.mp3"
+          ]
+        }
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -10,6 +10,7 @@ import { ClerkProvider } from '@clerk/clerk-expo'
 import { getToken, removeToken, getUser, refreshUser } from '@/src/lib/authStorage'
 import { subscribeAuth } from '@/src/lib/authEvents'
 import { isTokenExpired, getTokenExpiry } from '@/src/lib/jwtUtils'
+import FCMRegistration from '@/src/notifications/FCMRegistration'
 
 export { ErrorBoundary } from 'expo-router'
 
@@ -674,13 +675,16 @@ function InitialLayout() {
    */
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <>
+      <FCMRegistration />
+      <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="SlidingScreens" />
       <Stack.Screen name="login" />
       <Stack.Screen name="oauth-callback" />
       <Stack.Screen name="unauthorized" />
       <Stack.Screen name="chefManagement" />
-    </Stack>
+      </Stack>
+    </>
   )
 }

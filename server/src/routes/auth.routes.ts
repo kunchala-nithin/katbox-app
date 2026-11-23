@@ -9,6 +9,7 @@ import User, {
   ISavedAddress,
   IActiveAddress,
 } from "../models/User";
+import FCMDevice from "../models/FCMDevices";
 // ✅ NEW: Chef model import — needed to join Chef.orderHistory for chef users
 import Chef from "../models/Chef";
 // Twilio Verify enforces verification checks; a local send throttle below adds an extra guard.
@@ -2325,6 +2326,223 @@ router.patch(
       return res.status(500).json({
         success: false,
         message: "Failed to update admin status",
+      });
+    }
+  }
+);
+
+
+/*
+ * ============================================================
+ * FCM DEVICE TOKEN REGISTRATION
+ * ============================================================
+ *
+ * POST /auth/notification-token
+ *
+ * The authenticated JWT determines the user.
+ * MongoDB determines the user's notification role.
+ * The role supplied by the client, if any, is never trusted.
+ *
+ * Customer/Admin app: com.katbox.app
+ * Chef app:           com.katbox.chef
+ * ============================================================
+ */
+router.post(
+  "/notification-token",
+  protect,
+  async (req: AuthRequest, res: express.Response) => {
+    try {
+      const userId = req.user?.userId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized",
+        });
+      }
+
+      const { token, appId, platform, deviceId } = req.body || {};
+
+      if (
+        typeof token !== "string" ||
+        !token.trim() ||
+        token.trim().length > 8192
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid FCM device token is required.",
+        });
+      }
+
+      if (
+        appId !== "com.katbox.app" &&
+        appId !== "com.katbox.chef"
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid KatBox application ID.",
+        });
+      }
+
+      if (platform !== "android" && platform !== "ios") {
+        return res.status(400).json({
+          success: false,
+          message: "Unsupported device platform.",
+        });
+      }
+
+      if (
+        deviceId !== undefined &&
+        (typeof deviceId !== "string" || deviceId.length > 200)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid device ID.",
+        });
+      }
+
+      const user = await User.findById(userId);
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found.",
+        });
+      }
+
+      let role: "customer" | "chef" | "admin";
+
+      if (appId === "com.katbox.chef") {
+        if (!user.isChef) {
+          return res.status(403).json({
+            success: false,
+            message: "Chef access is required for the Chef application.",
+          });
+        }
+
+        role = "chef";
+      } else {
+        role = user.isAdmin ? "admin" : "customer";
+      }
+
+      const normalizedToken = token.trim();
+
+      const registeredDevice = await FCMDevice.findOneAndUpdate(
+        { token: normalizedToken },
+        {
+          $set: {
+            userId: user._id,
+            token: normalizedToken,
+            role,
+            appId,
+            platform,
+            deviceId: deviceId || "",
+            enabled: true,
+            lastRegisteredAt: new Date(),
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+          runValidators: true,
+          setDefaultsOnInsert: true,
+        }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "FCM device registered successfully.",
+        device: {
+          role: registeredDevice.role,
+          appId: registeredDevice.appId,
+          platform: registeredDevice.platform,
+          enabled: registeredDevice.enabled,
+        },
+      });
+    } catch (error: any) {
+      if (error?.code === 11000) {
+        return res.status(409).json({
+          success: false,
+          message: "Device registration conflict. Please try again.",
+        });
+      }
+
+      console.error(
+        "[FCM] Device registration failed:",
+        error?.message || error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to register this notification device.",
+      });
+    }
+  }
+);
+
+/*
+ * ============================================================
+ * FCM DEVICE TOKEN UNREGISTRATION
+ * ============================================================
+ *
+ * DELETE /auth/notification-token
+ *
+ * Disables only the supplied token belonging to the authenticated
+ * user. The token is retained in MongoDB for diagnostic purposes.
+ * ============================================================
+ */
+router.delete(
+  "/notification-token",
+  protect,
+  async (req: AuthRequest, res: express.Response) => {
+    try {
+      const userId = req.user?.userId;
+      const token =
+        typeof req.body?.token === "string"
+          ? req.body.token.trim()
+          : "";
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized",
+        });
+      }
+
+      if (!token || token.length > 8192) {
+        return res.status(400).json({
+          success: false,
+          message: "A valid FCM device token is required.",
+        });
+      }
+
+      const result = await FCMDevice.updateOne(
+        {
+          userId,
+          token,
+          enabled: true,
+        },
+        {
+          $set: {
+            enabled: false,
+          },
+        }
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Notification device unregistered successfully.",
+        modified: result.modifiedCount > 0,
+      });
+    } catch (error: any) {
+      console.error(
+        "[FCM] Device unregistration failed:",
+        error?.message || error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Unable to unregister this notification device.",
       });
     }
   }

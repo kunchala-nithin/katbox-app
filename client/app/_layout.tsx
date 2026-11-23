@@ -1,3 +1,4 @@
+import FCMRegistration from "@/src/notifications/FCMRegistration"
 import FontAwesome from '@expo/vector-icons/FontAwesome'
 import { useFonts } from 'expo-font'
 import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router'
@@ -693,7 +694,9 @@ function InitialLayout() {
    */
 
   return (
-    <Stack>
+    <>
+      <FCMRegistration />
+      <Stack>
       <Stack.Screen
         name="index"
         options={{
@@ -748,6 +751,7 @@ function InitialLayout() {
           headerShown: false,
         }}
       />
-    </Stack>
+      </Stack>
+    </>
   )
 }

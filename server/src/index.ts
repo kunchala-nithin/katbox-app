@@ -20,6 +20,7 @@ import websiteMessageRoutes from "./routes/websiteMessage.routes";
 import assistantRoutes from "./routes/assistant.routes";
 import fcmRoutes from "./routes/fcm.routes";
 import { setSocketServer } from "./utils/socket";
+import { processOrderAlarmSchedules } from "./utils/orderNotifications";
 
 
 dotenv.config();
@@ -72,6 +73,16 @@ app.use("/api/assistant", assistantRoutes);
 app.use("/api/fcm", fcmRoutes);
 
 void connectDB();
+
+// Durable MongoDB-backed FCM order alarm worker. The database schedule
+// survives API restarts; each active chef/admin recipient is rechecked
+// against the live order status before a repeat is sent.
+const orderAlarmWorker = setInterval(() => {
+  void processOrderAlarmSchedules().catch((error) => {
+    console.error("[FCM alarm worker] Unhandled worker error:", error);
+  });
+}, 5_000);
+orderAlarmWorker.unref?.();
 app.route("/health")
   .get((_req, res) => res.status(200).json({ status: "OK" }))
   .head((_req, res) => res.status(200).end());
