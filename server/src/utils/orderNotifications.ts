@@ -1,6 +1,8 @@
 import FCMDevice from "../models/FCMDevices";
 import Order from "../models/Orders";
 import OrderAlarmSchedule from "../models/OrderAlarmSchedule";
+import NotificationOutbox from "../models/NotificationOutbox";
+import User from "../models/User";
 import { sendFCMToUser, FCMNotificationPayload } from "./fcm";
 
 type RecipientRole = "customer" | "chef" | "admin";
@@ -14,16 +16,53 @@ export const sendOrderNotification = async (args: {
 }): Promise<{ acceptedTokens: string[]; failedTokens: string[] }> => {
   if (!args.orderId || !args.recipientUserId) return { acceptedTokens: [], failedTokens: [] };
   try {
+    let recipientName = "";
+    try {
+      const recipient = await User.findById(args.recipientUserId).select("name").lean();
+      recipientName = String(recipient?.name || "").trim();
+    } catch (recipientLookupError) {
+      // Name lookup is metadata only; it must not block a valid push send.
+      console.warn(`[FCM] Recipient name lookup failed: role=${args.recipientRole}, user=${args.recipientUserId}`);
+    }
+
     const result = await sendFCMToUser(args.recipientUserId, args.recipientRole, args.payload);
     if (result.acceptedTokens.length === 0) {
       console.warn(`[FCM] No accepted device tokens: role=${args.recipientRole}, user=${args.recipientUserId}, order=${args.orderId}`);
     }
+
+    // Persist the actual recipient identity with the notification record.
+    // "accepted" means FCM accepted at least one device send; it does not
+    // claim that the operating system displayed the notification.
+    try {
+      const eventType = args.eventType || "order_notification";
+      const accepted = result.acceptedTokens.length > 0;
+      await NotificationOutbox.findOneAndUpdate(
+        { orderId: args.orderId, eventType, recipientUserId: args.recipientUserId, recipientRole: args.recipientRole },
+        {
+          $set: {
+            recipientName,
+            payload: args.payload,
+            acceptedTokens: result.acceptedTokens,
+            status: accepted ? "accepted" : "failed",
+            attempts: 1,
+            acceptedAt: accepted ? new Date() : null,
+            lastError: accepted ? "" : "No registered device accepted the notification",
+          },
+          $setOnInsert: { nextAttemptAt: new Date() },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    } catch (recordError) {
+      // A notification-history write must never undo a successful FCM send.
+      console.error(`[FCM] Notification record persistence failed: order=${args.orderId}, role=${args.recipientRole}`, recordError);
+    }
+
     // Only the initial new-order alarm starts a repeat schedule. Status/customer
     // notifications never create repeating alarms.
     if ((args.recipientRole === "chef" || args.recipientRole === "admin") && /_(chef|admin)_alarm$/.test(args.eventType || "")) {
       await OrderAlarmSchedule.findOneAndUpdate(
         { orderId: args.orderId, recipientUserId: args.recipientUserId, recipientRole: args.recipientRole },
-        { $set: { eventType: args.eventType || "new_order_alarm", payload: args.payload, status: "active", nextRunAt: new Date(Date.now() + 3 * 60 * 1000), stoppedAt: null, stopReason: "" }, $setOnInsert: { repeatCount: 0 } },
+        { $set: { eventType: args.eventType || "new_order_alarm", recipientName, payload: args.payload, status: "active", nextRunAt: new Date(Date.now() + 3 * 60 * 1000), stoppedAt: null, stopReason: "" }, $setOnInsert: { repeatCount: 0 } },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
     }

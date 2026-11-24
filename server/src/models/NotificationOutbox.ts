@@ -4,6 +4,7 @@ export interface INotificationOutbox extends Document {
   orderId: string;
   eventType: string;
   recipientUserId: string;
+  recipientName: string;
   recipientRole: "customer" | "chef" | "admin";
   payload: Record<string, any>;
   acceptedTokens: string[];
@@ -22,6 +23,7 @@ const notificationOutboxSchema = new Schema<INotificationOutbox>(
     orderId: { type: String, required: true, index: true },
     eventType: { type: String, required: true },
     recipientUserId: { type: String, required: true },
+    recipientName: { type: String, default: "" },
     recipientRole: { type: String, enum: ["customer", "chef", "admin"], required: true },
     payload: { type: Schema.Types.Mixed, required: true },
     acceptedTokens: { type: [String], default: [] },

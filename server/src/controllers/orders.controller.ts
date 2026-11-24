@@ -2017,19 +2017,25 @@ export const updateOrderStatus = async (req: AuthRequest, res: Response) => {
       console.log("Socket emit warning:", e);
     }
 
-    // Notify the customer after the database update has succeeded.
+    // Notify the customer through the same FCM registration path used by
+    // the customer app. This is a normal notification: default OS sound,
+    // no custom alarm channel and no repeating alarm schedule.
     try {
       if (updatedOrder.userId && mongoose.Types.ObjectId.isValid(updatedOrder.userId)) {
-        const customerDoc = await User.findById(updatedOrder.userId);
-        const customerTokens = tokensFor(customerDoc, "customer");
-        if (customerTokens.length > 0) {
-          const msg = getCustomerStatusMessage(normalized, updatedOrder.orderId);
-          await sendExpoPushBatch(customerTokens.map((token) => ({
-            token, title: msg.title, body: msg.body,
-            data: { orderId: updatedOrder.orderId, screen: "orders", role: "customer", status: normalized },
-            sound: "default", priority: "high" as const,
-          })));
-        }
+        const msg = getCustomerStatusMessage(normalized, updatedOrder.orderId);
+        await sendOrderNotification({
+          orderId: String(updatedOrder.orderId),
+          eventType: `order_status_customer_${normalized.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+          recipientUserId: String(updatedOrder.userId),
+          recipientRole: "customer",
+          payload: {
+            title: msg.title,
+            body: msg.body,
+            data: { orderId: String(updatedOrder.orderId), screen: "orders", role: "customer", status: normalized },
+            sound: "default",
+            priority: "high",
+          },
+        });
       }
     } catch (customerPushErr) {
       console.log("Customer status push error:", customerPushErr);
@@ -2525,16 +2531,20 @@ export const updateScheduleStatus = async (req: AuthRequest, res: Response) => {
        ────────────────────────────────────────────────────────── */
     try {
       if (order.userId && mongoose.Types.ObjectId.isValid(order.userId)) {
-        const customerDoc = await User.findById(order.userId);
-        const customerTokens = tokensFor(customerDoc, "customer");
-        if (customerTokens.length > 0) {
-          const baseMsg = getCustomerStatusMessage(normalizedStatus, order.orderId);
-          await sendExpoPushBatch(customerTokens.map((token) => ({
-            token, title: `${baseMsg.title} • ${dateStr}`, body: baseMsg.body,
-            data: { orderId: order.orderId, screen: "orders", role: "customer", status: normalizedStatus, scheduleDate: dateStr },
-            sound: "default", priority: "high" as const,
-          })));
-        }
+        const baseMsg = getCustomerStatusMessage(normalizedStatus, order.orderId);
+        await sendOrderNotification({
+          orderId: String(order.orderId),
+          eventType: `schedule_status_customer_${String(dateStr).toLowerCase().replace(/[^a-z0-9]+/g, "_")}_${normalizedStatus.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+          recipientUserId: String(order.userId),
+          recipientRole: "customer",
+          payload: {
+            title: `${baseMsg.title} • ${dateStr}`,
+            body: baseMsg.body,
+            data: { orderId: String(order.orderId), screen: "orders", role: "customer", status: normalizedStatus, scheduleDate: dateStr },
+            sound: "default",
+            priority: "high",
+          },
+        });
       }
     } catch (customerPushErr) {
       console.log("Customer schedule push error:", customerPushErr);

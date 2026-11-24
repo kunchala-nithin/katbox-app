@@ -4,6 +4,7 @@ export interface IOrderAlarmSchedule extends Document {
   orderId: string;
   eventType: string;
   recipientUserId: string;
+  recipientName: string;
   recipientRole: "chef" | "admin";
   payload: Record<string, any>;
   status: "active" | "stopped";
@@ -20,6 +21,7 @@ const orderAlarmScheduleSchema = new Schema<IOrderAlarmSchedule>({
   orderId: { type: String, required: true, index: true },
   eventType: { type: String, required: true },
   recipientUserId: { type: String, required: true },
+  recipientName: { type: String, default: "" },
   recipientRole: { type: String, enum: ["chef", "admin"], required: true },
   payload: { type: Schema.Types.Mixed, required: true },
   status: { type: String, enum: ["active", "stopped"], default: "active", index: true },
