@@ -1,0 +1,48 @@
+diff --git a/node_modules/@react-native-firebase/app/android/src/reactnative/java/io/invertase/firebase/common/ReactNativeFirebaseModule.kt b/node_modules/@react-native-firebase/app/android/src/reactnative/java/io/invertase/firebase/common/ReactNativeFirebaseModule.kt
+index 2134290..2ae30f5 100644
+--- a/node_modules/@react-native-firebase/app/android/src/reactnative/java/io/invertase/firebase/common/ReactNativeFirebaseModule.kt
++++ b/node_modules/@react-native-firebase/app/android/src/reactnative/java/io/invertase/firebase/common/ReactNativeFirebaseModule.kt
+@@ -103,12 +103,12 @@ open class ReactNativeFirebaseModule(
+       resolver: ReadableMap?,
+     ) {
+       val userInfoMap = Arguments.createMap()
+-      userInfoMap.putString("code", code)
+-      userInfoMap.putString("message", message)
++      userInfoMap.putString("code", code ?: "")
++      userInfoMap.putString("message", message ?: "")
+       if (resolver != null) {
+         userInfoMap.putMap("resolver", resolver)
+       }
+-      promise!!.reject(code, message, userInfoMap)
++      promise!!.reject(code ?: "", message ?: "", userInfoMap)
+     }
+ 
+     @JvmStatic
+@@ -118,9 +118,9 @@ open class ReactNativeFirebaseModule(
+       message: String?,
+     ) {
+       val userInfoMap = Arguments.createMap()
+-      userInfoMap.putString("code", code)
+-      userInfoMap.putString("message", message)
+-      promise!!.reject(code, message, userInfoMap)
++      userInfoMap.putString("code", code ?: "")
++      userInfoMap.putString("message", message ?: "")
++      promise!!.reject(code ?: "", message ?: "", userInfoMap)
+     }
+ 
+     @JvmStatic
+@@ -131,10 +131,10 @@ open class ReactNativeFirebaseModule(
+       nativeErrorMessage: String?,
+     ) {
+       val userInfoMap = Arguments.createMap()
+-      userInfoMap.putString("code", code)
+-      userInfoMap.putString("message", message)
+-      userInfoMap.putString("nativeErrorMessage", nativeErrorMessage)
+-      promise!!.reject(code, message, userInfoMap)
++      userInfoMap.putString("code", code ?: "")
++      userInfoMap.putString("message", message ?: "")
++      userInfoMap.putString("nativeErrorMessage", nativeErrorMessage ?: "")
++      promise!!.reject(code ?: "", message ?: "", userInfoMap)
+     }
+   }
+ }
