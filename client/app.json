@@ -47,7 +47,6 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.katbox.app",
-      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_EXTERNAL_STORAGE",
@@ -107,7 +106,6 @@
           ]
         }
       ],
-      "@react-native-firebase/app",
       "@react-native-firebase/messaging"
     ],
     "experiments": {
@@ -117,9 +115,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "a1e7c85c-8566-467f-b04a-12c946a0692a"
+        "projectId": "3a2e7f59-ab6b-4d58-9bb1-d1455425ed31"
       }
     },
-    "owner": "testkatbox"
+    "owner": "testkatbox9"
   }
 }
