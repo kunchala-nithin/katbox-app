@@ -1,0 +1,30 @@
+diff --git a/node_modules/@react-native-firebase/messaging/android/src/main/java/io/invertase/firebase/messaging/ReactNativeFirebaseMessagingSerializer.kt b/node_modules/@react-native-firebase/messaging/android/src/main/java/io/invertase/firebase/messaging/ReactNativeFirebaseMessagingSerializer.kt
+index 5ac5c20..95a90f4 100644
+--- a/node_modules/@react-native-firebase/messaging/android/src/main/java/io/invertase/firebase/messaging/ReactNativeFirebaseMessagingSerializer.kt
++++ b/node_modules/@react-native-firebase/messaging/android/src/main/java/io/invertase/firebase/messaging/ReactNativeFirebaseMessagingSerializer.kt
+@@ -178,10 +178,10 @@ open class ReactNativeFirebaseMessagingSerializer {
+         notificationMap.putString("titleLocKey", notification.titleLocalizationKey)
+       }
+ 
+-      if (notification.titleLocalizationArgs != null) {
++      notification.titleLocalizationArgs?.let { args ->
+         notificationMap.putArray(
+           "titleLocArgs",
+-          Arguments.fromJavaArgs(notification.titleLocalizationArgs),
++          Arguments.fromJavaArgs(args.map { it as Any }.toTypedArray()),
+         )
+       }
+ 
+@@ -193,10 +193,10 @@ open class ReactNativeFirebaseMessagingSerializer {
+         notificationMap.putString("bodyLocKey", notification.bodyLocalizationKey)
+       }
+ 
+-      if (notification.bodyLocalizationArgs != null) {
++      notification.bodyLocalizationArgs?.let { args ->
+         notificationMap.putArray(
+           "bodyLocArgs",
+-          Arguments.fromJavaArgs(notification.bodyLocalizationArgs),
++          Arguments.fromJavaArgs(args.map { it as Any }.toTypedArray()),
+         )
+       }
+ 
