@@ -45,7 +45,12 @@ const ADMIN_TAB_CONFIG: Record<
         label: 'Messages',
         icon: 'mail-outline',
         activeIcon: 'mail',
-    },  
+    },
+    'notifications': {
+        label: 'Notifications',
+        icon: 'notifications-outline',
+        activeIcon: 'notifications',
+    },
 }
 
 export default function AdminTabsLayout() {
@@ -162,6 +167,7 @@ export default function AdminTabsLayout() {
             <Tabs.Screen name="all-orders" options={{ title: 'Orders' }} />
             <Tabs.Screen name="add-banners" options={{ title: 'Banners' }} />
              <Tabs.Screen name="all-msgs" options={{ title: 'Messages' }} />
+            <Tabs.Screen name="notifications" options={{ title: 'Notifications' }} />
         </Tabs>
     )
 }

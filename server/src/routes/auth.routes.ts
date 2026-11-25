@@ -10,6 +10,8 @@ import User, {
   IActiveAddress,
 } from "../models/User";
 import FCMDevice from "../models/FCMDevices";
+import NotificationOutbox from "../models/NotificationOutbox";
+import OrderAlarmSchedule from "../models/OrderAlarmSchedule";
 // ✅ NEW: Chef model import — needed to join Chef.orderHistory for chef users
 import Chef from "../models/Chef";
 // Twilio Verify enforces verification checks; a local send throttle below adds an extra guard.
@@ -129,6 +131,48 @@ const buildUserResponse = (user: any) => ({
   isChef: user.isChef,
   isAdmin: user.isAdmin || false,
 });
+
+/**
+ * Keep the recipient's current MongoDB name synchronized across the
+ * notification-related collections. The name is always sourced from the
+ * authenticated User document, never from a client-supplied recipientName.
+ * Metadata synchronization must not cause an otherwise successful profile
+ * update to fail.
+ */
+const syncRecipientNameAcrossNotifications = async (
+  userId: string,
+  recipientName: string
+): Promise<void> => {
+  const cleanName = recipientName.trim();
+  const updates = await Promise.allSettled([
+    FCMDevice.updateMany(
+      { userId },
+      { $set: { recipientName: cleanName } }
+    ),
+    NotificationOutbox.updateMany(
+      { recipientUserId: userId },
+      { $set: { recipientName: cleanName } }
+    ),
+    OrderAlarmSchedule.updateMany(
+      { recipientUserId: userId },
+      { $set: { recipientName: cleanName } }
+    ),
+  ]);
+
+  updates.forEach((result, index) => {
+    if (result.status === "rejected") {
+      const collections = [
+        "FCMDevices",
+        "NotificationOutboxes",
+        "OrderAlarmSchedules",
+      ];
+      console.error(
+        `[FCM] Recipient name synchronization failed for ${collections[index]}:`,
+        result.reason
+      );
+    }
+  });
+};
 
 /*
  * ============================================================
@@ -1448,6 +1492,11 @@ router.patch(
         });
       }
 
+      await syncRecipientNameAcrossNotifications(
+        String(updatedUser._id),
+        String(updatedUser.name || "")
+      );
+
       return res.json({
         success: true,
         message:
@@ -1980,6 +2029,11 @@ router.put(
         });
       }
 
+      await syncRecipientNameAcrossNotifications(
+        String(updatedUser._id),
+        String(updatedUser.name || "")
+      );
+
       return res.json({
         success: true,
         message:
@@ -2432,6 +2486,7 @@ router.post(
         {
           $set: {
             userId: user._id,
+            recipientName: String(user.name || "").trim(),
             token: normalizedToken,
             role,
             appId,

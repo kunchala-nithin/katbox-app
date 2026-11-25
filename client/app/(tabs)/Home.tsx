@@ -1587,6 +1587,16 @@ export default function HomeScreen() {
 
             <View style={styles.topRightActions}>
               <TouchableOpacity
+                style={[styles.headerIconButton, { marginRight: 8 }]}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Open notifications inbox"
+                onPress={() => router.push('/screens/NotificationsScreen' as any)}
+              >
+                <Ionicons name="notifications-outline" size={19} color="#E5E7EB" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 style={styles.headerIconButton}
                 activeOpacity={0.75}
                 onPress={() => {

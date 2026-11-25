@@ -902,26 +902,47 @@ const AddChefs = () => {
                 </Text>
               </View>
 
-              <View style={styles.headerToggleContainer}>
-                <Text
-                  style={[
-                    styles.toggleLabelText,
-                    { color: isAvailable ? "#4ADE80" : "#F87171" },
-                  ]}
-                >
-                  {isAvailable ? "LIVE" : "OFFLINE"}
-                </Text>
-                <Switch
-                  trackColor={{
-                    false: "rgba(248, 113, 113, 0.3)",
-                    true: "rgba(74, 222, 128, 0.4)",
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open chef notifications inbox"
+                  onPress={() => router.push("/notifications" as any)}
+                  style={{
+                    width: 42,
+                    height: 42,
+                    borderRadius: 14,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: "rgba(26, 36, 29, 0.95)",
+                    borderWidth: 1,
+                    borderColor: "rgba(38, 54, 42, 0.9)",
                   }}
-                  thumbColor={isAvailable ? "#4ADE80" : "#F87171"}
-                  ios_backgroundColor="#374151"
-                  onValueChange={handleToggleAvailability}
-                  value={isAvailable}
-                  style={styles.smallSwitch}
-                />
+                >
+                  <Ionicons name="notifications-outline" size={20} color="#E5E7EB" />
+                </TouchableOpacity>
+
+                <View style={styles.headerToggleContainer}>
+                  <Text
+                    style={[
+                      styles.toggleLabelText,
+                      { color: isAvailable ? "#4ADE80" : "#F87171" },
+                    ]}
+                  >
+                    {isAvailable ? "LIVE" : "OFFLINE"}
+                  </Text>
+                  <Switch
+                    trackColor={{
+                      false: "rgba(248, 113, 113, 0.3)",
+                      true: "rgba(74, 222, 128, 0.4)",
+                    }}
+                    thumbColor={isAvailable ? "#4ADE80" : "#F87171"}
+                    ios_backgroundColor="#374151"
+                    onValueChange={handleToggleAvailability}
+                    value={isAvailable}
+                    style={styles.smallSwitch}
+                  />
+                </View>
               </View>
             </View>
 
