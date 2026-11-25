@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import api from '@/src/lib/api';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 
 type Recipient = {
   id: string;
@@ -25,6 +26,7 @@ type Recipient = {
   role: 'customer' | 'chef';
 };
 type Audience = 'customers' | 'chefs' | 'both' | 'selected';
+type Destination = '' | 'home' | 'orders' | 'profile' | 'chef_orders' | 'chef_profile';
 
 const GREEN = '#4ADE80';
 const BG = '#0F1A13';
@@ -36,7 +38,9 @@ export default function AdminNotificationsScreen() {
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [imageUrl, setImageUrl] = useState('');
-  const [deepLink, setDeepLink] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageName, setImageName] = useState('');
+  const [destination, setDestination] = useState<Destination>('');
   const [audience, setAudience] = useState<Audience>('customers');
   const [recipientRole, setRecipientRole] = useState<'all' | 'customer' | 'chef'>('all');
   const [search, setSearch] = useState('');
@@ -72,8 +76,9 @@ export default function AdminNotificationsScreen() {
   );
 
   const selectedCount = selectedIds.length;
+  const destinationLabel = ({ '': 'No destination', home: 'App home', orders: 'Orders', profile: 'Profile', chef_orders: 'Chef orders', chef_profile: 'Chef profile' } as Record<Destination, string>)[destination];
   const canSend = title.trim().length > 0 && message.trim().length > 0 &&
-    (audience !== 'selected' || selectedCount > 0) && !sending;
+    (audience !== 'selected' || selectedCount > 0) && !sending && !imageUploading;
 
   const audienceLabel = useMemo(() => ({
     customers: 'All customers',
@@ -88,6 +93,36 @@ export default function AdminNotificationsScreen() {
       : [...current, id]);
   };
 
+  const chooseImage = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) { Alert.alert('Gallery permission required', 'Allow KatBox to access your photos to attach a notification image.'); return; }
+      const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 0.85 });
+      if (picked.canceled || !picked.assets?.[0]) return;
+      const asset = picked.assets[0];
+      const form = new FormData();
+      form.append('image', { uri: asset.uri, name: asset.fileName || `katbox-notification-${Date.now()}.jpg`, type: asset.mimeType || 'image/jpeg' } as any);
+      setImageUploading(true);
+      const uploaded = await api.post('/api/admin-notifications/upload-image', form, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 });
+      if (!uploaded.data?.imageUrl) throw new Error('The server did not return an uploaded image URL.');
+      setImageUrl(uploaded.data.imageUrl);
+      setImageName(asset.fileName || 'Gallery image');
+    } catch (error: any) {
+      const detail = error?.response?.data?.message || error?.message || 'Image upload failed. Please try again.';
+      Alert.alert('Image upload failed', detail);
+    } finally { setImageUploading(false); }
+  };
+
+  const chooseDestination = () => {
+    Alert.alert('Choose destination', 'Select where recipients should go when they tap the inbox notification.', [
+      { text: 'No destination', onPress: () => setDestination('') },
+      { text: 'App home', onPress: () => setDestination('home') },
+      { text: 'Orders', onPress: () => setDestination('orders') },
+      { text: 'Profile', onPress: () => setDestination('profile') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const showPreview = () => {
     if (!title.trim() || !message.trim()) {
       Alert.alert('Missing details', 'Enter both a notification title and message before previewing.');
@@ -95,7 +130,7 @@ export default function AdminNotificationsScreen() {
     }
     Alert.alert(
       'Notification preview',
-      `${title.trim()}\n\n${message.trim()}\n\nAudience: ${audienceLabel}${imageUrl.trim() ? '\nImage: attached' : ''}${deepLink.trim() ? `\nDeep link: ${deepLink.trim()}` : ''}`,
+      `${title.trim()}\n\n${message.trim()}\n\nAudience: ${audienceLabel}${imageUrl.trim() ? '\nImage: attached' : ''}${destination ? `\nDestination: ${destinationLabel}` : ''}`,
       [{ text: 'Close', style: 'cancel' }, { text: 'Looks good', onPress: () => Alert.alert('Ready to send', 'Review the audience and tap Send notification when you are ready.') }]
     );
   };
@@ -117,7 +152,7 @@ export default function AdminNotificationsScreen() {
                 title: title.trim(),
                 message: message.trim(),
                 imageUrl: imageUrl.trim(),
-                deepLink: deepLink.trim(),
+                destination: destination || undefined,
                 audience,
                 userIds: audience === 'selected' ? selectedIds : [],
               });
@@ -127,10 +162,13 @@ export default function AdminNotificationsScreen() {
               setTitle('');
               setMessage('');
               setImageUrl('');
-              setDeepLink('');
+              setImageName('');
+              setDestination('');
               setSelectedIds([]);
             } catch (error: any) {
-              Alert.alert('Send failed', error?.response?.data?.message || 'Unable to send the notification.');
+              const status = error?.response?.status ? ` (HTTP ${error.response.status})` : '';
+              const detail = error?.response?.data?.message || error?.message || 'Unknown network or server error.';
+              Alert.alert('Send failed', `${detail}${status}`);
             } finally {
               setSending(false);
             }
@@ -181,10 +219,16 @@ export default function AdminNotificationsScreen() {
             <Text style={styles.fieldLabel}>Message *</Text>
             <TextInput value={message} onChangeText={setMessage} placeholder="Write your notification message..." placeholderTextColor="#718477" multiline maxLength={1000} textAlignVertical="top" style={[styles.input, styles.messageInput]} />
             <Text style={styles.counter}>{message.length}/1000</Text>
-            <Text style={styles.fieldLabel}>Image URL (optional)</Text>
-            <TextInput value={imageUrl} onChangeText={setImageUrl} placeholder="https://... Cloudinary image URL" placeholderTextColor="#718477" autoCapitalize="none" keyboardType="url" style={styles.input} />
-            <Text style={styles.fieldLabel}>Deep link (optional)</Text>
-            <TextInput value={deepLink} onChangeText={setDeepLink} placeholder="katbox://orders or app route" placeholderTextColor="#718477" autoCapitalize="none" style={styles.input} />
+            <Text style={styles.fieldLabel}>Notification image (optional)</Text>
+            <TouchableOpacity style={styles.imagePickerButton} onPress={chooseImage} disabled={imageUploading} activeOpacity={0.8}>
+              {imageUploading ? <ActivityIndicator color={GREEN} /> : <Ionicons name="images-outline" size={19} color={GREEN} />}
+              <Text style={styles.imagePickerText}>{imageUploading ? 'Uploading image...' : imageUrl ? 'Change gallery image' : 'Choose image from gallery'}</Text>
+            </TouchableOpacity>
+            {imageUrl ? <View style={styles.imageSelectedRow}><Text style={styles.imageSelectedText} numberOfLines={1}>{imageName || 'Image uploaded to Cloudinary'}</Text><TouchableOpacity onPress={() => { setImageUrl(''); setImageName(''); }}><Ionicons name="close-circle" size={20} color="#F87171" /></TouchableOpacity></View> : null}
+            <Text style={styles.fieldLabel}>Open destination (optional)</Text>
+            <TouchableOpacity style={styles.destinationButton} onPress={chooseDestination} activeOpacity={0.8}>
+              <Text style={styles.destinationText}>{destinationLabel}</Text><Ionicons name="chevron-down" size={18} color={GREEN} />
+            </TouchableOpacity>
           </View>
 
           <Text style={styles.sectionTitle}>Choose audience</Text>
@@ -265,6 +309,12 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#0F1B13', borderWidth: 1, borderColor: BORDER, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 12, color: '#F1FFF4', fontSize: 14, marginBottom: 5 },
   messageInput: { minHeight: 112, paddingTop: 12 },
   counter: { color: '#718477', textAlign: 'right', fontSize: 10, marginBottom: 10 },
+  imagePickerButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, minHeight: 46, paddingHorizontal: 13, borderRadius: 11, borderWidth: 1, borderColor: GREEN, backgroundColor: 'rgba(74,222,128,0.07)', marginBottom: 8 },
+  imagePickerText: { color: GREEN, fontSize: 12, fontWeight: '700' },
+  imageSelectedRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 11, paddingVertical: 9, borderRadius: 9, backgroundColor: 'rgba(74,222,128,0.08)', borderWidth: 1, borderColor: 'rgba(74,222,128,0.22)', marginBottom: 10 },
+  imageSelectedText: { flex: 1, color: '#C9D9CE', fontSize: 11 },
+  destinationButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 46, paddingHorizontal: 12, borderRadius: 11, borderWidth: 1, borderColor: BORDER, backgroundColor: '#0F1B13' },
+  destinationText: { color: '#EAF5ED', fontSize: 13, fontWeight: '600' },
   audienceRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: 'rgba(42,59,47,0.7)' },
   radio: { width: 19, height: 19, borderRadius: 10, borderWidth: 1.5, borderColor: '#6D8273', alignItems: 'center', justifyContent: 'center', marginRight: 11 },
   radioSelected: { borderColor: GREEN },

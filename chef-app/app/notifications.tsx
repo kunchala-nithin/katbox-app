@@ -10,7 +10,7 @@ type NotificationItem = {
   title: string;
   message: string;
   imageUrl?: string;
-  deepLink?: string;
+  destination?: 'home' | 'orders' | 'profile' | 'chef_orders' | 'chef_profile';
   isRead: boolean;
   createdAt: string;
 };
@@ -52,9 +52,9 @@ export default function NotificationsScreen() {
         return;
       }
     }
-    if (item.deepLink) {
-      try { router.push(item.deepLink as any); } catch { /* Keep the inbox open for unsupported routes. */ }
-    }
+    const routes: Record<string, string> = { home: '/chefManagement/add-chefs', orders: '/chefManagement/all-orders', profile: '/chefManagement/Profile' };
+    const route = item.destination ? routes[item.destination] : undefined;
+    if (route) { try { router.push(route as any); } catch { Alert.alert('Unable to open', 'This destination is not available in this version of KatBox.'); } }
   };
 
   const markAllRead = async () => {
@@ -80,7 +80,7 @@ export default function NotificationsScreen() {
       </View>
       {item.imageUrl ? <Image source={{ uri: item.imageUrl }} style={styles.image} resizeMode="cover" /> : null}
       <Text style={styles.message}>{item.message}</Text>
-      {item.deepLink ? <Text style={styles.linkHint}>Tap to open <Ionicons name="arrow-forward" size={11} color={GREEN} /></Text> : null}
+      {item.destination ? <Text style={styles.linkHint}>Tap to open <Ionicons name="arrow-forward" size={11} color={GREEN} /></Text> : null}
     </TouchableOpacity>
   );
 

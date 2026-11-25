@@ -19,6 +19,7 @@ import bannerRoutes from "./routes/banner.routes";
 import websiteMessageRoutes from "./routes/websiteMessage.routes";
 import assistantRoutes from "./routes/assistant.routes";
 import fcmRoutes from "./routes/fcm.routes";
+import adminNotificationsRoutes from "./routes/adminNotifications.routes";
 import { setSocketServer } from "./utils/socket";
 import { processOrderAlarmSchedules } from "./utils/orderNotifications";
 
@@ -71,6 +72,7 @@ app.use("/api/banners", bannerRoutes);
 app.use("/api/messages", websiteMessageRoutes);
 app.use("/api/assistant", assistantRoutes);
 app.use("/api/fcm", fcmRoutes);
+app.use("/api/admin-notifications", adminNotificationsRoutes);
 
 void connectDB();
 
