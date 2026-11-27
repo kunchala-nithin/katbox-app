@@ -1,3 +1,4 @@
+
 import mongoose, { Document, Schema } from "mongoose";
 
 export type NotificationDestination = "home" | "orders" | "profile" | "chef_orders" | "chef_profile";
@@ -32,5 +33,5 @@ const schema = new Schema<IUserNotification>({
 }, { timestamps: true });
 
 schema.index({ userId: 1, createdAt: -1 });
-schema.index({ expiresAt: 1 });
+
 export default mongoose.models.UserNotification || mongoose.model<IUserNotification>("UserNotification", schema);
