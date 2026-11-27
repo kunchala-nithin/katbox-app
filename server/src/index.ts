@@ -1,4 +1,3 @@
-
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -22,6 +21,11 @@ import fcmRoutes from "./routes/fcm.routes";
 import adminNotificationsRoutes from "./routes/adminNotifications.routes";
 import { setSocketServer } from "./utils/socket";
 import { processOrderAlarmSchedules } from "./utils/orderNotifications";
+import {
+  migrateExistingNotificationExpiry,
+  processExpiredAdminNotifications,
+  removeLegacyNotificationTTLIndex,
+} from "./utils/adminNotificationCleanup";
 
 
 dotenv.config();
@@ -74,17 +78,36 @@ app.use("/api/assistant", assistantRoutes);
 app.use("/api/fcm", fcmRoutes);
 app.use("/api/admin-notifications", adminNotificationsRoutes);
 
-void connectDB();
-
-// Durable MongoDB-backed FCM order alarm worker. The database schedule
-// survives API restarts; each active chef/admin recipient is rechecked
-// against the live order status before a repeat is sent.
+// Keep the existing order alarm worker and its schedule unchanged.
 const orderAlarmWorker = setInterval(() => {
   void processOrderAlarmSchedules().catch((error) => {
     console.error("[FCM alarm worker] Unhandled worker error:", error);
   });
 }, 5_000);
 orderAlarmWorker.unref?.();
+
+// Start notification retention only after MongoDB is connected. Remove the old
+// TTL index first so expired documents remain available until Cloudinary cleanup
+// has succeeded. During testing, retry expired notification cleanup every 5 seconds.
+void connectDB()
+  .then(async () => {
+    await removeLegacyNotificationTTLIndex();
+    await migrateExistingNotificationExpiry();
+    await processExpiredAdminNotifications().catch((error) => {
+      console.error("[Notification cleanup] Initial cleanup failed:", error);
+    });
+
+    const notificationCleanupWorker = setInterval(() => {
+      void processExpiredAdminNotifications().catch((error) => {
+        console.error("[Notification cleanup] Worker failed:", error);
+      });
+    }, 5_000);
+    notificationCleanupWorker.unref?.();
+  })
+  .catch((error) => {
+    console.error("[Database] Connection or notification cleanup initialization failed:", error);
+  });
+
 app.route("/health")
   .get((_req, res) => res.status(200).json({ status: "OK" }))
   .head((_req, res) => res.status(200).end());

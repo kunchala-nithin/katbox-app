@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import mongoose from "mongoose";
-import { v2 as cloudinary } from "cloudinary";
+import cloudinary from "../config/cloudinary";
 import User from "../models/User";
 import FCMDevice from "../models/FCMDevices";
 import UserNotification, { NotificationDestination } from "../models/UserNotification";
@@ -8,6 +8,7 @@ import { getFirebaseMessaging } from "../config/firebaseAdmin";
 import type { AuthRequest } from "../middleware/auth.middleware";
 
 const destinations: NotificationDestination[] = ["home", "orders", "profile", "chef_orders", "chef_profile"];
+const NOTIFICATION_RETENTION_MS = 2 * 60 * 1000;
 const asStringData = (data: Record<string, unknown>) => Object.fromEntries(Object.entries(data).filter(([,v]) => v !== undefined && v !== null).map(([k,v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]));
 
 export const uploadNotificationImage = async (req: Request, res: Response) => {
@@ -52,6 +53,7 @@ export const sendCustomNotification = async (req: AuthRequest, res: Response) =>
     const title = String(req.body.title || "").trim();
     const message = String(req.body.message || "").trim();
     const imageUrl = String(req.body.imageUrl || "").trim();
+    const requestedPublicId = String(req.body.imagePublicId || "").trim();
     const audience = String(req.body.audience || "");
     const destination = req.body.destination ? String(req.body.destination) : undefined;
     const userIds: string[] = Array.isArray(req.body.userIds) ? req.body.userIds.map((value: unknown) => String(value)) : [];
@@ -61,6 +63,28 @@ export const sendCustomNotification = async (req: AuthRequest, res: Response) =>
     if (imageUrl && !/^https:\/\//i.test(imageUrl)) return res.status(400).json({ success: false, message: "The uploaded image URL is invalid." });
     if (audience === "selected" && (!userIds.length || userIds.some(id => !mongoose.Types.ObjectId.isValid(id)))) return res.status(400).json({ success: false, message: "Select at least one valid recipient." });
 
+    let imagePublicId = requestedPublicId;
+    if (imageUrl) {
+      try {
+        const parsed = new URL(imageUrl);
+        const path = decodeURIComponent(parsed.pathname);
+        const marker = "/image/upload/";
+        const uploadIndex = path.indexOf(marker);
+        const segments = uploadIndex >= 0 ? path.slice(uploadIndex + marker.length).split("/").filter(Boolean) : [];
+        const folderIndex = segments.findIndex((_part, index) => segments[index] === "katbox" && segments[index + 1] === "notifications");
+        const derived = folderIndex >= 0 ? segments.slice(folderIndex).join("/").replace(/\.[^/.]+$/, "") : "";
+        if (parsed.protocol !== "https:" || !parsed.hostname.endsWith("cloudinary.com") || !derived.startsWith("katbox/notifications/")) {
+          return res.status(400).json({ success: false, message: "The image must be uploaded to KatBox notifications in Cloudinary." });
+        }
+        if (imagePublicId && imagePublicId !== derived) return res.status(400).json({ success: false, message: "The image URL and Cloudinary public ID do not match." });
+        imagePublicId = derived;
+      } catch {
+        return res.status(400).json({ success: false, message: "The uploaded image URL is invalid." });
+      }
+    } else if (imagePublicId) {
+      return res.status(400).json({ success: false, message: "An image public ID was provided without an image URL." });
+    }
+
     const userFilter: any = { isAdmin: { $ne: true } };
     if (audience === "customers") userFilter.isChef = false;
     if (audience === "chefs") userFilter.isChef = true;
@@ -69,7 +93,16 @@ export const sendCustomNotification = async (req: AuthRequest, res: Response) =>
     const deviceFilter: any = { userId: { $in: users.map(u => u._id) }, enabled: true };
     const devices = await FCMDevice.find(deviceFilter).select("userId token appId").lean();
     const eligibleIds = [...new Set(devices.map(d => String(d.userId)))];
-    const docs = eligibleIds.map(id => ({ userId: new mongoose.Types.ObjectId(id), title, message, imageUrl, destination: destination || undefined }));
+    const expiresAt = new Date(Date.now() + NOTIFICATION_RETENTION_MS);
+    const docs = eligibleIds.map(id => ({
+      userId: new mongoose.Types.ObjectId(id),
+      title,
+      message,
+      imageUrl,
+      imagePublicId,
+      destination: destination || undefined,
+      expiresAt,
+    }));
     if (docs.length) await UserNotification.insertMany(docs, { ordered: false });
 
     let pushAccepted = 0, pushFailed = 0;
@@ -109,9 +142,11 @@ export const getNotificationInbox = async (req: AuthRequest, res: Response) => {
     const userId = req.user!.userId;
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+    const now = new Date();
+    const activeFilter = { userId, expiresAt: { $gt: now } };
     const [items, unread] = await Promise.all([
-      UserNotification.find({ userId }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
-      UserNotification.countDocuments({ userId, isRead: false }),
+      UserNotification.find(activeFilter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      UserNotification.countDocuments({ ...activeFilter, isRead: false }),
     ]);
     return res.json({ success: true, data: items, unreadCount: unread });
   } catch (error: any) {
@@ -122,13 +157,23 @@ export const getNotificationInbox = async (req: AuthRequest, res: Response) => {
 
 export const markNotificationRead = async (req: AuthRequest, res: Response) => {
   try {
-    const updated = await UserNotification.findOneAndUpdate({ _id: req.params.id, userId: req.user!.userId }, { isRead: true }, { new: true });
+    const updated = await UserNotification.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user!.userId, expiresAt: { $gt: new Date() } },
+      { isRead: true },
+      { new: true }
+    );
     if (!updated) return res.status(404).json({ success: false, message: "Notification not found." });
     return res.json({ success: true, data: updated });
   } catch (error) { console.error("[Notifications] Mark read failed:", error); return res.status(500).json({ success: false, message: "Unable to update notification." }); }
 };
 
 export const markAllNotificationsRead = async (req: AuthRequest, res: Response) => {
-  try { await UserNotification.updateMany({ userId: req.user!.userId, isRead: false }, { isRead: true }); return res.json({ success: true }); }
+  try {
+    await UserNotification.updateMany(
+      { userId: req.user!.userId, isRead: false, expiresAt: { $gt: new Date() } },
+      { isRead: true }
+    );
+    return res.json({ success: true });
+  }
   catch (error) { console.error("[Notifications] Mark all read failed:", error); return res.status(500).json({ success: false, message: "Unable to update notifications." }); }
 };
