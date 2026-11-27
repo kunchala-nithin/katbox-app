@@ -26,7 +26,7 @@ const schema = new Schema<IUserNotification>({
   // TTL index here: MongoDB could delete this document before Cloudinary cleanup.
   expiresAt: {
     type: Date,
-    default: () => new Date(Date.now() + 2 * 60 * 1000),
+    default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     index: true,
   },
 }, { timestamps: true });

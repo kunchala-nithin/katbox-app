@@ -8,7 +8,7 @@ import { getFirebaseMessaging } from "../config/firebaseAdmin";
 import type { AuthRequest } from "../middleware/auth.middleware";
 
 const destinations: NotificationDestination[] = ["home", "orders", "profile", "chef_orders", "chef_profile"];
-const NOTIFICATION_RETENTION_MS = 2 * 60 * 1000;
+const NOTIFICATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const asStringData = (data: Record<string, unknown>) => Object.fromEntries(Object.entries(data).filter(([,v]) => v !== undefined && v !== null).map(([k,v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]));
 
 export const uploadNotificationImage = async (req: Request, res: Response) => {

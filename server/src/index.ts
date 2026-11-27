@@ -88,7 +88,7 @@ orderAlarmWorker.unref?.();
 
 // Start notification retention only after MongoDB is connected. Remove the old
 // TTL index first so expired documents remain available until Cloudinary cleanup
-// has succeeded. During testing, retry expired notification cleanup every 5 seconds.
+// has succeeded. The worker retries failed Cloudinary deletions every minute.
 void connectDB()
   .then(async () => {
     await removeLegacyNotificationTTLIndex();
@@ -101,7 +101,7 @@ void connectDB()
       void processExpiredAdminNotifications().catch((error) => {
         console.error("[Notification cleanup] Worker failed:", error);
       });
-    }, 5_000);
+    }, 60_000);
     notificationCleanupWorker.unref?.();
   })
   .catch((error) => {

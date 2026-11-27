@@ -174,16 +174,16 @@ export const processExpiredAdminNotifications = async (): Promise<void> => {
  */
 /**
  * Existing records were previously assigned a 90-day expiry. Convert those
- * records to createdAt + 2 minutes so the test policy also applies to notifications
+ * records to createdAt + 7 days so the new policy also applies to notifications
  * that were already in MongoDB when this patch is deployed.
  */
 export const migrateExistingNotificationExpiry = async (): Promise<void> => {
-  const twoMinutesMs = 2 * 60 * 1000;
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
   const result = await UserNotification.collection.updateMany(
     {
       $expr: {
         $or: [
-          { $gt: ["$expiresAt", { $add: ["$createdAt", twoMinutesMs] }] },
+          { $gt: ["$expiresAt", { $add: ["$createdAt", sevenDaysMs] }] },
           { $eq: [{ $type: "$expiresAt" }, "missing"] },
         ],
       },
@@ -191,7 +191,7 @@ export const migrateExistingNotificationExpiry = async (): Promise<void> => {
     [
       {
         $set: {
-          expiresAt: { $add: ["$createdAt", twoMinutesMs] },
+          expiresAt: { $add: ["$createdAt", sevenDaysMs] },
         },
       },
     ]
@@ -199,7 +199,7 @@ export const migrateExistingNotificationExpiry = async (): Promise<void> => {
 
   if (result.modifiedCount > 0) {
     console.log(
-      `[Notification cleanup] Updated ${result.modifiedCount} existing notification(s) to the 2-minute expiry policy.`
+      `[Notification cleanup] Updated ${result.modifiedCount} existing notification(s) to the 7-day expiry policy.`
     );
   }
 };
